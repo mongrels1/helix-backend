@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { EmailService } from '@modules/email/email.service';
 import { UsersRepository } from '@modules/users/users.repository';
 import { AuthRepository } from './auth.repository';
 import { AuthService } from './auth.service';
@@ -21,6 +22,7 @@ describe('AuthService', () => {
   let usersRepository: jest.Mocked<UsersRepository>;
   let jwtService: jest.Mocked<JwtService>;
   let configService: jest.Mocked<ConfigService>;
+  let emailService: jest.Mocked<EmailService>;
 
   const userEntity = {
     id: 'user-1',
@@ -41,6 +43,11 @@ describe('AuthService', () => {
       createRefreshToken: jest.fn(),
       findRefreshToken: jest.fn(),
       deleteRefreshToken: jest.fn(),
+      deleteRefreshTokensForUser: jest.fn(),
+      createPasswordResetToken: jest.fn(),
+      findPasswordResetToken: jest.fn(),
+      markPasswordResetTokenUsed: jest.fn(),
+      updatePassword: jest.fn(),
     } as unknown as jest.Mocked<AuthRepository>;
     usersRepository = {
       findAll: jest.fn(),
@@ -55,9 +62,17 @@ describe('AuthService', () => {
     } as unknown as jest.Mocked<JwtService>;
     configService = {
       get: jest.fn((key: string) =>
-        key === 'jwt.refreshExpiresIn' ? '7d' : undefined,
+        key === 'jwt.refreshExpiresIn'
+          ? '7d'
+          : key === 'app.frontendUrl'
+            ? 'https://helixlms.com'
+            : undefined,
       ),
     } as unknown as jest.Mocked<ConfigService>;
+    emailService = {
+      sendWelcomeEmail: jest.fn(),
+      sendPasswordResetEmail: jest.fn(),
+    } as unknown as jest.Mocked<EmailService>;
 
     authRepository.createRefreshToken.mockResolvedValue({
       id: 'refresh-1',
@@ -72,6 +87,7 @@ describe('AuthService', () => {
       usersRepository,
       jwtService,
       configService,
+      emailService,
     );
   });
 
@@ -92,6 +108,10 @@ describe('AuthService', () => {
     expect(result.refreshToken).toBeDefined();
     expect(result.user).toEqual(userEntity);
     expect(bcrypt.hash).toHaveBeenCalledWith('password123', 12);
+    expect(emailService.sendWelcomeEmail).toHaveBeenCalledWith(
+      'student@example.com',
+      'Ada',
+    );
   });
 
   it('rejects duplicate email registration', async () => {
@@ -165,6 +185,69 @@ describe('AuthService', () => {
 
     await expect(
       service.refresh({ refreshToken: 'refresh-token' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('sends a password reset email without revealing account existence', async () => {
+    usersRepository.findByEmail.mockResolvedValue({
+      ...userEntity,
+      passwordHash: 'hashed-password',
+    });
+    authRepository.createPasswordResetToken.mockResolvedValue({
+      id: 'reset-1',
+      userId: 'user-1',
+      token: 'reset-token',
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+
+    await expect(service.forgotPassword('student@example.com')).resolves.toEqual({
+      message: 'If an account exists, a password reset email has been sent',
+    });
+    expect(authRepository.createPasswordResetToken).toHaveBeenCalled();
+    expect(emailService.sendPasswordResetEmail).toHaveBeenCalledWith(
+      'student@example.com',
+      expect.stringContaining('https://helixlms.com/reset-password?token='),
+    );
+
+    usersRepository.findByEmail.mockResolvedValue(null);
+    await expect(service.forgotPassword('missing@example.com')).resolves.toEqual({
+      message: 'If an account exists, a password reset email has been sent',
+    });
+  });
+
+  it('resets password with a valid reset token', async () => {
+    authRepository.findPasswordResetToken.mockResolvedValue({
+      id: 'reset-1',
+      userId: 'user-1',
+      token: 'reset-token',
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+    jest.mocked(bcrypt.hash).mockResolvedValue('new-hash' as never);
+
+    await expect(
+      service.resetPassword('reset-token', 'newpassword123'),
+    ).resolves.toEqual({ message: 'Password reset successful' });
+    expect(authRepository.updatePassword).toHaveBeenCalledWith('user-1', 'new-hash');
+    expect(authRepository.markPasswordResetTokenUsed).toHaveBeenCalledWith('reset-1');
+    expect(authRepository.deleteRefreshTokensForUser).toHaveBeenCalledWith('user-1');
+  });
+
+  it('rejects expired password reset tokens', async () => {
+    authRepository.findPasswordResetToken.mockResolvedValue({
+      id: 'reset-1',
+      userId: 'user-1',
+      token: 'reset-token',
+      expiresAt: new Date(Date.now() - 1000),
+      usedAt: null,
+      createdAt: new Date(),
+    });
+
+    await expect(
+      service.resetPassword('reset-token', 'newpassword123'),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

@@ -14,6 +14,13 @@ export default () => ({
     googleKey: process.env.GOOGLE_AI_API_KEY ?? '',
     anthropicKey: process.env.ANTHROPIC_API_KEY ?? '',
   },
+  app: {
+    frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+  },
+  email: {
+    resendApiKey: process.env.RESEND_API_KEY ?? '',
+    from: process.env.EMAIL_FROM ?? 'Helix <onboarding@resend.dev>',
+  },
   r2: {
     accountId: process.env.R2_ACCOUNT_ID ?? '',
     accessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',

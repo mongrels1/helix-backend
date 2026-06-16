@@ -5,6 +5,7 @@ import * as bcrypt from 'bcrypt';
 import request = require('supertest');
 import { AllExceptionsFilter } from '../src/common/filters/http-exception.filter';
 import { AppModule } from '../src/app.module';
+import { EmailService } from '../src/modules/email/email.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Auth endpoints', () => {
@@ -30,6 +31,15 @@ describe('Auth endpoints', () => {
     expiresAt: Date;
     createdAt: Date;
   }>;
+  let passwordResetTokens: Array<{
+    id: string;
+    userId: string;
+    token: string;
+    expiresAt: Date;
+    usedAt: Date | null;
+    createdAt: Date;
+  }>;
+  let emailMock: jest.Mocked<Pick<EmailService, 'sendWelcomeEmail' | 'sendPasswordResetEmail'>>;
 
   const publicUser = (user: (typeof users)[number]) => ({
     id: user.id,
@@ -74,6 +84,11 @@ describe('Auth endpoints', () => {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       },
     ];
+    passwordResetTokens = [];
+    emailMock = {
+      sendWelcomeEmail: jest.fn(),
+      sendPasswordResetEmail: jest.fn(),
+    };
 
     const prismaMock = {
       onModuleInit: jest.fn(),
@@ -114,6 +129,13 @@ describe('Auth endpoints', () => {
           users.push(user);
           return Promise.resolve(publicUser(user));
         }),
+        update: jest.fn(({ where, data }) => {
+          const user = users.find((candidate) => candidate.id === where.id);
+          if (!user) throw new Error('User not found');
+          user.passwordHash = data.passwordHash;
+          user.updatedAt = new Date();
+          return Promise.resolve(user);
+        }),
       },
       refreshToken: {
         create: jest.fn(({ data }) => {
@@ -136,9 +158,40 @@ describe('Auth endpoints', () => {
           const before = refreshTokens.length;
           refreshTokens = refreshTokens.filter(
             (token) =>
-              !(token.userId === where.userId && token.token === where.token),
+              !(
+                token.userId === where.userId &&
+                (where.token === undefined || token.token === where.token)
+              ),
           );
           return Promise.resolve({ count: before - refreshTokens.length });
+        }),
+      },
+      passwordResetToken: {
+        create: jest.fn(({ data }) => {
+          const resetToken = {
+            id: `reset-${passwordResetTokens.length + 1}`,
+            userId: data.userId,
+            token: data.token,
+            expiresAt: data.expiresAt,
+            usedAt: null,
+            createdAt: new Date(),
+          };
+          passwordResetTokens.push(resetToken);
+          return Promise.resolve(resetToken);
+        }),
+        findUnique: jest.fn(({ where }) =>
+          Promise.resolve(
+            passwordResetTokens.find((token) => token.token === where.token) ??
+              null,
+          ),
+        ),
+        update: jest.fn(({ where, data }) => {
+          const resetToken = passwordResetTokens.find(
+            (token) => token.id === where.id,
+          );
+          if (!resetToken) throw new Error('Reset token not found');
+          resetToken.usedAt = data.usedAt;
+          return Promise.resolve(resetToken);
         }),
       },
     };
@@ -148,6 +201,8 @@ describe('Auth endpoints', () => {
     })
       .overrideProvider(PrismaService)
       .useValue(prismaMock)
+      .overrideProvider(EmailService)
+      .useValue(emailMock)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -181,6 +236,10 @@ describe('Auth endpoints', () => {
     expect(registerResponse.body.data.accessToken).toBeDefined();
     expect(registerResponse.body.data.refreshToken).toBeDefined();
     expect(registerResponse.body.data.user.passwordHash).toBeUndefined();
+    expect(emailMock.sendWelcomeEmail).toHaveBeenCalledWith(
+      'new@example.com',
+      'New',
+    );
 
     const loginResponse = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
@@ -241,5 +300,57 @@ describe('Auth endpoints', () => {
       .post('/api/v1/auth/refresh')
       .send({ refreshToken: 'expired-refresh-token' })
       .expect(401);
+  });
+
+  it('sends forgot-password email and resets password with token', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/forgot-password')
+      .send({ email: 'student@example.com' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.message).toBe(
+          'If an account exists, a password reset email has been sent',
+        );
+      });
+
+    expect(passwordResetTokens).toHaveLength(1);
+    expect(emailMock.sendPasswordResetEmail).toHaveBeenCalledWith(
+      'student@example.com',
+      expect.stringContaining('/reset-password?token='),
+    );
+
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/reset-password')
+      .send({
+        token: passwordResetTokens[0].token,
+        password: 'newpassword123',
+      })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.message).toBe('Password reset successful');
+      });
+
+    const updatedUser = users.find((user) => user.id === 'user-1');
+    expect(updatedUser).toBeDefined();
+    await expect(
+      bcrypt.compare('newpassword123', updatedUser!.passwordHash),
+    ).resolves.toBe(true);
+    expect(passwordResetTokens[0].usedAt).toBeInstanceOf(Date);
+    expect(refreshTokens).toHaveLength(0);
+  });
+
+  it('returns neutral forgot-password response for unknown emails', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/forgot-password')
+      .send({ email: 'unknown@example.com' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.message).toBe(
+          'If an account exists, a password reset email has been sent',
+        );
+      });
+
+    expect(passwordResetTokens).toHaveLength(0);
+    expect(emailMock.sendPasswordResetEmail).not.toHaveBeenCalled();
   });
 });

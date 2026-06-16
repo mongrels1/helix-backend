@@ -3,9 +3,11 @@ import { Public } from '@common/decorators/public.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { UserEntity } from '@modules/users/entities/user.entity';
 import { AuthService } from './auth.service';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 type CurrentUserPayload = {
   userId: string;
@@ -46,6 +48,29 @@ export class AuthController {
     @Body() refreshDto: RefreshDto,
   ): Promise<{ success: true; data: { accessToken: string } }> {
     const data = await this.authService.refresh(refreshDto);
+    return { success: true, data };
+  }
+
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(200)
+  async forgotPassword(
+    @Body() forgotPasswordDto: ForgotPasswordDto,
+  ): Promise<{ success: true; data: { message: string } }> {
+    const data = await this.authService.forgotPassword(forgotPasswordDto.email);
+    return { success: true, data };
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(200)
+  async resetPassword(
+    @Body() resetPasswordDto: ResetPasswordDto,
+  ): Promise<{ success: true; data: { message: string } }> {
+    const data = await this.authService.resetPassword(
+      resetPasswordDto.token,
+      resetPasswordDto.password,
+    );
     return { success: true, data };
   }
 
