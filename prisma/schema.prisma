@@ -1,0 +1,482 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ORG_ADMIN
+  TEACHER
+  STUDENT
+  PARENT
+}
+
+enum ContentBlockType {
+  VIDEO
+  DOCUMENT
+  QUIZ
+  EMBED
+}
+
+enum SubmissionStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  GRADED
+  RETURNED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+}
+
+enum FileStatus {
+  PENDING
+  UPLOADED
+  DELETED
+}
+
+enum PacingTrigger {
+  MASTERY_DROP
+  ENGAGEMENT_DROP
+}
+
+enum PacingType {
+  SLOW_DOWN
+  REMEDIATE
+  SKIP_AHEAD
+  STANDARD
+}
+
+enum TutorSessionStatus {
+  ACTIVE
+  ENDED
+}
+
+enum TutorMessageRole {
+  STUDENT
+  TUTOR
+}
+
+enum InstructorContentType {
+  INSIGHT
+  WARM_UP
+  RUBRIC_DRAFT
+  FEEDBACK_DRAFT
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(STUDENT)
+  profile      Profile?
+  memberships  Membership[]
+  taughtClassrooms Classroom[]  @relation("TeacherClassrooms")
+  enrollments Enrollment[] @relation("StudentEnrollments")
+  submissions Submission[] @relation("StudentSubmissions")
+  masteryScores MasteryScore[] @relation("StudentMastery")
+  pacingRecommendations PacingRecommendation[] @relation("StudentPacing")
+  tutorSessions TutorSession[] @relation("StudentTutorSessions")
+  instructorContent InstructorContent[] @relation("TeacherContent")
+  gradesGiven Grade[] @relation("GradedByUser")
+  gradeHistories GradeHistory[] @relation("GradeHistoryChangedBy")
+  attendanceRecords AttendanceRecord[] @relation("StudentAttendance")
+  attendanceRecordedBy AttendanceRecord[] @relation("AttendanceRecordedBy")
+  threadParticipations ThreadParticipant[] @relation("UserThreads")
+  sentMessages Message[] @relation("SentMessages")
+  notifications Notification[] @relation("UserNotifications")
+  notificationPreferences NotificationPreference?
+  files FileRecord[] @relation("UserFiles")
+  parentLinks ParentStudentLink[] @relation("ParentLinks")
+  studentLinks ParentStudentLink[] @relation("StudentParentLinks")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+  refreshTokens RefreshToken[]
+}
+
+model ParentStudentLink {
+  id        String   @id @default(uuid())
+  parentId  String
+  studentId String
+  parent    User     @relation("ParentLinks", fields: [parentId], references: [id])
+  student   User     @relation("StudentParentLinks", fields: [studentId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([parentId, studentId])
+}
+
+model Profile {
+  id        String  @id @default(uuid())
+  userId    String  @unique
+  firstName String
+  lastName  String
+  avatarUrl String?
+  user      User    @relation(fields: [userId], references: [id])
+}
+
+model Organization {
+  id          String       @id @default(uuid())
+  name        String
+  slug        String       @unique
+  memberships Membership[]
+  classrooms  Classroom[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+}
+
+model Membership {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  role           Role
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Classroom {
+  id             String       @id @default(uuid())
+  name           String
+  description    String?
+  organizationId String
+  teacherId      String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  teacher        User         @relation("TeacherClassrooms", fields: [teacherId], references: [id])
+  enrollments    Enrollment[]
+  courses        Course[]
+  assignments    Assignment[]
+  attendanceRecords AttendanceRecord[]
+  pacingRecommendations PacingRecommendation[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+}
+
+model Enrollment {
+  id          String    @id @default(uuid())
+  classroomId String
+  studentId   String
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  student     User      @relation("StudentEnrollments", fields: [studentId], references: [id])
+  enrolledAt  DateTime  @default(now())
+
+  @@unique([classroomId, studentId])
+}
+
+model Course {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  units       Unit[]
+  assignments Assignment[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+}
+
+model Unit {
+  id          String    @id @default(uuid())
+  title       String
+  order       Int
+  courseId    String
+  course      Course    @relation(fields: [courseId], references: [id])
+  sections    Section[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+}
+
+model Section {
+  id            String         @id @default(uuid())
+  title         String
+  order         Int
+  unitId        String
+  unit          Unit           @relation(fields: [unitId], references: [id])
+  contentBlocks ContentBlock[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+}
+
+model ContentBlock {
+  id        String           @id @default(uuid())
+  type      ContentBlockType
+  title     String
+  content   String
+  order     Int
+  sectionId String
+  section   Section          @relation(fields: [sectionId], references: [id])
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
+}
+
+model Assignment {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  dueAt       DateTime?
+  maxScore    Float     @default(100)
+  skillTags   String[]  @default([])
+  classroomId String
+  courseId    String?
+  rubricId    String?   @unique
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  course      Course?   @relation(fields: [courseId], references: [id])
+  rubric      Rubric?   @relation(fields: [rubricId], references: [id])
+  submissions Submission[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+}
+
+model Submission {
+  id           String           @id @default(uuid())
+  assignmentId String
+  studentId    String
+  status       SubmissionStatus @default(DRAFT)
+  content      String?
+  fileUrl      String?
+  submittedAt  DateTime?
+  assignment   Assignment       @relation(fields: [assignmentId], references: [id])
+  student      User             @relation("StudentSubmissions", fields: [studentId], references: [id])
+  grade        Grade?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([assignmentId, studentId])
+}
+
+model Grade {
+  id           String         @id @default(uuid())
+  submissionId String         @unique
+  score        Float
+  maxScore     Float
+  feedback     String?
+  gradedById   String
+  submission   Submission     @relation(fields: [submissionId], references: [id])
+  gradedBy     User           @relation("GradedByUser", fields: [gradedById], references: [id])
+  history      GradeHistory[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model GradeHistory {
+  id          String   @id @default(uuid())
+  gradeId     String
+  score       Float
+  maxScore    Float
+  feedback    String?
+  changedById String
+  grade       Grade    @relation(fields: [gradeId], references: [id])
+  changedBy   User     @relation("GradeHistoryChangedBy", fields: [changedById], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model MasteryScore {
+  id        String           @id @default(uuid())
+  studentId String
+  skillTag  String
+  score     Float
+  student   User             @relation("StudentMastery", fields: [studentId], references: [id])
+  history   MasteryHistory[]
+  updatedAt DateTime         @updatedAt
+  createdAt DateTime         @default(now())
+
+  @@unique([studentId, skillTag])
+}
+
+model MasteryHistory {
+  id             String       @id @default(uuid())
+  masteryScoreId String
+  score          Float
+  submissionId   String?
+  masteryScore   MasteryScore @relation(fields: [masteryScoreId], references: [id])
+  recordedAt     DateTime     @default(now())
+}
+
+model PacingRecommendation {
+  id          String        @id @default(uuid())
+  studentId   String
+  classroomId String
+  trigger     PacingTrigger
+  type        PacingType
+  rationale   String
+  action      String
+  dismissed   Boolean       @default(false)
+  dismissedAt DateTime?
+  createdAt   DateTime      @default(now())
+  student     User          @relation("StudentPacing", fields: [studentId], references: [id])
+  classroom   Classroom     @relation(fields: [classroomId], references: [id])
+}
+
+model TutorSession {
+  id           String             @id @default(uuid())
+  studentId    String
+  assignmentId String?
+  status       TutorSessionStatus @default(ACTIVE)
+  student      User               @relation("StudentTutorSessions", fields: [studentId], references: [id])
+  messages     TutorMessage[]
+  createdAt    DateTime           @default(now())
+  endedAt      DateTime?
+}
+
+model TutorMessage {
+  id        String           @id @default(uuid())
+  sessionId String
+  role      TutorMessageRole
+  content   String
+  session   TutorSession     @relation(fields: [sessionId], references: [id])
+  createdAt DateTime         @default(now())
+}
+
+model InstructorContent {
+  id           String                @id @default(uuid())
+  teacherId    String?
+  classroomId  String?
+  assignmentId String?
+  type         InstructorContentType
+  content      String
+  metadata     Json?
+  dismissed    Boolean               @default(false)
+  dismissedAt  DateTime?
+  createdAt    DateTime              @default(now())
+  teacher      User?                 @relation("TeacherContent", fields: [teacherId], references: [id])
+}
+
+model AttendanceRecord {
+  id           String           @id @default(uuid())
+  classroomId  String
+  studentId    String
+  date         DateTime         @db.Date
+  status       AttendanceStatus
+  note         String?
+  recordedById String
+  classroom    Classroom        @relation(fields: [classroomId], references: [id])
+  student      User             @relation("StudentAttendance", fields: [studentId], references: [id])
+  recordedBy   User             @relation("AttendanceRecordedBy", fields: [recordedById], references: [id])
+  createdAt    DateTime         @default(now())
+
+  @@unique([classroomId, studentId, date])
+}
+
+model Thread {
+  id           String              @id @default(uuid())
+  subject      String?
+  participants ThreadParticipant[]
+  messages     Message[]
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+}
+
+model ThreadParticipant {
+  id       String   @id @default(uuid())
+  threadId String
+  userId   String
+  thread   Thread   @relation(fields: [threadId], references: [id])
+  user     User     @relation("UserThreads", fields: [userId], references: [id])
+  joinedAt DateTime @default(now())
+
+  @@unique([threadId, userId])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  threadId  String
+  senderId  String
+  content   String
+  thread    Thread   @relation(fields: [threadId], references: [id])
+  sender    User     @relation("SentMessages", fields: [senderId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String
+  title     String
+  body      String
+  channel   NotificationChannel @default(IN_APP)
+  status    NotificationStatus  @default(UNREAD)
+  metadata  Json?
+  user      User                @relation("UserNotifications", fields: [userId], references: [id])
+  createdAt DateTime            @default(now())
+  readAt    DateTime?
+  deletedAt DateTime?
+}
+
+model NotificationPreference {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  email     Boolean  @default(true)
+  push      Boolean  @default(false)
+  inApp     Boolean  @default(true)
+  user      User     @relation(fields: [userId], references: [id])
+  updatedAt DateTime @updatedAt
+}
+
+model FileRecord {
+  id        String     @id @default(uuid())
+  ownerId   String
+  filename  String
+  mimeType  String
+  sizeBytes Int?
+  r2Key     String     @unique
+  status    FileStatus @default(PENDING)
+  owner     User       @relation("UserFiles", fields: [ownerId], references: [id])
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  deletedAt DateTime?
+}
+
+model Rubric {
+  id         String           @id @default(uuid())
+  title      String
+  criteria   RubricCriteria[]
+  assignment Assignment?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+}
+
+model RubricCriteria {
+  id          String  @id @default(uuid())
+  rubricId    String
+  title       String
+  description String?
+  maxScore    Float
+  order       Int
+  rubric      Rubric  @relation(fields: [rubricId], references: [id])
+}
