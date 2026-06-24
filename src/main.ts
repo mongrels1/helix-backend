@@ -1,6 +1,5 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from '@common/filters/http-exception.filter';
 
@@ -22,8 +21,7 @@ const allowedOrigins = [
 ];
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
-  app.useLogger(app.get(Logger));
+  const app = await NestFactory.create(AppModule);
   app.enableCors({
     origin: Array.from(new Set(allowedOrigins)),
     credentials: true,
