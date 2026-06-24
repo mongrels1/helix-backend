@@ -18,6 +18,11 @@ export class MessagingGateway
   @WebSocketServer()
   server!: Server;
 
+  private readonly classSessions = new Map<
+    string,
+    { active: boolean; blockId: string; teacherName: string }
+  >();
+
   constructor(
     private readonly messagingService: MessagingService,
     private readonly jwtService: JwtService,
@@ -35,6 +40,11 @@ export class MessagingGateway
 
   handleDisconnect(client: Socket): void {
     void client;
+    setTimeout(() => {
+      for (const [classroomId, session] of this.classSessions.entries()) {
+        this.emitClassSession(classroomId, session);
+      }
+    }, 0);
   }
 
   @SubscribeMessage('joinThread')
@@ -62,5 +72,76 @@ export class MessagingGateway
       { content: data.content },
     );
     this.server.to(`thread:${data.threadId}`).emit('message.received', message);
+  }
+
+  @SubscribeMessage('class:join')
+  async handleClassJoin(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { classroomId: string },
+  ): Promise<void> {
+    await client.join(`class:${data.classroomId}`);
+    const existing = this.classSessions.get(data.classroomId);
+    if (existing) {
+      this.emitClassSession(data.classroomId, existing);
+    } else {
+      client.emit('class:session', {
+        active: false,
+        blockId: null,
+        teacherName: null,
+        attendees: 0,
+      });
+    }
+  }
+
+  @SubscribeMessage('class:start')
+  handleClassStart(
+    @ConnectedSocket() _client: Socket,
+    @MessageBody()
+    data: { classroomId: string; blockId: string; teacherName: string },
+  ): void {
+    const sessionData = {
+      active: true,
+      blockId: data.blockId,
+      teacherName: data.teacherName,
+    };
+    this.classSessions.set(data.classroomId, sessionData);
+    this.emitClassSession(data.classroomId, sessionData);
+  }
+
+  @SubscribeMessage('class:navigate')
+  handleClassNavigate(
+    @ConnectedSocket() _client: Socket,
+    @MessageBody() data: { classroomId: string; blockId: string },
+  ): void {
+    const existing = this.classSessions.get(data.classroomId);
+    if (!existing?.active) return;
+    const updated = { ...existing, blockId: data.blockId };
+    this.classSessions.set(data.classroomId, updated);
+    this.emitClassSession(data.classroomId, updated);
+  }
+
+  @SubscribeMessage('class:end')
+  handleClassEnd(
+    @ConnectedSocket() _client: Socket,
+    @MessageBody() data: { classroomId: string },
+  ): void {
+    this.classSessions.delete(data.classroomId);
+    this.server.to(`class:${data.classroomId}`).emit('class:session', {
+      active: false,
+      blockId: null,
+      teacherName: null,
+      attendees: 0,
+    });
+  }
+
+  private emitClassSession(
+    classroomId: string,
+    session: { active: boolean; blockId: string; teacherName: string },
+  ): void {
+    const attendees =
+      this.server.sockets.adapter.rooms.get(`class:${classroomId}`)?.size ?? 0;
+    this.server
+      .to(`class:${classroomId}`)
+      .emit('class:session', { ...session, attendees });
   }
 }

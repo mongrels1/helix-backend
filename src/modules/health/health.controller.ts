@@ -1,18 +1,18 @@
-import { Controller, Get } from '@nestjs/common';
-import { Public } from '@common/decorators/public.decorator';
+import { Controller, Get } from "@nestjs/common";
+import { Public } from "@common/decorators/public.decorator";
+import { HealthService, HealthSnapshot } from "./health.service";
 
 @Public()
-@Controller('api/v1/health')
+@Controller("api/v1/health")
 export class HealthController {
+  constructor(private readonly healthService: HealthService) {}
+
   @Get()
-  check(): object {
+  async check(): Promise<{ success: true; data: HealthSnapshot }> {
+    const data = await this.healthService.check();
     return {
       success: true,
-      data: {
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        version: process.env.npm_package_version ?? '0.0.1',
-      },
+      data,
     };
   }
 }
