@@ -66,7 +66,7 @@ Rules you must never break:
       await this.repository.appendMessage(
         session.id,
         TutorMessageRole.TUTOR,
-        `Let's work on **${focus}**. To start, tell me what you already know about it — or try a first example and I'll guide you from there. What feels trickiest about it?`,
+        `Let's work on "${focus}". To start, tell me what you already know about it — or try a first example and I'll guide you from there. What feels trickiest about it?`,
       );
     }
 
