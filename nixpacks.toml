@@ -1,0 +1,7 @@
+# Install devDependencies (nest CLI, typescript, prisma) even under NODE_ENV=production,
+# and generate the Prisma client before building.
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+cmds = ["npx prisma generate", "npm run build"]
