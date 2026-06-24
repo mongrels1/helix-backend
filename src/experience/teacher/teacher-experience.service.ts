@@ -2,6 +2,9 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { AttendanceStatus, Role, SubmissionStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
+/** Per-knowledge-component mastery state used in the diagnostic heat-map. */
+type DiagnosticState = 'mastered' | 'emerging' | 'notyet' | 'above';
+
 @Injectable()
 export class TeacherExperienceService {
   constructor(private readonly prisma: PrismaService) {}
@@ -265,6 +268,214 @@ export class TeacherExperienceService {
       submittedAt: submission.submittedAt,
     }));
     return { queue, total: queue.length };
+  }
+
+  /**
+   * Diagnostic heat-map for a classroom: each enrolled student's latest completed
+   * diagnostic, collapsed to one mastery state per knowledge component (KC), plus
+   * class-level roll-ups by KC and strand. Read-only over existing diagnostic data
+   * (no scored AI items involved). "Above level" = missed a harder-than-grade item
+   * (an expected miss), tracked separately from a genuine gap.
+   */
+  async getClassroomDiagnostics(
+    classroomId: string,
+    user: { userId: string; role: Role },
+  ): Promise<{
+    classroom: { id: string; name: string };
+    totalEnrolled: number;
+    studentsAssessed: number;
+    kcs: {
+      kc: string;
+      strand: string;
+      mastered: number;
+      emerging: number;
+      notYet: number;
+      aboveLevel: number;
+      seenBy: number;
+    }[];
+    strands: { strand: string; mastered: number; emerging: number; notYet: number }[];
+    students: {
+      studentId: string;
+      name: string;
+      grade: string | null;
+      theta: number | null;
+      se: number | null;
+      completedAt: Date | null;
+      cells: { kc: string; strand: string; state: DiagnosticState }[];
+    }[];
+    notYetAssessed: { studentId: string; name: string }[];
+  }> {
+    const classroom = await this.assertClassroomAccess(classroomId, user);
+
+    const enrollments = await this.prisma.enrollment.findMany({
+      where: { classroomId },
+      select: {
+        student: {
+          select: {
+            id: true,
+            email: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
+    const students = enrollments.map((enrollment) => enrollment.student);
+    const studentIds = students.map((student) => student.id);
+    const nameOf = (student: (typeof students)[number]): string =>
+      student.profile
+        ? `${student.profile.firstName} ${student.profile.lastName}`
+        : student.email;
+
+    const sessions = studentIds.length
+      ? await this.prisma.diagnosticSession.findMany({
+          where: { userId: { in: studentIds } },
+          orderBy: { completedAt: 'desc' },
+          select: {
+            userId: true,
+            grade: true,
+            theta: true,
+            se: true,
+            completedAt: true,
+            responses: { select: { kc: true, strand: true, tag: true } },
+          },
+        })
+      : [];
+
+    // findMany is newest-first, so the first session seen per student is the latest.
+    const latestByStudent = new Map<string, (typeof sessions)[number]>();
+    for (const session of sessions) {
+      if (session.userId && !latestByStudent.has(session.userId)) {
+        latestByStudent.set(session.userId, session);
+      }
+    }
+
+    const kcAgg = new Map<
+      string,
+      {
+        kc: string;
+        strand: string;
+        mastered: number;
+        emerging: number;
+        notYet: number;
+        aboveLevel: number;
+        seenBy: number;
+      }
+    >();
+    const strandAgg = new Map<
+      string,
+      { strand: string; mastered: number; emerging: number; notYet: number }
+    >();
+    const studentRows: {
+      studentId: string;
+      name: string;
+      grade: string | null;
+      theta: number | null;
+      se: number | null;
+      completedAt: Date | null;
+      cells: { kc: string; strand: string; state: DiagnosticState }[];
+    }[] = [];
+    const notYetAssessed: { studentId: string; name: string }[] = [];
+
+    for (const student of students) {
+      const session = latestByStudent.get(student.id);
+      if (!session) {
+        notYetAssessed.push({ studentId: student.id, name: nameOf(student) });
+        continue;
+      }
+      // Collapse to one state per KC (the strongest signal wins).
+      const stateByKc = new Map<string, { strand: string; state: DiagnosticState }>();
+      for (const response of session.responses) {
+        const state = this.normalizeDiagnosticState(response.tag);
+        const existing = stateByKc.get(response.kc);
+        if (!existing || this.stateRank(state) > this.stateRank(existing.state)) {
+          stateByKc.set(response.kc, { strand: response.strand, state });
+        }
+      }
+      const cells = Array.from(stateByKc.entries()).map(([kc, value]) => ({
+        kc,
+        strand: value.strand,
+        state: value.state,
+      }));
+      studentRows.push({
+        studentId: student.id,
+        name: nameOf(student),
+        grade: session.grade,
+        theta: session.theta,
+        se: session.se,
+        completedAt: session.completedAt,
+        cells,
+      });
+
+      for (const cell of cells) {
+        const kc = kcAgg.get(cell.kc) ?? {
+          kc: cell.kc,
+          strand: cell.strand,
+          mastered: 0,
+          emerging: 0,
+          notYet: 0,
+          aboveLevel: 0,
+          seenBy: 0,
+        };
+        kc.seenBy += 1;
+        if (cell.state === 'mastered') kc.mastered += 1;
+        else if (cell.state === 'emerging') kc.emerging += 1;
+        else if (cell.state === 'notyet') kc.notYet += 1;
+        else kc.aboveLevel += 1;
+        kcAgg.set(cell.kc, kc);
+
+        const strand = strandAgg.get(cell.strand) ?? {
+          strand: cell.strand,
+          mastered: 0,
+          emerging: 0,
+          notYet: 0,
+        };
+        if (cell.state === 'mastered') strand.mastered += 1;
+        else if (cell.state === 'emerging') strand.emerging += 1;
+        else if (cell.state === 'notyet') strand.notYet += 1;
+        strandAgg.set(cell.strand, strand);
+      }
+    }
+
+    // Weakest KCs first — that is what an instructor wants to act on.
+    const kcs = Array.from(kcAgg.values()).sort(
+      (a, b) => b.notYet - a.notYet || b.emerging - a.emerging || a.kc.localeCompare(b.kc),
+    );
+    const strands = Array.from(strandAgg.values()).sort((a, b) =>
+      a.strand.localeCompare(b.strand),
+    );
+
+    return {
+      classroom,
+      totalEnrolled: students.length,
+      studentsAssessed: studentRows.length,
+      kcs,
+      strands,
+      students: studentRows.sort((a, b) => (a.theta ?? 0) - (b.theta ?? 0)),
+      notYetAssessed,
+    };
+  }
+
+  /** Map a stored response tag to a canonical mastery state (defensive about casing/wording). */
+  private normalizeDiagnosticState(tag: string): DiagnosticState {
+    const t = tag.toLowerCase().replace(/[^a-z]/g, '');
+    if (t.includes('master')) return 'mastered';
+    if (t.includes('emerg')) return 'emerging';
+    if (t.includes('above') || t.includes('stretch') || t.includes('reach')) return 'above';
+    return 'notyet';
+  }
+
+  /** Ranking so the strongest signal wins when one KC appears more than once. */
+  private stateRank(state: DiagnosticState): number {
+    switch (state) {
+      case 'mastered':
+        return 3;
+      case 'emerging':
+        return 2;
+      case 'notyet':
+        return 1;
+      case 'above':
+        return 0;
+    }
   }
 
   private async assertClassroomAccess(

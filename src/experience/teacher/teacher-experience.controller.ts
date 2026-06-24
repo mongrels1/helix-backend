@@ -40,6 +40,15 @@ export class TeacherExperienceController {
     return { success: true, data };
   }
 
+  @Get('classroom/:classroomId/diagnostics')
+  async classroomDiagnostics(
+    @Param('classroomId') classroomId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ success: true; data: Awaited<ReturnType<TeacherExperienceService['getClassroomDiagnostics']>> }> {
+    const data = await this.teacherExperienceService.getClassroomDiagnostics(classroomId, user);
+    return { success: true, data };
+  }
+
   @Get('grading-queue')
   async gradingQueue(
     @CurrentUser() user: AuthenticatedUser,
