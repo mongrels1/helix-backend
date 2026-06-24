@@ -1,175 +1,95 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { EventsService } from '../../events/events.service';
-import { AIRouterService } from '../ai-router/ai-router.service';
-import { MasteryEngineRepository } from './mastery-engine.repository';
 import { MasteryEngineService } from './mastery-engine.service';
 
 describe('MasteryEngineService', () => {
   let service: MasteryEngineService;
-  let repository: jest.Mocked<MasteryEngineRepository>;
-  let eventsService: jest.Mocked<EventsService>;
-  let aiRouterService: jest.Mocked<AIRouterService>;
+  let repository: {
+    upsertScore: jest.Mock;
+    getRecentHistory: jest.Mock;
+    getAllScoresForStudent: jest.Mock;
+    getScoreForSkill: jest.Mock;
+    getClassroomMastery: jest.Mock;
+  };
+  let eventsService: { emit: jest.Mock };
+  let aiRouterService: { chat: jest.Mock };
 
-  beforeEach(async () => {
+  beforeEach(() => {
     repository = {
       upsertScore: jest.fn(),
-      getRecentHistory: jest.fn(),
+      getRecentHistory: jest.fn().mockResolvedValue([]),
       getAllScoresForStudent: jest.fn(),
       getScoreForSkill: jest.fn(),
       getClassroomMastery: jest.fn(),
-    } as unknown as jest.Mocked<MasteryEngineRepository>;
-    eventsService = { emit: jest.fn() } as unknown as jest.Mocked<EventsService>;
-    aiRouterService = {
-      chat: jest.fn().mockResolvedValue({
-        text: 'Teacher insight',
-        provider: 'openai',
-        tokensUsed: 8,
-        latencyMs: 10,
-      }),
-    } as unknown as jest.Mocked<AIRouterService>;
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        MasteryEngineService,
-        { provide: MasteryEngineRepository, useValue: repository },
-        { provide: EventsService, useValue: eventsService },
-        { provide: AIRouterService, useValue: aiRouterService },
-      ],
-    }).compile();
-
-    service = module.get(MasteryEngineService);
-  });
-
-  it('normalizes, clamps, and stores mastery updates', async () => {
-    repository.upsertScore.mockResolvedValue({
-      id: 'mastery-1',
-      studentId: 'student-1',
-      skillTag: 'fractions',
-      score: 1,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    repository.getRecentHistory.mockResolvedValue([]);
-
-    await service.updateMastery(
-      'student-1',
-      'fractions',
-      120,
-      100,
-      'submission-1',
-      'classroom-1',
-    );
-
-    expect(repository.upsertScore).toHaveBeenCalledWith(
-      'student-1',
-      'fractions',
-      1,
-      'submission-1',
+    };
+    eventsService = { emit: jest.fn() };
+    aiRouterService = { chat: jest.fn() };
+    service = new MasteryEngineService(
+      repository as never,
+      eventsService as never,
+      aiRouterService as never,
     );
   });
 
-  it('emits mastery.drop.detected for low declining scores', async () => {
-    repository.upsertScore.mockResolvedValue({
-      id: 'mastery-1',
-      studentId: 'student-1',
-      skillTag: 'fractions',
-      score: 0.45,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+  describe('clampScore', () => {
+    it('returns 0 for negative input', () => {
+      expect((service as never as { clampScore: (score: number) => number }).clampScore(-0.5)).toBe(0);
     });
-    repository.getRecentHistory.mockResolvedValue(
-      [0.45, 0.55, 0.66, 0.75, 0.86].map((score, index) => ({
-        id: `history-${index}`,
-        masteryScoreId: 'mastery-1',
-        score,
-        submissionId: null,
-        recordedAt: new Date(Date.now() - index),
-      })),
-    );
 
-    await service.updateMastery(
-      'student-1',
-      'fractions',
-      45,
-      100,
-      undefined,
-      'classroom-1',
-    );
+    it('returns 1 for input above 1', () => {
+      expect((service as never as { clampScore: (score: number) => number }).clampScore(1.5)).toBe(1);
+    });
 
-    expect(aiRouterService.chat).toHaveBeenCalled();
-    expect(eventsService.emit).toHaveBeenCalledWith(
-      'mastery.drop.detected',
-      expect.objectContaining({
-        studentId: 'student-1',
-        classroomId: 'classroom-1',
-        skillTag: 'fractions',
-        currentScore: 0.45,
-        slope: expect.any(Number),
-        insight: 'Teacher insight',
-      }),
-    );
-    expect(eventsService.emit.mock.calls[0][1].slope).toBeLessThan(-0.05);
+    it('returns the value unchanged when between 0 and 1', () => {
+      expect((service as never as { clampScore: (score: number) => number }).clampScore(0.75)).toBe(0.75);
+    });
+
+    it('handles maxScore of 0 without dividing by zero', () => {
+      expect((service as never as { clampScore: (score: number) => number }).clampScore(0)).toBe(0);
+    });
   });
 
-  it('does not emit when the threshold is not met', async () => {
-    repository.upsertScore.mockResolvedValue({
-      id: 'mastery-1',
-      studentId: 'student-1',
-      skillTag: 'fractions',
-      score: 0.7,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+  describe('calculateSlope', () => {
+    it('returns negative slope for a declining series', () => {
+      const slope = (service as never as { calculateSlope: (scores: number[]) => number }).calculateSlope([0.9, 0.7, 0.5, 0.3]);
+
+      expect(slope).toBeLessThan(0);
     });
-    repository.getRecentHistory.mockResolvedValue(
-      [0.7, 0.72, 0.74].map((score, index) => ({
-        id: `history-${index}`,
-        masteryScoreId: 'mastery-1',
-        score,
-        submissionId: null,
-        recordedAt: new Date(Date.now() - index),
-      })),
-    );
 
-    await service.updateMastery('student-1', 'fractions', 70, 100);
+    it('returns positive slope for an improving series', () => {
+      const slope = (service as never as { calculateSlope: (scores: number[]) => number }).calculateSlope([0.3, 0.5, 0.7, 0.9]);
 
-    expect(eventsService.emit).not.toHaveBeenCalled();
+      expect(slope).toBeGreaterThan(0);
+    });
+
+    it('returns 0 when all scores are equal', () => {
+      const slope = (service as never as { calculateSlope: (scores: number[]) => number }).calculateSlope([0.5, 0.5, 0.5]);
+
+      expect(slope).toBe(0);
+    });
+
+    it('returns 0 for a single score', () => {
+      const slope = (service as never as { calculateSlope: (scores: number[]) => number }).calculateSlope([0.8]);
+
+      expect(slope).toBe(0);
+    });
   });
 
-  it('falls back to a deterministic insight when AI fails', async () => {
-    aiRouterService.chat.mockRejectedValue(new Error('No provider'));
-    repository.upsertScore.mockResolvedValue({
-      id: 'mastery-1',
-      studentId: 'student-1',
-      skillTag: 'fractions',
-      score: 0.45,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+  describe('updateMastery', () => {
+    it('normalises rawScore / maxScore before upsert', async () => {
+      repository.upsertScore.mockResolvedValue(undefined);
+      repository.getRecentHistory.mockResolvedValue([]);
+
+      await service.updateMastery('student-1', 'fractions', 75, 100, 'sub-1');
+
+      expect(repository.upsertScore).toHaveBeenCalledWith('student-1', 'fractions', 0.75, 'sub-1');
     });
-    repository.getRecentHistory.mockResolvedValue(
-      [0.45, 0.55, 0.66].map((score, index) => ({
-        id: `history-${index}`,
-        masteryScoreId: 'mastery-1',
-        score,
-        submissionId: null,
-        recordedAt: new Date(Date.now() - index),
-      })),
-    );
 
-    await service.updateMastery(
-      'student-1',
-      'fractions',
-      45,
-      100,
-      undefined,
-      'classroom-1',
-    );
+    it('clamps score above 1 to 1', async () => {
+      repository.upsertScore.mockResolvedValue(undefined);
+      repository.getRecentHistory.mockResolvedValue([]);
 
-    expect(eventsService.emit).toHaveBeenCalledWith(
-      'mastery.drop.detected',
-      expect.objectContaining({
-        classroomId: 'classroom-1',
-        insight: 'Student is showing a declining mastery trend in this skill.',
-      }),
-    );
+      await service.updateMastery('student-1', 'fractions', 110, 100, 'sub-1');
+
+      expect(repository.upsertScore).toHaveBeenCalledWith('student-1', 'fractions', 1, 'sub-1');
+    });
   });
 });

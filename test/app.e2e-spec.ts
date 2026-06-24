@@ -1,10 +1,10 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
-import request = require('supertest');
-import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
+import { Test, TestingModule } from "@nestjs/testing";
+import { INestApplication } from "@nestjs/common";
+import request = require("supertest");
+import { AppModule } from "../src/app.module";
+import { PrismaService } from "../src/prisma/prisma.service";
 
-describe('Health endpoint', () => {
+describe("Health endpoint", () => {
   let app: INestApplication;
 
   beforeEach(async () => {
@@ -15,6 +15,7 @@ describe('Health endpoint', () => {
       .useValue({
         onModuleInit: jest.fn(),
         onModuleDestroy: jest.fn(),
+        $queryRaw: jest.fn().mockResolvedValue([{ health: 1 }]),
       })
       .compile();
 
@@ -26,15 +27,15 @@ describe('Health endpoint', () => {
     await app.close();
   });
 
-  it('/api/v1/health (GET)', () => {
+  it("/api/v1/health (GET)", () => {
     return request(app.getHttpServer())
-      .get('/api/v1/health')
+      .get("/api/v1/health")
       .expect(200)
       .expect((response) => {
         expect(response.body).toMatchObject({
           success: true,
           data: {
-            status: 'ok',
+            status: "ok",
           },
         });
       });

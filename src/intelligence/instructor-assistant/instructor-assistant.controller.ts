@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { InstructorContent, Role } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
+import { GenerateCourseContentDto } from './dto/generate-course-content.dto';
 import { GenerateFeedbackDto } from './dto/generate-feedback.dto';
 import { GenerateInsightDto } from './dto/generate-insight.dto';
 import { GenerateRubricDto } from './dto/generate-rubric.dto';
@@ -19,6 +20,19 @@ export class InstructorAssistantController {
   constructor(
     private readonly instructorAssistantService: InstructorAssistantService,
   ) {}
+
+  @Post('course-content')
+  async generateCourseContent(
+    @Body() dto: GenerateCourseContentDto,
+    @CurrentUser() _user: AuthenticatedUser,
+  ): Promise<{
+    success: true;
+    data: { lessonContent: string; quizContent: string };
+  }> {
+    const data =
+      await this.instructorAssistantService.generateCourseContent(dto);
+    return { success: true, data };
+  }
 
   @Post('insights')
   async generateInsight(
