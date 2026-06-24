@@ -1,7 +1,6 @@
-# Install devDependencies (nest CLI, typescript, prisma) even under NODE_ENV=production,
-# and generate the Prisma client before building.
-[phases.install]
-cmds = ["npm ci --include=dev"]
-
+# Generate the Prisma client before building. Dev dependencies install via the Railway
+# variable NPM_CONFIG_INCLUDE=dev on the DEFAULT Nixpacks install step. We intentionally do
+# NOT override [phases.install] — a second `npm ci` collides with the Docker cache mount at
+# /app/node_modules/.cache and fails with EBUSY.
 [phases.build]
 cmds = ["npx prisma generate", "npm run build"]
