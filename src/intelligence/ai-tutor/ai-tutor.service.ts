@@ -40,6 +40,7 @@ Rules you must never break:
   async startSession(
     studentId: string,
     assignmentId?: string,
+    topic?: string,
   ): Promise<TutorSession> {
     const activeSessions = await this.repository.countActiveSessions(studentId);
     if (activeSessions >= 3) {
@@ -55,7 +56,21 @@ Rules you must never break:
       if (!assignment) throw new NotFoundException('Assignment not found');
     }
 
-    return this.repository.createSession(studentId, assignmentId);
+    const session = await this.repository.createSession(studentId, assignmentId);
+
+    // When launched from a diagnostic gap, seed a focused Socratic opener so the
+    // AI tutor starts teaching that exact skill immediately. Stored as the first
+    // message, so it shows on load and the topic carries through the context.
+    const focus = topic?.trim();
+    if (focus) {
+      await this.repository.appendMessage(
+        session.id,
+        TutorMessageRole.TUTOR,
+        `Let's work on **${focus}**. To start, tell me what you already know about it — or try a first example and I'll guide you from there. What feels trickiest about it?`,
+      );
+    }
+
+    return session;
   }
 
   async sendMessage(

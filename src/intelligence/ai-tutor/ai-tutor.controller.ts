@@ -25,6 +25,7 @@ export class AITutorController {
     const data = await this.aiTutorService.startSession(
       user.userId,
       dto.assignmentId,
+      dto.topic,
     );
     return { success: true, data };
   }
