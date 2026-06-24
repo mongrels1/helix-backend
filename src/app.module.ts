@@ -13,6 +13,7 @@ import { ExperienceModule } from './experience/experience.module';
 import { AIRouterModule } from './intelligence/ai-router/ai-router.module';
 import { AITutorModule } from './intelligence/ai-tutor/ai-tutor.module';
 import { InstructorAssistantModule } from './intelligence/instructor-assistant/instructor-assistant.module';
+import { DiagnosticModule } from './intelligence/diagnostic/diagnostic.module';
 import { MasteryEngineModule } from './intelligence/mastery-engine/mastery-engine.module';
 import { PacingEngineModule } from './intelligence/pacing-engine/pacing-engine.module';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
@@ -67,6 +68,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AIRouterModule,
     AITutorModule,
     InstructorAssistantModule,
+    DiagnosticModule,
     MasteryEngineModule,
     PacingEngineModule,
     EventsModule,

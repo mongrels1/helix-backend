@@ -113,6 +113,7 @@ model User {
   deletedAt    DateTime?
   refreshTokens RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  diagnosticSessions DiagnosticSession[] @relation("UserDiagnostics")
 }
 
 model ParentStudentLink {
@@ -490,4 +491,40 @@ model RubricCriteria {
   maxScore    Float
   order       Int
   rubric      Rubric  @relation(fields: [rubricId], references: [id])
+}
+
+model DiagnosticSession {
+  id          String               @id @default(uuid())
+  userId      String?
+  user        User?                @relation("UserDiagnostics", fields: [userId], references: [id])
+  studentName String?
+  grade       String?
+  length      String
+  theta       Float
+  se          Float
+  itemsAsked  Int
+  profile     Json
+  claimToken  String?              @unique
+  responses   DiagnosticResponse[]
+  completedAt DateTime             @default(now())
+  createdAt   DateTime             @default(now())
+
+  @@index([userId])
+}
+
+model DiagnosticResponse {
+  id        String            @id @default(uuid())
+  sessionId String
+  session   DiagnosticSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  itemId    String
+  strand    String
+  kc        String
+  b         Float
+  picked    String
+  answer    String
+  correct   Boolean
+  tag       String
+  position  Int
+
+  @@index([sessionId])
 }
