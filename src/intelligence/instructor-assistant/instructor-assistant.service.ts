@@ -99,6 +99,134 @@ Keep answers short enough for exact string matching.`;
     }
   }
 
+  /**
+   * Slim, single-skill variant of generateCourseContent used by the autonomous
+   * teach -> re-check loop. Returns the SAME shape (lessonContent + quizContent
+   * as JSON strings) but scoped to one knowledge component: short direct
+   * instruction + ONE worked example + a brief 4-option MC check. Cheaper and
+   * faster than a full unit, with a deterministic fallback so it never throws.
+   */
+  async generateMiniLesson(params: {
+    kc: string;
+    grade?: number;
+  }): Promise<{ lessonContent: string; quizContent: string }> {
+    const kc = params.kc;
+    const fallback = this.miniLessonFallback(kc);
+    const prompt = `You are an expert K-12 math interventionist.
+A student has a specific skill gap. Create a SHORT, targeted mini-lesson for exactly this skill, then a brief multiple-choice check.
+
+Skill (knowledge component): ${kc}
+${params.grade ? `Approximate grade level: ${params.grade}` : ''}
+
+Return ONLY valid JSON. No markdown fences, no prose, no comments.
+One JSON object with exactly these keys:
+{
+  "lessonContent": {
+    "type": "mini-lesson",
+    "standard": "${kc}",
+    "learningTargets": ["I can ..."],
+    "instruction": "2-4 sentences of direct instruction for THIS skill, then ONE fully worked example with clear steps.",
+    "exitTicket": ["One quick reflection question."]
+  },
+  "quizContent": [
+    {
+      "question": "Question text",
+      "options": ["A", "B", "C", "D"],
+      "answer": 0,
+      "solution": "Explanation of the correct answer."
+    }
+  ]
+}
+
+Make exactly 3 multiple-choice questions, each with 4 options, all focused only on ${kc}. Keep answers short enough for exact matching.`;
+
+    const raw = await this.generateText(
+      prompt,
+      900,
+      0.5,
+      JSON.stringify({
+        lessonContent: JSON.parse(fallback.lessonContent),
+        quizContent: JSON.parse(fallback.quizContent),
+      }),
+    );
+
+    try {
+      const parsed = JSON.parse(raw) as {
+        lessonContent?: unknown;
+        quizContent?: unknown;
+      };
+      if (!parsed.lessonContent || !Array.isArray(parsed.quizContent)) {
+        return fallback;
+      }
+      return {
+        lessonContent:
+          typeof parsed.lessonContent === 'string'
+            ? parsed.lessonContent
+            : JSON.stringify(parsed.lessonContent),
+        quizContent:
+          typeof parsed.quizContent === 'string'
+            ? parsed.quizContent
+            : JSON.stringify(parsed.quizContent),
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  private miniLessonFallback(kc: string): {
+    lessonContent: string;
+    quizContent: string;
+  } {
+    const lessonContent = {
+      type: 'mini-lesson',
+      standard: kc,
+      learningTargets: [`I can solve problems involving ${kc}.`],
+      instruction: `Let's focus on ${kc}. Start by recalling the key idea, then follow the steps in this worked example carefully. Identify what is given, choose the strategy that fits ${kc}, solve one step at a time, and check that your answer makes sense before moving on.`,
+      exitTicket: [`In your own words, what is the first step when working on ${kc}?`],
+    };
+    const quizContent = [
+      {
+        question: `Which step comes first when solving a problem about ${kc}?`,
+        options: [
+          'Identify the given information',
+          'Guess an answer',
+          'Skip to the end',
+          'Erase the problem',
+        ],
+        answer: 0,
+        solution:
+          'Start by identifying what information you are given and what you need to find.',
+      },
+      {
+        question: `Why is it important to check your answer for ${kc}?`,
+        options: [
+          'To confirm the answer is reasonable',
+          'To make the work longer',
+          'It is never important',
+          'To change the question',
+        ],
+        answer: 0,
+        solution: 'Checking confirms the answer is reasonable for the problem.',
+      },
+      {
+        question: `What shows strong understanding of ${kc}?`,
+        options: [
+          'Clear steps with a brief explanation',
+          'Only a final answer',
+          'A random guess',
+          'A copied definition',
+        ],
+        answer: 0,
+        solution:
+          'Showing clear steps and a short explanation demonstrates understanding.',
+      },
+    ];
+    return {
+      lessonContent: JSON.stringify(lessonContent),
+      quizContent: JSON.stringify(quizContent),
+    };
+  }
+
   async generateInsight(params: {
     classroomId: string;
     assignmentId: string;
