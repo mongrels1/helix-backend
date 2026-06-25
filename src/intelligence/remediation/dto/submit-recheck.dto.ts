@@ -17,11 +17,19 @@ export class RecheckResponseDto {
   @IsOptional()
   id?: string;
 
-  /** The option index the student picked (0-3). */
+  /** The option index the student picked, in the order they were shown (0-3). */
   @IsInt()
   @Min(0)
   @Max(3)
   choice!: number;
+
+  /**
+   * The TEXT of the picked option. Used to grade bank items, whose options are
+   * shuffled per serve, so the displayed index can't be matched to the stored key.
+   */
+  @IsString()
+  @IsOptional()
+  text?: string;
 
   /**
    * AI answer key for the item (formative source only). Ignored for the bank

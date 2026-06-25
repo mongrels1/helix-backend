@@ -48,6 +48,19 @@ export interface RecheckResult {
 }
 
 /**
+ * Fisher-Yates index permutation. We shuffle every served check so the correct
+ * option is never in a fixed position (bank items store the key at index 0).
+ */
+function shuffleIndices(n: number): number[] {
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order;
+}
+
+/**
  * The teach -> re-check loop. Reuses the existing course-content generator for the
  * mini-lesson and the mastery engine for the feedback rail. Bank-first: a calibrated
  * (server-graded) re-check where the 89-item bank covers the KC, AI-generated
@@ -84,11 +97,13 @@ export class RemediationService {
         check: {
           source: 'bank',
           formative: false,
-          // Never send the correct index for the scored path.
+          // Shuffle so the key isn't always first; never send the correct index.
           items: calibrated.map((item: CalibratedItem) => ({
             id: item.id,
             question: item.stem,
-            options: item.options,
+            options: shuffleIndices(item.options.length).map(
+              (i) => item.options[i],
+            ),
           })),
         },
       };
@@ -118,13 +133,19 @@ export class RemediationService {
         items: quiz
           .filter((q) => q.question && Array.isArray(q.options))
           .slice(0, RECHECK_ITEM_LIMIT)
-          .map((q, index) => ({
-            id: `ai-${index}`,
-            question: q.question as string,
-            options: q.options as string[],
-            answer: typeof q.answer === 'number' ? q.answer : 0,
-            solution: q.solution,
-          })),
+          .map((q, index) => {
+            const opts = q.options as string[];
+            const originalAnswer = typeof q.answer === 'number' ? q.answer : 0;
+            const order = shuffleIndices(opts.length);
+            return {
+              id: `ai-${index}`,
+              question: q.question as string,
+              options: order.map((i) => opts[i]),
+              // Re-map the key to its shuffled position (formative path).
+              answer: order.indexOf(originalAnswer),
+              solution: q.solution,
+            };
+          }),
       },
     };
   }
@@ -142,10 +163,19 @@ export class RemediationService {
     let correct = 0;
 
     if (dto.source === 'bank') {
-      // Authoritative: grade against the calibrated bank by item id.
+      // Authoritative: grade against the calibrated bank by item id. Options are
+      // shuffled per serve, so grade by the chosen option's TEXT (the index the
+      // student saw won't match the stored order). Fall back to index only if no
+      // text was sent (older clients).
       for (const response of dto.responses) {
         const item = DIAGNOSTIC_ITEM_BANK.find((i) => i.id === response.id);
-        if (item && item.correct === response.choice) correct += 1;
+        if (!item) continue;
+        const correctText = item.options[item.correct];
+        const isCorrect =
+          response.text !== undefined
+            ? response.text === correctText
+            : response.choice === item.correct;
+        if (isCorrect) correct += 1;
       }
     } else {
       // Formative: each response carries the AI key; compare against the pick.
