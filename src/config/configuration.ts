@@ -20,6 +20,7 @@ export default () => ({
   email: {
     resendApiKey: process.env.RESEND_API_KEY ?? '',
     from: process.env.EMAIL_FROM ?? 'Helix <onboarding@resend.dev>',
+    alertTo: process.env.ADMIN_ALERT_EMAIL ?? '',
   },
   r2: {
     accountId: process.env.R2_ACCOUNT_ID ?? '',

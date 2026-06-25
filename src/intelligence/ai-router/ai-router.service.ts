@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { EmailService } from '../../modules/email/email.service';
 import {
   AIProvider,
   AIRequest,
@@ -18,12 +19,18 @@ import {
 export class AIRouterService {
   private readonly logger = new Logger(AIRouterService.name);
   private readonly timeoutMs = 8000;
-  private readonly providerChain: AIProvider[] = ['openai', 'gemini', 'claude'];
+  private readonly providerChain: AIProvider[] = ['claude', 'openai', 'gemini'];
+  private lastAlertAt = 0;
+  private readonly alertCooldownMs = 15 * 60 * 1000;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly email: EmailService,
+  ) {}
 
   async chat(req: AIRequest): Promise<AIResponse> {
     const providers = this.getProviderOrder(req.preferredProvider);
+    const failures: string[] = [];
 
     for (const provider of providers) {
       try {
@@ -36,10 +43,16 @@ export class AIRouterService {
         );
         return response;
       } catch (error) {
-        this.logger.warn(`AI provider ${provider} failed: ${String(error)}`);
+        const reason = String(error);
+        failures.push(`${provider}: ${reason}`);
+        this.logger.warn(`AI provider ${provider} failed: ${reason}`);
       }
     }
 
+    this.logger.error(
+      `All AI providers failed (${providers.join(', ')}). ${failures.join(' | ')}`,
+    );
+    void this.alertAllProvidersDown(failures);
     throw new InternalServerErrorException('AI service temporarily unavailable');
   }
 
@@ -58,6 +71,29 @@ export class AIRouterService {
         configured: Boolean(this.config.get<string>('ai.anthropicKey')),
       },
     ];
+  }
+
+  private async alertAllProvidersDown(failures: string[]): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastAlertAt < this.alertCooldownMs) return;
+    this.lastAlertAt = now;
+    const quotaHit = failures.some((f) =>
+      /429|quota|billing|insufficient/i.test(f),
+    );
+    const subject = quotaHit
+      ? '[Helix] AI quota exhausted - all providers down'
+      : '[Helix] AI service down - all providers failing';
+    const body =
+      `All AI providers failed at ${new Date(now).toISOString()}. ` +
+      `Failures: ${failures.join(' | ')}.` +
+      (quotaHit
+        ? ' Likely cause: provider quota/billing exhausted - add credits or confirm a funded fallback provider key.'
+        : '');
+    try {
+      await this.email.sendAdminAlert(subject, body);
+    } catch (err) {
+      this.logger.error(`Failed to send AI alert email: ${String(err)}`);
+    }
   }
 
   private async callProvider(
@@ -142,7 +178,7 @@ export class AIRouterService {
     const startedAt = Date.now();
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: 'claude-opus-4-8',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: req.maxTokens ?? 1024,
       temperature: req.temperature ?? 0.7,
       ...(req.systemPrompt ? { system: req.systemPrompt } : {}),

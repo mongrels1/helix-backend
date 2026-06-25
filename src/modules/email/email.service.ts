@@ -31,6 +31,22 @@ export class EmailService {
       text: `Reset your Helix password: ${resetUrl}\n\nThis link expires in 1 hour. If you did not request this, you can ignore this email.`,
     });
   }
+  async sendAdminAlert(subject: string, text: string): Promise<void> {
+    const to = this.config.get<string>('email.alertTo')?.trim();
+    if (!to) {
+      this.logger.error(
+        `Admin alert not sent (email.alertTo not configured): ${subject}`,
+      );
+      return;
+    }
+    await this.sendEmail({
+      to,
+      subject,
+      html: `<pre>${this.escapeHtml(text)}</pre>`,
+      text,
+    });
+  }
+
   private async sendEmail(message: {
     to: string;
     subject: string;
