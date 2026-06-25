@@ -8,3 +8,8 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 .npm-cache
+
+# hardening: never commit build info; broaden env ignore (keep example)
+tsconfig.build.tsbuildinfo
+.env.*
+!.env.example
