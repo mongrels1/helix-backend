@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InstructorContent, InstructorContentType } from '@prisma/client';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -12,6 +12,22 @@ export class InstructorAssistantService {
     private readonly aiRouterService: AIRouterService,
     private readonly prisma: PrismaService,
   ) {}
+
+  private readonly logger = new Logger(InstructorAssistantService.name);
+
+  /** Strip markdown fences / surrounding prose and isolate the outermost JSON object. */
+  private extractJsonString(raw: string): string {
+    if (!raw) return raw;
+    let s = raw.trim();
+    const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    if (fence) s = fence[1].trim();
+    const first = s.indexOf('{');
+    const last = s.lastIndexOf('}');
+    if (first !== -1 && last !== -1 && last > first) {
+      s = s.slice(first, last + 1);
+    }
+    return s.trim();
+  }
 
   async generateCourseContent(
     dto: GenerateCourseContentDto,
@@ -77,11 +93,14 @@ Keep answers short enough for exact string matching.`;
     );
 
     try {
-      const parsed = JSON.parse(raw) as {
+      const parsed = JSON.parse(this.extractJsonString(raw)) as {
         lessonContent?: unknown;
         quizContent?: unknown;
       };
       if (!parsed.lessonContent || !Array.isArray(parsed.quizContent)) {
+        this.logger.warn(
+          `AI lesson JSON had unexpected shape; using fallback. raw[0..300]=${raw.slice(0, 300)}`,
+        );
         return fallback;
       }
       return {
@@ -94,7 +113,8 @@ Keep answers short enough for exact string matching.`;
             ? parsed.quizContent
             : JSON.stringify(parsed.quizContent),
       };
-    } catch {
+    } catch (err) {
+      this.logger.warn(`AI call/parse failed; using fallback. err=${String(err)}`);
       return fallback;
     }
   }
@@ -151,11 +171,14 @@ Make exactly 3 multiple-choice questions, each with 4 options, all focused only 
     );
 
     try {
-      const parsed = JSON.parse(raw) as {
+      const parsed = JSON.parse(this.extractJsonString(raw)) as {
         lessonContent?: unknown;
         quizContent?: unknown;
       };
       if (!parsed.lessonContent || !Array.isArray(parsed.quizContent)) {
+        this.logger.warn(
+          `AI lesson JSON had unexpected shape; using fallback. raw[0..300]=${raw.slice(0, 300)}`,
+        );
         return fallback;
       }
       return {
@@ -168,7 +191,8 @@ Make exactly 3 multiple-choice questions, each with 4 options, all focused only 
             ? parsed.quizContent
             : JSON.stringify(parsed.quizContent),
       };
-    } catch {
+    } catch (err) {
+      this.logger.warn(`AI call/parse failed; using fallback. err=${String(err)}`);
       return fallback;
     }
   }
@@ -386,7 +410,8 @@ one concrete improvement suggestion.`;
         temperature,
       });
       return ai.text || fallback;
-    } catch {
+    } catch (err) {
+      this.logger.warn(`AI call/parse failed; using fallback. err=${String(err)}`);
       return fallback;
     }
   }
