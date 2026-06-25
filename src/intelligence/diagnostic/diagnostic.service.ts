@@ -177,7 +177,7 @@ export class DiagnosticService {
     classroomId: string | undefined,
     gaps: string[],
   ): Promise<void> {
-    const MAX_AUTO_LESSONS = 3;
+    const MAX_AUTO_LESSONS = 12;
     for (const kc of gaps.slice(0, MAX_AUTO_LESSONS)) {
       try {
         const lesson = await this.remediation.buildLesson({ kc });
