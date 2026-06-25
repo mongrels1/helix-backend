@@ -42,11 +42,21 @@ Rules you must never break:
     assignmentId?: string,
     topic?: string,
   ): Promise<TutorSession> {
-    const activeSessions = await this.repository.countActiveSessions(studentId);
-    if (activeSessions >= 3) {
-      throw new BadRequestException(
-        'Maximum 3 active tutoring sessions allowed at once.',
-      );
+    const MAX_ACTIVE_TUTOR_SESSIONS = 3;
+    const activeSessions =
+      await this.repository.countActiveSessions(studentId);
+    if (activeSessions >= MAX_ACTIVE_TUTOR_SESSIONS) {
+      // Never block the student: retire the oldest active session(s) so a new
+      // one can always start (no orphaned-session pileup, no dead-end wall).
+      const studentSessions =
+        await this.repository.findSessionsForStudent(studentId);
+      const oldestActiveFirst = studentSessions
+        .filter((ts) => ts.status === TutorSessionStatus.ACTIVE)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      const closeCount = activeSessions - MAX_ACTIVE_TUTOR_SESSIONS + 1;
+      for (const stale of oldestActiveFirst.slice(0, closeCount)) {
+        await this.repository.endSession(stale.id);
+      }
     }
 
     if (assignmentId) {
@@ -86,11 +96,6 @@ Rules you must never break:
     if (session.status === TutorSessionStatus.ENDED) {
       throw new BadRequestException('Tutor session has ended');
     }
-    if (session.messages.length >= 40) {
-      throw new BadRequestException(
-        'Session message limit reached. Please start a new session.',
-      );
-    }
 
     await this.repository.appendMessage(
       sessionId,
@@ -98,7 +103,10 @@ Rules you must never break:
       studentMessage,
     );
 
-    const conversationHistory = session.messages.map((message) =>
+    const TUTOR_CONTEXT_WINDOW = 20;
+    const conversationHistory = session.messages
+      .slice(-TUTOR_CONTEXT_WINDOW)
+      .map((message) =>
       this.toConversationMessage(message),
     );
     const contextNote = await this.getAssignmentContext(session.assignmentId);
