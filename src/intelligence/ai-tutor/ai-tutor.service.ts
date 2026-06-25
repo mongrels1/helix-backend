@@ -75,7 +75,7 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       await this.repository.appendMessage(
         session.id,
         TutorMessageRole.TUTOR,
-        `Let's work on "${focus}". To start, tell me what you already know about it — or try a first example and I'll guide you from there. What feels trickiest about it?`,
+        await this.generateOpener(focus),
       );
     }
 
@@ -167,6 +167,20 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       : '';
   }
 
+  private async generateOpener(focus: string): Promise<string> {
+    const fallback = `Let's learn ${focus} together! I'll show you how it works one step at a time. Here's a simple example to start, then you'll try one.`;
+    try {
+      const ai = await this.aiRouterService.chat({
+        prompt: `Begin tutoring the skill "${focus}" right now. Teach the core idea in one or two simple sentences, then show ONE quick worked example with real numbers, then give the student one easy "you try" problem on this skill. Lead it - do NOT ask what they already know.`,
+        systemPrompt: this.SOCRATIC_SYSTEM_PROMPT,
+        maxTokens: 220,
+        temperature: 0.6,
+      });
+      return ai.text || fallback;
+    } catch {
+      return fallback;
+    }
+  }
   private async getTutorReply(
     studentMessage: string,
     conversationHistory: ConversationMessage[],
@@ -182,7 +196,7 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       });
       return ai.text;
     } catch {
-      return "That's an interesting question. What do you already know about this topic?";
+      return "Let's keep going - try this next small step and tell me what you get.";
     }
   }
 
