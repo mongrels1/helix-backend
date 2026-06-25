@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -8,12 +9,18 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MasteryEngineService } from '../mastery-engine/mastery-engine.service';
 import { SaveDiagnosticDto } from './dto/save-diagnostic.dto';
+import { RemediationService } from '../remediation/remediation.service';
+import { NotificationsService } from '../../modules/notifications/notifications.service';
 
 @Injectable()
 export class DiagnosticService {
+  private readonly logger = new Logger(DiagnosticService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly masteryEngine: MasteryEngineService,
+    private readonly remediation: RemediationService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -113,11 +120,94 @@ export class DiagnosticService {
       entry.n += 1;
       byKc.set(response.kc, entry);
     }
+    // Resolve the student's classroom so mastery updates carry classroom context
+    // (lets the pacing / teacher-alert chain attribute the gap to a classroom).
+    const classroomId = await this.resolveClassroomId(userId);
+    const gaps: string[] = [];
     for (const [kc, { sum, n }] of byKc) {
+      const score = sum / n;
+      if (score < 0.6) gaps.push(kc);
       try {
-        await this.masteryEngine.updateMastery(userId, kc, sum / n, 1);
+        await this.masteryEngine.updateMastery(
+          userId,
+          kc,
+          score,
+          1,
+          undefined,
+          classroomId,
+        );
       } catch {
         // Best-effort: skip this KC if the mastery update fails.
+      }
+    }
+    // Zero-touch autonomous trigger (feature-flagged, best-effort): on a finished
+    // diagnostic, push a ready-to-use mini-lesson per gap and flag each gap to the
+    // teacher's pacing alerts. Fire-and-forget so it never blocks the save.
+    if (this.autoRemediationEnabled() && gaps.length > 0) {
+      void this.triggerAutoRemediation(userId, classroomId, gaps);
+    }
+  }
+
+  private autoRemediationEnabled(): boolean {
+    return (process.env.AUTO_REMEDIATION_ENABLED ?? '').toLowerCase() === 'true';
+  }
+
+  /** Find the student's classroom via enrollment, if any. */
+  private async resolveClassroomId(
+    userId: string,
+  ): Promise<string | undefined> {
+    try {
+      const enrollment = await this.prisma.enrollment.findFirst({
+        where: { studentId: userId },
+        select: { classroomId: true },
+      });
+      return enrollment?.classroomId;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * For each gap KC: build a targeted mini-lesson and push it to the student as an
+   * in-app notification (lesson embedded in metadata + a link to the lesson view),
+   * then flag the gap to the teacher's pacing alerts. Bounded and best-effort.
+   */
+  private async triggerAutoRemediation(
+    userId: string,
+    classroomId: string | undefined,
+    gaps: string[],
+  ): Promise<void> {
+    const MAX_AUTO_LESSONS = 3;
+    for (const kc of gaps.slice(0, MAX_AUTO_LESSONS)) {
+      try {
+        const lesson = await this.remediation.buildLesson({ kc });
+        await this.notifications.notify({
+          userId,
+          title: `New lesson ready: ${kc}`,
+          body: `Your diagnostic showed a gap in ${kc}. A short lesson and quick check are ready for you.`,
+          metadata: {
+            type: 'auto_remediation',
+            kc,
+            link: `/dashboard/student/learn?kc=${encodeURIComponent(kc)}`,
+            lesson,
+          },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `auto-remediation lesson failed for kc=${kc}: ${String(err)}`,
+        );
+      }
+      try {
+        await this.masteryEngine.flagGapForPacing({
+          studentId: userId,
+          skillTag: kc,
+          currentScore: 0.15,
+          classroomId,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `auto-remediation pacing flag failed for kc=${kc}: ${String(err)}`,
+        );
       }
     }
   }

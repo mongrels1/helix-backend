@@ -31,6 +31,28 @@ export class MasteryEngineService {
     await this.checkAndEmitDrop(studentId, skillTag, classroomId);
   }
 
+  /**
+   * Directly flag a skill gap to the pacing / teacher-alert pipeline, bypassing
+   * the declining-trend gate in checkAndEmitDrop. Used by the post-diagnostic
+   * zero-touch trigger so a single diagnostic gap reaches the teacher's pacing
+   * alerts immediately. Emits the same event shape the trend detector uses.
+   */
+  async flagGapForPacing(params: {
+    studentId: string;
+    skillTag: string;
+    currentScore: number;
+    classroomId?: string;
+  }): Promise<void> {
+    await this.eventsService.emit('mastery.drop.detected', {
+      studentId: params.studentId,
+      classroomId: params.classroomId,
+      skillTag: params.skillTag,
+      currentScore: params.currentScore,
+      slope: -1,
+      insight: `A diagnostic identified a gap in ${params.skillTag}.`,
+    });
+  }
+
   async getMasteryForStudent(
     studentId: string,
   ): Promise<MasteryScoreEntity[]> {
