@@ -97,7 +97,7 @@ Hard requirements:
   Shapes (copy the structure, change the numbers/labels):
   {"type":"number_line","min":0,"max":60,"ticks":10,"marks":[{"at":20,"label":"20 mi"},{"at":40,"label":"40 mi"}],"jumps":[{"from":0,"to":20,"label":"1 hr"},{"from":20,"to":40,"label":"+1 hr"}]}
   {"type":"fraction_bar","whole":4,"shaded":3,"label":"three fourths"}
-  {"type":"rect","w":6,"h":4,"unit":"cm"}
+  {"type":"rect","w":6,"h":4,"unit":"cm","mode":"area"} (use "mode":"perimeter" for perimeter problems and "mode":"area" for multiplication or area)
   {"type":"bar_graph","bars":[{"label":"Mon","value":5}],"unit":"books"}
   {"type":"spinner","sectors":[{"label":"Red","weight":1},{"label":"Blue","weight":3}]}
   {"type":"geogebra","appName":"graphing","commands":["f(x)=2x+1"]}
@@ -184,7 +184,7 @@ One JSON object with exactly these keys:
 Visual figures [figure-specs:v2-mini]: add a "figure" to lessonContent (illustrating the worked example) AND to any quiz question where a picture helps the student SEE the math. Emit JSON only (never ASCII art) with a short "altText". Choose by skill: ratios/rates/unit rates/proportions/scaling/"per" -> "number_line" (use TWO jump sets so both quantities advance together); fractions/parts of a whole/equivalent fractions -> "fraction_bar"; multiplication/division as sharing/area/arrays -> "rect"; comparing categorical data only -> "bar_graph" (never for a single rate); probability -> "spinner". Shapes (copy the structure, change numbers/labels):
 {"type":"number_line","min":0,"max":60,"ticks":10,"marks":[{"at":20,"label":"20 mi"},{"at":40,"label":"40 mi"}],"jumps":[{"from":0,"to":20,"label":"1 hr"},{"from":20,"to":40,"label":"+1 hr"}]}
 {"type":"fraction_bar","whole":4,"shaded":3,"label":"three fourths"}
-{"type":"rect","w":6,"h":4,"unit":"cm"}
+{"type":"rect","w":6,"h":4,"unit":"cm","mode":"area"} (use "mode":"perimeter" for perimeter problems and "mode":"area" for multiplication or area)
 {"type":"bar_graph","bars":[{"label":"Mon","value":5}],"unit":"books"}
 {"type":"spinner","sectors":[{"label":"Red","weight":1},{"label":"Blue","weight":3}]}
 Omit "figure" when no visual genuinely helps.
