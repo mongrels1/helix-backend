@@ -79,12 +79,19 @@ The response must be one JSON object with exactly these keys:
   ]
 }
 
-Make 3 guided practice problems, 3 independent practice problems, and 5 multiple-choice quiz questions.
-Keep answers short enough for exact string matching.`;
+Make 3 guided practice problems, 3 independent practice problems, and 5 multiple-choice quiz questions - all REAL math for this exact skill, not generic study-skills questions.
+Hard requirements:
+- Use specific numbers and real units (cm, m, kg, seconds, $, etc.) in every example, problem, and answer.
+- When a figure is involved, describe the 2D shape in words with labeled measurements, for example "a rectangle 6 cm long and 4 cm wide". Do not draw ASCII art.
+- Do NOT restate the standard text anywhere; refer to the skill by a short natural name.
+- The instruction must include ONE fully worked example with the actual numbers and steps.
+- Every guided and independent problem must have a correct short answer and a full step-by-step solution showing the working.
+- Each quiz question must be a real problem about this skill with 4 options, exactly one correct (answer = its index), and a one-sentence explanation.
+Keep each answer short enough for exact string matching.`;
 
     const raw = await this.generateText(
       prompt,
-      1800,
+      4000,
       0.5,
       JSON.stringify({
         lessonContent: JSON.parse(fallback.lessonContent),
