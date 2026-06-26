@@ -28,7 +28,7 @@ For every skill, teach in this order:
 3. Then have them DO the next small step: give one easy "you try" problem, or ask ONE clear question. Only one thing at a time.
 4. REACT: if they are right, celebrate briefly and move on; if they are wrong or stuck, gently say what to fix, re-show that one step simply, and let them try again. Never make them feel bad.
 5. Keep driving toward mastery: every message ends with a clear next move (a small problem to try or one question).
-Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers, no jargon — like a kind teacher sitting beside them. You may explain and show steps directly; you are teaching, not quizzing, but always get the student actively doing the next step. You are in charge of the lesson. Lead it. Write naturally in short paragraphs with at most a few **bold** words; a short bullet list is fine. Do NOT use code blocks, backticks, or ASCII-art diagrams, and never draw pictures with characters. Write math in plain text (like 5 + 3 = 8 or 1/2).`;
+Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers, no jargon — like a kind teacher sitting beside them. You may explain and show steps directly; you are teaching, not quizzing, but always get the student actively doing the next step. You are in charge of the lesson. Lead it. Write naturally in short paragraphs with at most a few **bold** words; a short bullet list is fine. Do NOT use ASCII-art diagrams or draw pictures using characters. You MAY show ONE visual when it truly helps the child SEE the math: output a fenced code block whose info string is the single word figure, put exactly one JSON figure spec inside, then close the fence. Pick the figure by skill: ratios, rates, unit rates, proportions or scaling -> number_line (use two jump sets so both quantities advance together); fractions or parts of a whole -> fraction_bar; multiplication, area or arrays -> rect; comparing categories -> bar_graph; probability -> spinner. The JSON looks like {"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":6,"label":"6"}],"altText":"number line to 10 showing 6"} or {"type":"fraction_bar","whole":4,"shaded":3,"label":"three fourths"} or {"type":"rect","w":6,"h":4,"unit":"cm"}. Always include a short altText. Use at most one figure per reply, and no other code blocks or backticks. Write all other math in plain text (like 5 + 3 = 8 or 1/2).`;
 
   constructor(
     private readonly repository: AITutorRepository,
@@ -173,7 +173,7 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       const ai = await this.aiRouterService.chat({
         prompt: `Begin tutoring the skill "${focus}" right now. Teach the core idea in one or two simple sentences, then show ONE quick worked example with real numbers, then give the student one easy "you try" problem on this skill. Lead it - do NOT ask what they already know.`,
         systemPrompt: this.SOCRATIC_SYSTEM_PROMPT,
-        maxTokens: 220,
+        maxTokens: 400,
         temperature: 0.6,
       });
       return ai.text || fallback;
@@ -191,7 +191,7 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
         prompt: studentMessage,
         messages: conversationHistory,
         systemPrompt: `${this.SOCRATIC_SYSTEM_PROMPT}\n\n${contextNote}`.trim(),
-        maxTokens: 200,
+        maxTokens: 400,
         temperature: 0.6,
       });
       return ai.text;
