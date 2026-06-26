@@ -87,6 +87,14 @@ Hard requirements:
 - The instruction must include ONE fully worked example with the actual numbers and steps.
 - Every guided and independent problem must have a correct short answer and a full step-by-step solution showing the working.
 - Each quiz question must be a real problem about this skill with 4 options, exactly one correct (answer = its index), and a one-sentence explanation.
+- Visual figures [figure-specs:v1]: add a "figure" field to a guided or independent problem when a picture helps the student SEE the math. Emit JSON only (never ASCII art), using EXACTLY one of these shapes, and include a short "altText":
+  {"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":7,"label":"7"}],"jumps":[{"from":0,"to":7,"label":"+7"}]}
+  {"type":"fraction_bar","whole":4,"shaded":3,"label":"three fourths"}
+  {"type":"rect","w":6,"h":4,"unit":"cm"}
+  {"type":"bar_graph","bars":[{"label":"Mon","value":5}],"unit":"books"}
+  {"type":"spinner","sectors":[{"label":"Red","weight":1},{"label":"Blue","weight":3}]}
+  {"type":"geogebra","appName":"graphing","commands":["f(x)=2x+1"]} (only for graphs/geometry too complex for the shapes above)
+  Prefer "figure" over a words-only "imageDescription"; omit "figure" when no visual helps.
 Keep each answer short enough for exact string matching.`;
 
     const raw = await this.generateText(
