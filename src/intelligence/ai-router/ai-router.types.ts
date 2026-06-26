@@ -13,6 +13,7 @@ export interface AIRequest {
   temperature?: number;
   preferredProvider?: AIProvider;
   systemPrompt?: string;
+  timeoutMs?: number;
 }
 
 export interface AIResponse {

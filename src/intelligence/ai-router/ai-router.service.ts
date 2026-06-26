@@ -36,7 +36,7 @@ export class AIRouterService {
       try {
         const response = await this.withTimeout(
           this.callProvider(provider, req),
-          this.timeoutMs,
+          req.timeoutMs ?? this.timeoutMs,
         );
         this.logger.log(
           `AI provider=${response.provider} latencyMs=${response.latencyMs} tokens=${response.tokensUsed}`,

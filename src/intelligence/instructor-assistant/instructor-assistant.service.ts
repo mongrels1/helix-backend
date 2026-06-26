@@ -97,6 +97,7 @@ Keep each answer short enough for exact string matching.`;
         lessonContent: JSON.parse(fallback.lessonContent),
         quizContent: JSON.parse(fallback.quizContent),
       }),
+      45000,
     );
 
     try {
@@ -409,12 +410,14 @@ one concrete improvement suggestion.`;
     maxTokens: number,
     temperature: number,
     fallback: string,
+    timeoutMs?: number,
   ): Promise<string> {
     try {
       const ai = await this.aiRouterService.chat({
         prompt,
         maxTokens,
         temperature,
+        timeoutMs,
       });
       return ai.text || fallback;
     } catch (err) {
