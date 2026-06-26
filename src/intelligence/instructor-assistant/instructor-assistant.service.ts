@@ -87,14 +87,21 @@ Hard requirements:
 - The instruction must include ONE fully worked example with the actual numbers and steps.
 - Every guided and independent problem must have a correct short answer and a full step-by-step solution showing the working.
 - Each quiz question must be a real problem about this skill with 4 options, exactly one correct (answer = its index), and a one-sentence explanation.
-- Visual figures [figure-specs:v1]: add a "figure" field to a guided or independent problem when a picture helps the student SEE the math. Emit JSON only (never ASCII art), using EXACTLY one of these shapes, and include a short "altText":
-  {"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":7,"label":"7"}],"jumps":[{"from":0,"to":7,"label":"+7"}]}
+- Visual figures [figure-specs:v2]: when a picture helps a student SEE the math, add a "figure" field to that problem. Emit JSON only (never ASCII art) and include a short "altText". CHOOSE the figure that teaches THIS skill:
+  - Ratios, rates, unit rates, proportions, scaling, "per", counting on, comparing amounts on a scale -> "number_line". For a rate, use TWO jump sets so both quantities advance together (e.g. hours and miles).
+  - Fractions, parts of a whole, equivalent fractions, percent of a whole -> "fraction_bar".
+  - Multiplication, division as equal sharing, area, arrays, the distributive property -> "rect" (area/array model).
+  - Reading or comparing CATEGORICAL data only -> "bar_graph". Never use a bar_graph to show a single rate, ratio, or unit rate.
+  - Probability -> "spinner".
+  - Coordinate graphs, straight lines, functions, or geometry that the shapes above cannot show -> "geogebra".
+  Shapes (copy the structure, change the numbers/labels):
+  {"type":"number_line","min":0,"max":60,"ticks":10,"marks":[{"at":20,"label":"20 mi"},{"at":40,"label":"40 mi"}],"jumps":[{"from":0,"to":20,"label":"1 hr"},{"from":20,"to":40,"label":"+1 hr"}]}
   {"type":"fraction_bar","whole":4,"shaded":3,"label":"three fourths"}
   {"type":"rect","w":6,"h":4,"unit":"cm"}
   {"type":"bar_graph","bars":[{"label":"Mon","value":5}],"unit":"books"}
   {"type":"spinner","sectors":[{"label":"Red","weight":1},{"label":"Blue","weight":3}]}
-  {"type":"geogebra","appName":"graphing","commands":["f(x)=2x+1"]} (only for graphs/geometry too complex for the shapes above)
-  Prefer "figure" over a words-only "imageDescription"; omit "figure" when no visual helps.
+  {"type":"geogebra","appName":"graphing","commands":["f(x)=2x+1"]}
+  Prefer a "figure" over a words-only "imageDescription"; omit "figure" when no visual genuinely helps.
 Keep each answer short enough for exact string matching.`;
 
     const raw = await this.generateText(
