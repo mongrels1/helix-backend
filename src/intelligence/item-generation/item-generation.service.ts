@@ -193,10 +193,13 @@ export class ItemGenerationService {
   }
 
   queue(q: { status?: string; batchId?: string; page?: number; pageSize?: number }) {
-    const page = q.page ?? 1;
-    const pageSize = q.pageSize ?? 25;
+    const page = Number(q.page) || 1;
+    const pageSize = Math.min(Number(q.pageSize) || 25, 1000);
     return this.prisma.draftItem.findMany({
-      where: { status: q.status as never, batchId: q.batchId },
+      where: {
+        status: (q.status as never) || undefined,
+        batchId: q.batchId || undefined,
+      },
       skip: (page - 1) * pageSize,
       take: pageSize,
       orderBy: { createdAt: 'desc' },
