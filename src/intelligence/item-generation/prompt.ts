@@ -13,7 +13,9 @@ For each version:
 - Keep it mathematically valid, uniquely solvable, and aligned to the base standard's grade (±1).
 - Vary CONTEXT, NUMBERS, and SKILL MIX per the requested versionType. No two versions may share
   the same scenario or the same set of numbers.
-- Write the stem in plain text and a clear step-by-step "solution".
+- Write the stem in PLAIN ENGLISH SENTENCES ONLY. NEVER put a table, grid, ASCII art, or any
+  Markdown in the stem — no pipe characters "|", no dashes rows like "---", no multi-line layout.
+  If the question needs a table or chart, the DATA goes in the "figure" field, NOT in the stem.
 - Provide 4 options. EXACTLY one is correct. EVERY wrong option must include a one-sentence
   "misconception" and a "misconceptionTag" (a canonical id supplied to you), mirroring the
   Illuminate bank style ("Student(s) may have ...").
@@ -22,7 +24,10 @@ For each version:
 
 VISUALS: when a version benefits from a picture (ALWAYS for geometry, probability, and
 chart/data items) add a "figure" field with ONE EdKairos figure spec (JSON only; never ASCII
-art, never GeoGebra commands). Use the figure type you are told to use for this standard.
+art, never GeoGebra commands, never a Markdown table). Use the figure type you are told to use
+for this standard. For a two-column data table use exactly:
+  {"type":"ratio_table","headers":["Wins","Losses"],"rows":[{"a":3,"b":2},{"a":6,"b":4}],"altText":"wins to losses"}
+and keep the stem a plain sentence that refers to "the table" without drawing it.
 
 When asked for "auto-slate of N", return N versions covering the six core types plus multi_step,
 data_interpretation, challenge, and misconception_trap, satisfying: >=3 multi-step, >=2 with a

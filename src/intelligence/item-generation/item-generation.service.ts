@@ -132,13 +132,15 @@ export class ItemGenerationService {
   ): Promise<void> {
     if (!Array.isArray(items) || !items.length) return;
     await this.prisma.draftItem.createMany({
-      data: items.map((it) => ({
+      data: items.map((it) => {
+        const conv = it.figure ? { stem: it.stem, figure: null } : this.tableToFigure(it.stem);
+        return {
         batchId,
         baseSourceId: base.sourceId ?? base.stem.slice(0, 40),
         status: 'draft' as const,
         versionType: it.versionType,
-        stem: it.stem,
-        figure: (it.figure as object) ?? undefined,
+        stem: conv.stem,
+        figure: (it.figure as object) ?? conv.figure ?? undefined,
         options: it.options as unknown as object,
         answer: String(it.answer),
         solution: it.solution,
@@ -153,8 +155,35 @@ export class ItemGenerationService {
         microDiagnosticSignal: it.microDiagnosticSignal ?? '',
         provenance: 'AIG',
         createdBy,
-      })),
+        };
+      }),
     });
+  }
+
+  /**
+   * Safety net: if the model put a 2-column Markdown table inside the stem,
+   * lift it into a ratio_table figure and leave the stem as a plain sentence.
+   * Only fires when there's a clear "| --- |" separator row.
+   */
+  private tableToFigure(stem: string): { stem: string; figure: Record<string, unknown> | null } {
+    if (!/\|\s*-{2,}/.test(stem)) return { stem, figure: null };
+    const start = stem.indexOf('|');
+    if (start < 0) return { stem, figure: null };
+    const head = stem.slice(0, start).trim();
+    const cells = stem.slice(start).split('|').map((c) => c.trim()).filter((c) => c !== '');
+    const dashCells = cells.filter((c) => /^-+$/.test(c));
+    if (dashCells.length !== 2) return { stem, figure: null }; // only 2-column tables
+    const nonDash = cells.filter((c) => !/^-+$/.test(c));
+    if (nonDash.length < 4) return { stem, figure: null };
+    const headers = [nonDash[0], nonDash[1]];
+    const data = nonDash.slice(2);
+    const rows: { a: string; b: string }[] = [];
+    for (let i = 0; i + 1 < data.length; i += 2) rows.push({ a: data[i], b: data[i + 1] });
+    if (!rows.length) return { stem, figure: null };
+    return {
+      stem: head || stem,
+      figure: { type: 'ratio_table', headers, rows, altText: `${headers[0]} to ${headers[1]} table` },
+    };
   }
 
   async review(
