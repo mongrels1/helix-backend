@@ -105,6 +105,10 @@ Hard requirements:
   {"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3}],"line":{"m":1,"b":0}} (plotting points, slope, linear functions, coordinate geometry)
   {"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4,4,5]} (data sets, mean, median, mode, range)
   {"type":"histogram","bins":[{"label":"0-9","count":3},{"label":"10-19","count":7}]} (frequency, grouped data)
+  {"type":"place_value_chart","value":3642,"highlight":["Tens"]} (place value, expanded/standard/word form, rounding, comparing multi-digit whole numbers)
+  {"type":"decimal_grid","value":0.37,"label":"0.37"} (decimals: tenths and hundredths)
+  {"type":"function_table","rule":"x 2 + 1","rows":[{"in":1,"out":3},{"in":2,"out":5}]} (input-output patterns, function rules, in/out tables)
+  {"type":"ratio_table","headers":["Cups","Cookies"],"rows":[{"a":3,"b":12},{"a":6,"b":24}]} (ratios, unit rates, equivalent ratios, proportional tables)
   GEOMETRY/3-D: for the Pythagorean theorem, right triangles, hypotenuse or legs, circles, 3-D solids, volume, or surface area, the simple shapes cannot show these so you MUST emit a geogebra figure with appName "geometry". Right-triangle example (legs 4 and 3): {"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle with legs 4 and 3"} Use ONLY point definitions (like A=(0,0)) and Polygon/Segment/Circle. Do NOT use Text, labels, or any other command - they cause errors.
   {"type":"geogebra","appName":"graphing","commands":["f(x)=2x+1"]}
   Prefer a "figure" over a words-only "imageDescription"; omit "figure" when no visual genuinely helps.
@@ -198,6 +202,10 @@ Visual figures [figure-specs:v2-mini]: add a "figure" to lessonContent (illustra
   {"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3}],"line":{"m":1,"b":0}} (plotting points, slope, linear functions, coordinate geometry)
   {"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4,4,5]} (data sets, mean, median, mode, range)
   {"type":"histogram","bins":[{"label":"0-9","count":3},{"label":"10-19","count":7}]} (frequency, grouped data)
+  {"type":"place_value_chart","value":3642,"highlight":["Tens"]} (place value, expanded/standard/word form, rounding, comparing multi-digit whole numbers)
+  {"type":"decimal_grid","value":0.37,"label":"0.37"} (decimals: tenths and hundredths)
+  {"type":"function_table","rule":"x 2 + 1","rows":[{"in":1,"out":3},{"in":2,"out":5}]} (input-output patterns, function rules, in/out tables)
+  {"type":"ratio_table","headers":["Cups","Cookies"],"rows":[{"a":3,"b":12},{"a":6,"b":24}]} (ratios, unit rates, equivalent ratios, proportional tables)
   GEOMETRY/3-D: for the Pythagorean theorem, right triangles, hypotenuse or legs, circles, 3-D solids, volume, or surface area, the simple shapes cannot show these so you MUST emit a geogebra figure with appName "geometry". Right-triangle example (legs 4 and 3): {"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle with legs 4 and 3"}
 Omit "figure" when no visual genuinely helps.
 Make exactly 3 multiple-choice questions, each with 4 options, all focused only on ${kc}. Keep answers short enough for exact matching.`;
