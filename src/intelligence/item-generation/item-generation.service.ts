@@ -26,26 +26,32 @@ export class ItemGenerationService {
     private readonly validation: ValidationService,
   ) {}
 
-  async ingest(
-    format: 'pdf' | 'csv' | 'paste',
-    payload: { text?: string; buffer?: Buffer },
-  ) {
-    let baseItems: BaseItem[];
-    if (format === 'paste' || format === 'csv') {
-      baseItems = this.parseText(payload.text ?? '');
-    } else {
-      baseItems = await this.parsePdf(payload.buffer);
+  /**
+   * Extract a clean list of question stems from raw text (pasted, or pulled from
+   * a PDF on the client). Uses the AI to handle messy PDF/OCR layout. Returns
+   * just the question strings — the caller picks the standard at generate time.
+   */
+  async ingest(_format: 'pdf' | 'csv' | 'paste', payload: { text?: string }) {
+    const text = (payload.text ?? '').trim();
+    if (!text) {
+      throw new BadRequestException({ error: { code: 'no_text', message: 'No text provided' } });
     }
-    if (!baseItems.length) {
-      throw new BadRequestException({ error: { code: 'no_items', message: 'No items parsed' } });
-    }
-    for (const b of baseItems) {
-      const r = resolveStandard(b.standard);
-      b.ga = r.ga;
-      b.gaCluster = r.gaCluster;
-      b.referenceOnly = true;
-    }
-    return { baseItems, parsed: baseItems.length, harvestedMisconceptions: 0, warnings: [] as string[] };
+    const res = await this.ai.chat({
+      systemPrompt:
+        'You extract math questions from raw text that is often messy (copied from a PDF or OCR). ' +
+        'Return ONLY a JSON array of strings. Each string is ONE complete, self-contained question, ' +
+        'copied close to verbatim, on a single line with no internal line breaks. ' +
+        'Drop multiple-choice options, item numbers, headers, answer keys, and anything that is not a question. ' +
+        'If a question depends on a missing image or is unreadable, skip it. No prose outside the JSON.',
+      prompt: text.slice(0, 24000),
+      preferredProvider: 'claude',
+      timeoutMs: 45_000,
+      maxTokens: 4000,
+    });
+    const questions = (this.parseModelJson(res.text) as unknown[])
+      .map((q) => String(q).replace(/\s+/g, ' ').trim())
+      .filter((q) => q.length > 8);
+    return { questions, parsed: questions.length };
   }
 
   /** Kick off generation in the background; returns immediately with a jobId to poll. */
@@ -202,16 +208,6 @@ export class ItemGenerationService {
   }
 
   // ---- parsers (paste/CSV minimal; PDF extractor is a follow-up) ----
-  private parseText(text: string): BaseItem[] {
-    return text
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((stem) => ({ stem, standard: 'MGSE6.RP.3', referenceOnly: true }));
-  }
-  private async parsePdf(_buf?: Buffer): Promise<BaseItem[]> {
-    return [];
-  }
   private parseModelJson(raw: string): unknown[] {
     const s = raw.indexOf('[');
     const e = raw.lastIndexOf(']');
