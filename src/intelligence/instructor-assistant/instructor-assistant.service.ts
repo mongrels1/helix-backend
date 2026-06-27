@@ -105,6 +105,7 @@ Hard requirements:
   {"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3}],"line":{"m":1,"b":0}} (plotting points, slope, linear functions, coordinate geometry)
   {"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4,4,5]} (data sets, mean, median, mode, range)
   {"type":"histogram","bins":[{"label":"0-9","count":3},{"label":"10-19","count":7}]} (frequency, grouped data)
+  GEOMETRY/3-D: for the Pythagorean theorem, right triangles, hypotenuse or legs, circles, 3-D solids, volume, or surface area, the simple shapes cannot show these so you MUST emit a geogebra figure with appName "geometry". Right-triangle example (legs 4 and 3): {"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle with legs 4 and 3"}
   {"type":"geogebra","appName":"graphing","commands":["f(x)=2x+1"]}
   Prefer a "figure" over a words-only "imageDescription"; omit "figure" when no visual genuinely helps.
 Keep each answer short enough for exact string matching.`;
@@ -197,6 +198,7 @@ Visual figures [figure-specs:v2-mini]: add a "figure" to lessonContent (illustra
   {"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3}],"line":{"m":1,"b":0}} (plotting points, slope, linear functions, coordinate geometry)
   {"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4,4,5]} (data sets, mean, median, mode, range)
   {"type":"histogram","bins":[{"label":"0-9","count":3},{"label":"10-19","count":7}]} (frequency, grouped data)
+  GEOMETRY/3-D: for the Pythagorean theorem, right triangles, hypotenuse or legs, circles, 3-D solids, volume, or surface area, the simple shapes cannot show these so you MUST emit a geogebra figure with appName "geometry". Right-triangle example (legs 4 and 3): {"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle with legs 4 and 3"}
 Omit "figure" when no visual genuinely helps.
 Make exactly 3 multiple-choice questions, each with 4 options, all focused only on ${kc}. Keep answers short enough for exact matching.`;
 
