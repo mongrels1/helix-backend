@@ -528,3 +528,65 @@ model DiagnosticResponse {
 
   @@index([sessionId])
 }
+
+// ---------------------------------------------------------------------------
+// Item generation (Question Bank -> Generate). Generated items live here, NOT
+// in the live diagnostic ruler. Lifecycle: draft -> validated -> field_test
+// -> operational. Only `operational` items may ever be served as scored.
+// ---------------------------------------------------------------------------
+enum GenStatus {
+  draft
+  validated
+  field_test
+  operational
+  rejected
+}
+
+model DraftItem {
+  id                    String    @id @default(uuid())
+  batchId               String
+  baseSourceId          String?
+  status                GenStatus @default(draft)
+
+  versionType           String
+  stem                  String
+  figure                Json?
+  options               Json
+  answer                String
+  solution              String
+  standard              String
+  ga                    String?
+  gaCluster             String?
+  skillTags             String[]
+  skillNode             String?
+  misconceptionTags     String[]
+  dok                   Int
+  difficulty            String
+  microDiagnosticSignal String
+  provenance            String    @default("AIG")
+
+  validation            Json?
+  calibration           Json?
+
+  createdBy             String
+  createdAt             DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([batchId])
+  @@index([status])
+  @@index([gaCluster])
+}
+
+model BatchJob {
+  id        String   @id @default(uuid())
+  batchId   String   @unique
+  status    String   @default("running")
+  total     Int
+  done      Int      @default(0)
+  passed    Int      @default(0)
+  failed    Int      @default(0)
+  error     String?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
