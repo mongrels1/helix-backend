@@ -134,6 +134,7 @@ export class ItemGenerationService {
     await this.prisma.draftItem.createMany({
       data: items.map((it) => {
         const conv = it.figure ? { stem: it.stem, figure: null } : this.tableToFigure(it.stem);
+        const options = this.normalizeOptions(it.options);
         return {
         batchId,
         baseSourceId: base.sourceId ?? base.stem.slice(0, 40),
@@ -141,7 +142,7 @@ export class ItemGenerationService {
         versionType: it.versionType,
         stem: conv.stem,
         figure: (it.figure as object) ?? conv.figure ?? undefined,
-        options: it.options as unknown as object,
+        options: options as unknown as object,
         answer: String(it.answer),
         solution: it.solution,
         standard: it.standard ?? base.standard,
@@ -165,6 +166,37 @@ export class ItemGenerationService {
    * lift it into a ratio_table figure and leave the stem as a plain sentence.
    * Only fires when there's a clear "| --- |" separator row.
    */
+  /**
+   * Guarantee exactly one correct option. Models sometimes tag the 3 distractors
+   * but forget to flag the answer; the lone untagged option is the answer. Also
+   * clears any tag off the correct option and keeps only the first if several are
+   * marked correct.
+   */
+  private normalizeOptions(
+    raw: unknown,
+  ): { text: string; correct: boolean; misconception?: string; misconceptionTag: string }[] {
+    const arr = Array.isArray(raw) ? raw : [];
+    const opts = arr.map((o: { text?: string; correct?: boolean; misconception?: string; misconceptionTag?: string }) => ({
+      text: String(o?.text ?? ''),
+      correct: o?.correct === true,
+      misconception: o?.misconception ? String(o.misconception) : undefined,
+      misconceptionTag: o?.misconceptionTag ? String(o.misconceptionTag) : '',
+    }));
+    const correctCount = opts.filter((o) => o.correct).length;
+    if (correctCount === 0) {
+      const untagged = opts.filter((o) => !o.misconceptionTag);
+      if (untagged.length === 1) untagged[0].correct = true;
+    } else if (correctCount > 1) {
+      let seen = false;
+      for (const o of opts) {
+        if (o.correct && seen) o.correct = false;
+        else if (o.correct) seen = true;
+      }
+    }
+    for (const o of opts) if (o.correct) o.misconceptionTag = '';
+    return opts;
+  }
+
   private tableToFigure(stem: string): { stem: string; figure: Record<string, unknown> | null } {
     if (!/\|\s*-{2,}/.test(stem)) return { stem, figure: null };
     const start = stem.indexOf('|');

@@ -16,9 +16,10 @@ For each version:
 - Write the stem in PLAIN ENGLISH SENTENCES ONLY. NEVER put a table, grid, ASCII art, or any
   Markdown in the stem — no pipe characters "|", no dashes rows like "---", no multi-line layout.
   If the question needs a table or chart, the DATA goes in the "figure" field, NOT in the stem.
-- Provide 4 options. EXACTLY one is correct. EVERY wrong option must include a one-sentence
-  "misconception" and a "misconceptionTag" (a canonical id supplied to you), mirroring the
-  Illuminate bank style ("Student(s) may have ...").
+- Provide EXACTLY 4 options. EXACTLY ONE option has "correct": true and an EMPTY
+  "misconceptionTag" — that is the right answer; never leave it unmarked. The OTHER THREE have
+  "correct": false and a non-empty "misconceptionTag" (a canonical id supplied to you) plus a
+  one-sentence "misconception", mirroring the Illuminate bank style ("Student(s) may have ...").
 - Tag it: "standard" (GA), "skillTags", "misconceptionTags", "dok" (1-4), "difficulty",
   and "microDiagnosticSignal".
 
