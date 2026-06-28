@@ -194,6 +194,11 @@ export class ItemGenerationService {
       }
     }
     for (const o of opts) if (o.correct) o.misconceptionTag = '';
+    // shuffle so the correct answer isn't always option A (Fisher-Yates)
+    for (let i = opts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [opts[i], opts[j]] = [opts[j], opts[i]];
+    }
     return opts;
   }
 
