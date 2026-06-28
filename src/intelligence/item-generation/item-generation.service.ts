@@ -91,6 +91,7 @@ export class ItemGenerationService {
     const existing = await this.prisma.draftItem.findMany({ select: { stem: true } });
     for (const e of existing) seen.add(this.normStem(e.stem));
     let duplicates = 0;
+    let firstError = '';
     for (const base of req.baseItems) {
       const route = resolveStandard(base.standard);
       const misIds = [
@@ -116,7 +117,9 @@ export class ItemGenerationService {
         duplicates += saved.skipped;
         this.logger.log(`seed ok: parsed ${items.length}, saved ${saved.saved}, skipped ${saved.skipped}`);
       } catch (err) {
-        this.logger.error(`seed FAILED: ${String((err as Error)?.stack ?? (err as Error)?.message ?? err)}`);
+        const msg = String((err as Error)?.message ?? err);
+        if (!firstError) firstError = msg;
+        this.logger.error(`seed FAILED: ${String((err as Error)?.stack ?? msg)}`);
       }
       await this.prisma.batchJob.update({
         where: { id: jobId },
@@ -126,7 +129,7 @@ export class ItemGenerationService {
     const summary = await this.validation.validateBatch(batchId);
     await this.prisma.batchJob.update({
       where: { id: jobId },
-      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates },
+      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, error: firstError || null },
     });
   }
 
@@ -166,21 +169,21 @@ export class ItemGenerationService {
         batchId,
         baseSourceId: base.sourceId ?? base.stem.slice(0, 40),
         status: 'draft',
-        versionType: it.versionType,
-        stem: conv.stem,
+        versionType: String(it.versionType ?? 'item'),
+        stem: String(conv.stem ?? ''),
         figure: (it.figure as object) ?? conv.figure ?? undefined,
         options: options as unknown as object,
-        answer: String(it.answer),
-        solution: it.solution,
-        standard: it.standard ?? base.standard,
-        ga: it.ga ?? base.ga,
-        gaCluster: it.gaCluster ?? base.gaCluster,
-        skillTags: it.skillTags ?? [],
-        skillNode: it.skillNode,
-        misconceptionTags: it.misconceptionTags ?? [],
-        dok: it.dok ?? 2,
-        difficulty: it.difficulty ?? 'Medium',
-        microDiagnosticSignal: it.microDiagnosticSignal ?? '',
+        answer: it.answer === undefined || it.answer === null ? '' : String(it.answer),
+        solution: String(it.solution ?? ''),
+        standard: String(it.standard ?? base.standard ?? ''),
+        ga: it.ga ?? base.ga ?? undefined,
+        gaCluster: it.gaCluster ?? base.gaCluster ?? undefined,
+        skillTags: Array.isArray(it.skillTags) ? it.skillTags.map(String) : [],
+        skillNode: it.skillNode ?? undefined,
+        misconceptionTags: Array.isArray(it.misconceptionTags) ? it.misconceptionTags.map(String) : [],
+        dok: typeof it.dok === 'number' ? it.dok : 2,
+        difficulty: String(it.difficulty ?? 'Medium'),
+        microDiagnosticSignal: String(it.microDiagnosticSignal ?? ''),
         provenance: 'AIG',
         createdBy,
       });
