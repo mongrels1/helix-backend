@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AIRouterService } from '../ai-router/ai-router.service';
@@ -20,6 +21,8 @@ const PROMOTE_MIN_RESPONSES = 200;
  */
 @Injectable()
 export class ItemGenerationService {
+  private readonly logger = new Logger(ItemGenerationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ai: AIRouterService,
@@ -109,9 +112,11 @@ export class ItemGenerationService {
           maxTokens: 4000,
         });
         const items = this.parseModelJson(res.text) as GeneratedItem[];
-        duplicates += await this.persistDrafts(batchId, base, items, createdBy, seen);
-      } catch {
-        // one bad seed shouldn't kill the batch
+        const saved = await this.persistDrafts(batchId, base, items, createdBy, seen);
+        duplicates += saved.skipped;
+        this.logger.log(`seed ok: parsed ${items.length}, saved ${saved.saved}, skipped ${saved.skipped}`);
+      } catch (err) {
+        this.logger.error(`seed FAILED: ${String((err as Error)?.stack ?? (err as Error)?.message ?? err)}`);
       }
       await this.prisma.batchJob.update({
         where: { id: jobId },
@@ -144,8 +149,8 @@ export class ItemGenerationService {
     items: GeneratedItem[],
     createdBy: string,
     seen: Set<string>,
-  ): Promise<number> {
-    if (!Array.isArray(items) || !items.length) return 0;
+  ): Promise<{ saved: number; skipped: number }> {
+    if (!Array.isArray(items) || !items.length) return { saved: 0, skipped: 0 };
     const rows: Record<string, unknown>[] = [];
     let skipped = 0;
     for (const it of items) {
@@ -181,7 +186,7 @@ export class ItemGenerationService {
       });
     }
     if (rows.length) await this.prisma.draftItem.createMany({ data: rows as never });
-    return skipped;
+    return { saved: rows.length, skipped };
   }
 
   /**
