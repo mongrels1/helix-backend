@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, Query, Req } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Body, Param, Query, Req } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '@common/decorators/roles.decorator';
 import { ItemGenerationService } from './item-generation.service';
@@ -52,6 +52,12 @@ export class ItemGenerationController {
   @Get('items/:id')
   async item(@Param('id') id: string) {
     const data = await this.svc.item(id);
+    return { success: true as const, data };
+  }
+
+  @Delete('drafts')
+  async clearDrafts() {
+    const data = await this.svc.clearDrafts();
     return { success: true as const, data };
   }
 

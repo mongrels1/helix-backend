@@ -276,6 +276,14 @@ export class ItemGenerationService {
     return this.prisma.draftItem.findUniqueOrThrow({ where: { id } });
   }
 
+  /** Delete all non-operational items (draft/validated/field_test/rejected). Never deletes operational. */
+  async clearDrafts(): Promise<{ deleted: number }> {
+    const res = await this.prisma.draftItem.deleteMany({
+      where: { status: { not: 'operational' } },
+    });
+    return { deleted: res.count };
+  }
+
   // ---- parsers (paste/CSV minimal; PDF extractor is a follow-up) ----
   private parseModelJson(raw: string): unknown[] {
     const s = raw.indexOf('[');
