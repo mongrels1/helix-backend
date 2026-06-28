@@ -83,6 +83,11 @@ export class ItemGenerationService {
     versions: number,
     createdBy: string,
   ): Promise<void> {
+    // load every existing question stem once, so we can skip exact duplicates
+    const seen = new Set<string>();
+    const existing = await this.prisma.draftItem.findMany({ select: { stem: true } });
+    for (const e of existing) seen.add(this.normStem(e.stem));
+    let duplicates = 0;
     for (const base of req.baseItems) {
       const route = resolveStandard(base.standard);
       const misIds = [
@@ -104,19 +109,19 @@ export class ItemGenerationService {
           maxTokens: 4000,
         });
         const items = this.parseModelJson(res.text) as GeneratedItem[];
-        await this.persistDrafts(batchId, base, items, createdBy);
+        duplicates += await this.persistDrafts(batchId, base, items, createdBy, seen);
       } catch {
         // one bad seed shouldn't kill the batch
       }
       await this.prisma.batchJob.update({
         where: { id: jobId },
-        data: { done: { increment: versions } },
+        data: { done: { increment: versions }, duplicates },
       });
     }
     const summary = await this.validation.validateBatch(batchId);
     await this.prisma.batchJob.update({
       where: { id: jobId },
-      data: { status: 'done', passed: summary.passed, failed: summary.failed },
+      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates },
     });
   }
 
@@ -124,21 +129,38 @@ export class ItemGenerationService {
     return this.prisma.batchJob.findUniqueOrThrow({ where: { id: jobId } });
   }
 
+  /** normalize a stem for exact-duplicate comparison */
+  private normStem(s: string): string {
+    return String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Persist generated items, skipping any whose stem exactly matches one already
+   * seen (in the DB or earlier in this run). Returns how many were skipped.
+   */
   private async persistDrafts(
     batchId: string,
     base: BaseItem,
     items: GeneratedItem[],
     createdBy: string,
-  ): Promise<void> {
-    if (!Array.isArray(items) || !items.length) return;
-    await this.prisma.draftItem.createMany({
-      data: items.map((it) => {
-        const conv = it.figure ? { stem: it.stem, figure: null } : this.tableToFigure(it.stem);
-        const options = this.normalizeOptions(it.options);
-        return {
+    seen: Set<string>,
+  ): Promise<number> {
+    if (!Array.isArray(items) || !items.length) return 0;
+    const rows: Record<string, unknown>[] = [];
+    let skipped = 0;
+    for (const it of items) {
+      const conv = it.figure ? { stem: it.stem, figure: null } : this.tableToFigure(it.stem);
+      const key = this.normStem(conv.stem);
+      if (!key || seen.has(key)) {
+        skipped++;
+        continue;
+      }
+      seen.add(key);
+      const options = this.normalizeOptions(it.options);
+      rows.push({
         batchId,
         baseSourceId: base.sourceId ?? base.stem.slice(0, 40),
-        status: 'draft' as const,
+        status: 'draft',
         versionType: it.versionType,
         stem: conv.stem,
         figure: (it.figure as object) ?? conv.figure ?? undefined,
@@ -156,9 +178,10 @@ export class ItemGenerationService {
         microDiagnosticSignal: it.microDiagnosticSignal ?? '',
         provenance: 'AIG',
         createdBy,
-        };
-      }),
-    });
+      });
+    }
+    if (rows.length) await this.prisma.draftItem.createMany({ data: rows as never });
+    return skipped;
   }
 
   /**
