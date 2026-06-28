@@ -11,9 +11,10 @@ function gradeOf(s?: string | null): number | null {
 type RawOption = { text?: string; correct?: boolean; misconceptionTag?: string };
 
 /**
- * Practice pool. Serves APPROVED generated items (field_test + operational) to
- * students as UNSCORED practice. This is the automatic bridge: the moment an
- * item is approved in the Question Generator it appears here — no per-batch work.
+ * Practice pool. Serves generated items to students as UNSCORED practice. This
+ * is the automatic bridge: the moment an item is generated (it saves as `draft`
+ * after passing the reliability gate) it appears here — no approve step, no
+ * per-batch work. `rejected` items are excluded.
  *
  * NOTE: practice is intentionally separate from the scored adaptive diagnostic.
  * Uncalibrated items never touch the diagnostic ruler; they only earn their way
@@ -26,8 +27,8 @@ export class PracticeService {
   async items(q: { grade?: string; standard?: string; limit?: string }) {
     const take = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
 
-    const where: { status: { in: ('field_test' | 'operational')[] }; standard?: { contains: string } } = {
-      status: { in: ['field_test', 'operational'] },
+    const where: { status: { in: ('draft' | 'field_test' | 'operational')[] }; standard?: { contains: string } } = {
+      status: { in: ['draft', 'field_test', 'operational'] },
     };
     if (q.standard) where.standard = { contains: String(q.standard) };
 
