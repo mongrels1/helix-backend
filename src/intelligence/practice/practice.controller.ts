@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Req } from '@nestjs/common';
 import { PracticeService } from './practice.service';
 
 /**
@@ -11,8 +11,11 @@ export class PracticeController {
   constructor(private readonly svc: PracticeService) {}
 
   @Get('items')
-  async items(@Query() q: { grade?: string; standard?: string; limit?: string }) {
-    const data = await this.svc.items(q);
+  async items(
+    @Query() q: { grade?: string; standard?: string; limit?: string },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.items(req.user?.id, q);
     return { success: true as const, data };
   }
 }
