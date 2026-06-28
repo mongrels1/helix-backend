@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
 import { PracticeService } from './practice.service';
 
 /**
@@ -16,6 +16,21 @@ export class PracticeController {
     @Req() req: { user?: { id?: string } },
   ) {
     const data = await this.svc.items(req.user?.id, q);
+    return { success: true as const, data };
+  }
+
+  @Post('responses')
+  async recordResponse(
+    @Body() body: { itemId: string; pickedIndex: number },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.recordResponse(req.user?.id, body);
+    return { success: true as const, data };
+  }
+
+  @Get('misconceptions')
+  async misconceptions(@Req() req: { user?: { id?: string } }) {
+    const data = await this.svc.misconceptionSummary(req.user?.id);
     return { success: true as const, data };
   }
 }

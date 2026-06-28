@@ -75,6 +75,69 @@ export class PracticeService {
     return { strands, kcs, tags, sessionId: session.id };
   }
 
+  /**
+   * The student's currently-active misconceptions: tags they PICKED on a wrong
+   * practice answer within their most recent responses. Using a recent window
+   * means a misconception naturally "cools" once they stop making that error.
+   */
+  private async activeMisconceptions(userId?: string): Promise<Set<string>> {
+    const active = new Set<string>();
+    if (!userId) return active;
+    const recent = await this.prisma.practiceResponse.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+    for (const r of recent) {
+      if (!r.correct && r.misconceptionTag) active.add(r.misconceptionTag);
+    }
+    return active;
+  }
+
+  /** Record one practice answer; capture which misconception the student showed. */
+  async recordResponse(userId: string | undefined, dto: { itemId: string; pickedIndex: number }) {
+    if (!userId) return { recorded: false as const };
+    const item = await this.prisma.draftItem.findUnique({ where: { id: dto.itemId } });
+    if (!item) return { recorded: false as const };
+
+    const opts = Array.isArray(item.options) ? (item.options as RawOption[]) : [];
+    const idx = Number(dto.pickedIndex);
+    const picked = opts[idx];
+    const correct = !!picked?.correct;
+    const misconceptionTag = correct ? null : picked?.misconceptionTag ?? null;
+
+    await this.prisma.practiceResponse.create({
+      data: {
+        userId,
+        draftItemId: item.id,
+        standard: item.standard ?? null,
+        strand: strandOfStandard(item.standard),
+        pickedIndex: Number.isFinite(idx) ? idx : -1,
+        correct,
+        misconceptionTag,
+      },
+    });
+    return { recorded: true as const, correct, misconceptionTag };
+  }
+
+  /** Author/teacher-facing summary of a student's misconceptions (never shown to students). */
+  async misconceptionSummary(userId: string | undefined) {
+    if (!userId) return { misconceptions: [] as { tag: string; count: number; lastSeen: Date }[] };
+    const wrong = await this.prisma.practiceResponse.findMany({
+      where: { userId, correct: false, misconceptionTag: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    const map = new Map<string, { tag: string; count: number; lastSeen: Date }>();
+    for (const r of wrong) {
+      const tag = r.misconceptionTag as string;
+      const cur = map.get(tag);
+      if (cur) cur.count += 1;
+      else map.set(tag, { tag, count: 1, lastSeen: r.createdAt });
+    }
+    return { misconceptions: [...map.values()].sort((a, b) => b.count - a.count) };
+  }
+
   async items(userId: string | undefined, q: { grade?: string; standard?: string; limit?: string }) {
     const take = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
 
@@ -132,6 +195,24 @@ export class PracticeService {
       }
     }
 
-    return { items: shaped.slice(0, take), count: Math.min(shaped.length, take), basedOn, weakStrands };
+    // Misconception-driven ordering: float items that probe the student's recent
+    // active misconceptions to the front, so practice re-tests the exact errors
+    // they've been making. Stable for everyone else.
+    const active = await this.activeMisconceptions(userId);
+    let focusMisconceptions: string[] = [];
+    if (active.size) {
+      focusMisconceptions = [...active];
+      const probes = (it: { options: { misconceptionTag: string | null }[] }) =>
+        it.options.some((o) => o.misconceptionTag && active.has(o.misconceptionTag));
+      shaped = [...shaped.filter(probes), ...shaped.filter((it) => !probes(it))];
+    }
+
+    return {
+      items: shaped.slice(0, take),
+      count: Math.min(shaped.length, take),
+      basedOn,
+      weakStrands,
+      focusMisconceptions,
+    };
   }
 }

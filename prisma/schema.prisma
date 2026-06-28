@@ -591,3 +591,24 @@ model BatchJob {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// ---------------------------------------------------------------------------
+// Practice-driven misconception loop. Each answer a student gives on a practice
+// item is recorded here. When they pick a tagged distractor we capture WHICH
+// misconception they showed, so follow-up practice can target that exact error.
+// Misconception data is author/teacher-facing and never shown to the student.
+// ---------------------------------------------------------------------------
+model PracticeResponse {
+  id               String   @id @default(uuid())
+  userId           String
+  draftItemId      String
+  standard         String?
+  strand           String?
+  pickedIndex      Int
+  correct          Boolean
+  misconceptionTag String?
+  createdAt        DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}

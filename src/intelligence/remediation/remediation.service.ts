@@ -88,8 +88,10 @@ export class RemediationService {
       lesson = mini.lessonContent;
     }
 
-    // Bank-first: calibrated items keep the re-check measurement-valid.
-    const calibrated = findCalibratedItemsForKc(kc, RECHECK_ITEM_LIMIT);
+    // Bank-first: calibrated items keep the re-check measurement-valid. On a
+    // "Try another lesson" (fresh) request we deliberately skip the fixed bank
+    // item — it never varies — and fall through to a fresh AI variant instead.
+    const calibrated = dto.fresh ? [] : findCalibratedItemsForKc(kc, RECHECK_ITEM_LIMIT);
     if (calibrated.length > 0) {
       return {
         kc,
