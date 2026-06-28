@@ -35,6 +35,7 @@ export function gateItem(it: GeneratedItem): Check[] {
   const badTags = it.options.filter((o) => !o.correct && !VALID.has(o.misconceptionTag));
   checks.push({ id: 'distractors_tagged', ok: badTags.length === 0, detail: badTags.map((o) => o.misconceptionTag || '(empty)').join(',') });
   checks.push({ id: 'four_options', ok: it.options.length === 4, detail: `${it.options.length}` });
+  checks.push({ id: 'options_have_text', ok: it.options.every((o) => !!o.text && o.text.trim().length > 0) });
   checks.push({ id: 'has_answer', ok: it.answer !== undefined && it.answer !== '' });
   checks.push({ id: 'has_solution', ok: !!it.solution && it.solution.length > 0 });
   checks.push({ id: 'has_signal', ok: !!it.microDiagnosticSignal });

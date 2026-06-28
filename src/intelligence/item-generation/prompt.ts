@@ -20,6 +20,11 @@ For each version:
   "misconceptionTag" — that is the right answer; never leave it unmarked. The OTHER THREE have
   "correct": false and a non-empty "misconceptionTag" (a canonical id supplied to you) plus a
   one-sentence "misconception", mirroring the Illuminate bank style ("Student(s) may have ...").
+- Every option's "text" MUST be a short, complete, readable answer on its own — e.g. "20 miles",
+  "3 : 2", "$1.25", "Supplier B". NEVER leave an option's text blank, never write "see the table",
+  and NEVER make the answer choices themselves tables, graphs, or pictures.
+- Do NOT write questions whose answer is a table/graph/diagram (avoid "Which table shows..." or
+  "Which graph represents..."). The four options must always be plain readable text.
 - Tag it: "standard" (GA), "skillTags", "misconceptionTags", "dok" (1-4), "difficulty",
   and "microDiagnosticSignal".
 
