@@ -161,8 +161,10 @@ export class ItemGenerationService {
           systemPrompt: SYSTEM_PROMPT,
           prompt: user,
           preferredProvider: 'claude',
-          timeoutMs: 45_000,
-          maxTokens: 4000,
+          timeoutMs: 60_000,
+          // A full 10-version slate with answers, solutions, and figures is large;
+          // 4000 truncated the JSON mid-array. 8000 gives the slate room to finish.
+          maxTokens: 8000,
         });
         const items = this.parseModelJson(res.text) as GeneratedItem[];
         const saved = await this.persistDrafts(batchId, base, items, createdBy, seen);
@@ -403,8 +405,53 @@ export class ItemGenerationService {
   // ---- parsers (paste/CSV minimal; PDF extractor is a follow-up) ----
   private parseModelJson(raw: string): unknown[] {
     const s = raw.indexOf('[');
-    const e = raw.lastIndexOf(']');
-    if (s < 0 || e < 0) return [];
-    return JSON.parse(raw.slice(s, e + 1));
+    if (s < 0) return [];
+    const body = raw.slice(s);
+    // Happy path: a complete array.
+    const e = body.lastIndexOf(']');
+    if (e >= 0) {
+      try {
+        return JSON.parse(body.slice(0, e + 1));
+      } catch {
+        // fall through to salvage (truncated / malformed tail)
+      }
+    }
+    // Salvage: recover every complete top-level {...} object, so a slate that was
+    // cut off mid-array still yields its finished items instead of failing wholesale.
+    return this.salvageObjects(body);
+  }
+
+  /** Extract complete top-level JSON objects from a possibly-truncated array body. */
+  private salvageObjects(body: string): unknown[] {
+    const out: unknown[] = [];
+    let depth = 0;
+    let start = -1;
+    let inStr = false;
+    let esc = false;
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '{') {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (c === '}') {
+        if (depth > 0) depth--;
+        if (depth === 0 && start >= 0) {
+          try {
+            out.push(JSON.parse(body.slice(start, i + 1)));
+          } catch {
+            // skip an object we can't parse
+          }
+          start = -1;
+        }
+      }
+    }
+    return out;
   }
 }
