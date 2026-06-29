@@ -76,6 +76,12 @@ export class ItemGenerationController {
     return { success: true as const, data };
   }
 
+  @Post('backfill-clusters')
+  async backfillClusters() {
+    const data = await this.svc.backfillClusters();
+    return { success: true as const, data };
+  }
+
   @Post('review/:id')
   async review(
     @Param('id') id: string,

@@ -167,7 +167,7 @@ export class ItemGenerationService {
           maxTokens: 8000,
         });
         const items = this.parseModelJson(res.text) as GeneratedItem[];
-        const saved = await this.persistDrafts(batchId, base, items, createdBy, seen);
+        const saved = await this.persistDrafts(batchId, base, items, createdBy, seen, [...new Set(misIds)]);
         duplicates += saved.skipped;
         this.logger.log(`seed ok: parsed ${items.length}, saved ${saved.saved}, skipped ${saved.skipped}`);
       } catch (err) {
@@ -206,10 +206,14 @@ export class ItemGenerationService {
     items: GeneratedItem[],
     createdBy: string,
     seen: Set<string>,
+    fallbackTags: string[] = [],
   ): Promise<{ saved: number; skipped: number }> {
     if (!Array.isArray(items) || !items.length) return { saved: 0, skipped: 0 };
     const rows: Record<string, unknown>[] = [];
     let skipped = 0;
+    // Resolve the standard once so we can backfill ga / gaCluster when the model
+    // (or a seed) leaves them blank — keeps targeted-practice routing intact.
+    const resolved = resolveStandard(String(base.standard || ''));
     for (const it of items) {
       const conv = it.figure ? { stem: it.stem, figure: null } : this.tableToFigure(it.stem);
       const key = this.normStem(conv.stem);
@@ -219,6 +223,19 @@ export class ItemGenerationService {
       }
       seen.add(key);
       const options = this.normalizeOptions(it.options);
+      // Every distractor must carry a valid misconception tag. The model
+      // occasionally leaves one blank; fill it from this standard's applicable
+      // misconceptions (falling back to a generic computation error) so the item
+      // is never flagged "untagged distractor".
+      let fbIdx = 0;
+      for (const o of options) {
+        if (!o.correct && !o.misconceptionTag) {
+          o.misconceptionTag = fallbackTags.length
+            ? fallbackTags[fbIdx % fallbackTags.length]
+            : 'RP.COMPUTATION_ERROR';
+          fbIdx++;
+        }
+      }
       // Safety net: the model sometimes omits the top-level "answer" even though
       // it flags the correct option. Fall back to that option's text so the item
       // never persists answer-less. Standard is stored in the base's MGSE form so
@@ -237,8 +254,8 @@ export class ItemGenerationService {
         answer,
         solution: String(it.solution ?? ''),
         standard: String(base.standard || it.standard || ''),
-        ga: it.ga ?? base.ga ?? undefined,
-        gaCluster: it.gaCluster ?? base.gaCluster ?? undefined,
+        ga: it.ga || base.ga || resolved.ga || undefined,
+        gaCluster: it.gaCluster || base.gaCluster || resolved.gaCluster || undefined,
         skillTags: Array.isArray(it.skillTags) ? it.skillTags.map(String) : [],
         skillNode: it.skillNode ?? undefined,
         misconceptionTags: Array.isArray(it.misconceptionTags) ? it.misconceptionTags.map(String) : [],
@@ -392,6 +409,29 @@ export class ItemGenerationService {
       },
     })) as unknown as BankRow[];
     return buildIntegrityReport(rows, DIAGNOSTIC_ITEM_BANK);
+  }
+
+  /**
+   * Repair existing items that were saved without a GA cluster (e.g. older seeded
+   * batches). Resolves the cluster from each item's standard. One-time cleanup
+   * surfaced as a Super-Admin button; safe to run repeatedly.
+   */
+  async backfillClusters(): Promise<{ updated: number }> {
+    const items = await this.prisma.draftItem.findMany({
+      where: { OR: [{ gaCluster: null }, { gaCluster: '' }] },
+      select: { id: true, standard: true, ga: true },
+    });
+    let updated = 0;
+    for (const it of items) {
+      const r = resolveStandard(String(it.standard || it.ga || ''));
+      if (!r.gaCluster) continue;
+      await this.prisma.draftItem.update({
+        where: { id: it.id },
+        data: { gaCluster: r.gaCluster, ga: it.ga || r.ga || undefined },
+      });
+      updated++;
+    }
+    return { updated };
   }
 
   /** Delete all non-operational items (draft/validated/field_test/rejected). Never deletes operational. */

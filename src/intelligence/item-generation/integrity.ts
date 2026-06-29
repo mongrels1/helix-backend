@@ -318,6 +318,31 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
   if (noB.length) defects.push(group('has_difficulty', 'warning', 'Items with no calibrated difficulty (b) — adaptivity degrades', noB));
   if (dupStems.length) defects.push(group('duplicate_stems', 'warning', `Duplicate stems across ${dupGroups} group(s)`, dupStems));
 
+  // Statistical-viability bar: each grade should reach a minimum number of
+  // calibrated items. Surfaced as warnings (visible, not sales-blocking) so the
+  // growth gap toward a reliable adaptive bank is explicit.
+  const VIABILITY_MIN = 100;
+  for (const g of sortGrades([...gradeMap.values()])) {
+    if (g.grade !== null && g.total < VIABILITY_MIN) {
+      defects.push({
+        id: `viability_grade_${g.grade}`,
+        severity: 'warning',
+        message: `Grade ${g.grade}: ${g.total}/${VIABILITY_MIN} calibrated items — ${VIABILITY_MIN - g.total} short of the statistical-viability minimum`,
+        count: VIABILITY_MIN - g.total,
+        sampleIds: [],
+      });
+    }
+  }
+  // DOK 1–4 spread and per-standard alignment can't be graded until diagnostic
+  // items carry those fields (added with the DB staging-bank build).
+  defects.push({
+    id: 'dok_standard_fields',
+    severity: 'info',
+    message: 'Diagnostic items do not yet carry DOK or standard fields — needed to verify DOK 1–4 spread and per-standard alignment',
+    count: items.length,
+    sampleIds: [],
+  });
+
   const blockers = defects.filter((d) => d.severity === 'blocker').length;
   const warnings = defects.filter((d) => d.severity === 'warning').length;
   const ready = blockers === 0;
