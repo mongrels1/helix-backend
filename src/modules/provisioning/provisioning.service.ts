@@ -60,28 +60,32 @@ export class ProvisioningService {
     const { firstName, lastName } = this.pickName(payload);
     const product = this.pickProduct(payload);
 
-    let user = await this.users.findByEmail(email);
+    const existing = await this.users.findByEmail(email);
+    let userId: string;
     let created = false;
-    if (!user) {
+    if (existing) {
+      userId = existing.id;
+    } else {
       const tempPassword = randomBytes(24).toString('hex');
       const passwordHash = await bcrypt.hash(tempPassword, SALT_ROUNDS);
-      user = await this.users.create(
+      const newUser = await this.users.create(
         { email, firstName, lastName, role: Role.STUDENT, password: tempPassword } as CreateUserDto,
         passwordHash,
       );
+      userId = newUser.id;
       created = true;
     }
 
     if (product) {
       await this.prisma.user
-        .update({ where: { id: user.id }, data: { plan: product } })
+        .update({ where: { id: userId }, data: { plan: product } })
         .catch((err) => this.logger.warn(`Could not record plan for ${email}: ${String(err)}`));
     }
 
     // One-time activation token (reuses the password-reset token table).
     const token = randomBytes(32).toString('hex');
     await this.prisma.passwordResetToken.create({
-      data: { userId: user.id, token, expiresAt: new Date(Date.now() + ACTIVATION_TTL_MS) },
+      data: { userId, token, expiresAt: new Date(Date.now() + ACTIVATION_TTL_MS) },
     });
 
     const frontendUrl = (this.config.get<string>('app.frontendUrl') ?? 'http://localhost:3000').replace(/\/$/, '');
