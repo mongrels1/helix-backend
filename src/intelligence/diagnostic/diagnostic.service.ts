@@ -256,6 +256,30 @@ export class DiagnosticService {
   }
 
   /**
+   * Published items from the diagnostic staging bank, shaped for the client
+   * adaptive engine ({ id, g, strand, kc, b, stem, opts, correct }). Returns []
+   * when nothing is published yet — the client then falls back to its in-code
+   * bank, so the live diagnostic never breaks during curation.
+   */
+  async publishedBank() {
+    const items = await this.prisma.diagnosticItem.findMany({
+      where: { status: 'published' },
+      select: { id: true, grade: true, strand: true, kc: true, b: true, stem: true, options: true, correct: true },
+      orderBy: [{ grade: 'asc' }, { strand: 'asc' }],
+    });
+    return items.map((it) => ({
+      id: it.id,
+      g: it.grade,
+      strand: it.strand,
+      kc: it.kc,
+      b: it.b,
+      stem: it.stem,
+      opts: it.options,
+      correct: it.correct,
+    }));
+  }
+
+  /**
    * Item ids the student saw in their most recent diagnostic sessions. The
    * adaptive engine uses these to avoid re-serving the same questions every run
    * (the "same questions every time" problem). Capped to a few recent sessions

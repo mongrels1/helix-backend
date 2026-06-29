@@ -59,6 +59,19 @@ export class DiagnosticController {
     return { success: true, data };
   }
 
+  /**
+   * Published diagnostic items for the client adaptive engine. Public so the
+   * diagnostic loads for anonymous first-runs; empty list ⇒ client uses its
+   * in-code bank fallback.
+   */
+  @Public()
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('bank')
+  async bank(): Promise<{ success: true; data: unknown[] }> {
+    const data = await this.diagnosticService.publishedBank();
+    return { success: true, data };
+  }
+
   /** List the signed-in user's saved diagnostics. */
   @Roles(...ANY_USER)
   @Get('sessions/me')

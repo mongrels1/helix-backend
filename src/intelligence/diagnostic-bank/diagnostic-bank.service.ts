@@ -16,9 +16,25 @@ function provisionalDok(b: number): number {
   return 4;
 }
 
+/**
+ * Explicit grade.strand → current GA cluster for the diagnostic's strand
+ * taxonomy (NS/RP/EE/G/SP/F/MD). resolveStandard alone misses grade 4–5 "NS"
+ * (which spans number/place-value/fraction clusters) and would echo "MGSE4.NS".
+ */
+const DIAG_CLUSTER: Record<string, string> = {
+  '4.NS': '4.NR.1', '4.G': '4.GSR.8', '4.MD': '4.MDR.6',
+  '5.NS': '5.NR.1', '5.G': '5.GSR.8', '5.MD': '5.MDR.7',
+  '6.NS': '6.NR.1', '6.RP': '6.NR.4', '6.EE': '6.PAR.6', '6.G': '6.GSR.5', '6.SP': '6.DSR.7',
+  '7.NS': '7.NR.1', '7.RP': '7.PAR.4', '7.EE': '7.PAR.3', '7.G': '7.GSR.5', '7.SP': '7.PR.6',
+  '8.NS': '8.NR.1', '8.EE': '8.PAR.4', '8.F': '8.FGR.5', '8.G': '8.GSR.8', '8.SP': '8.FGR.6',
+};
+
 /** GA standard (cluster) inferred from a diagnostic item's grade + strand. */
 function standardFor(grade: number, strand: string): string | null {
-  return resolveStandard(`MGSE${grade}.${strand}`).gaCluster || null;
+  const key = `${grade}.${String(strand).toUpperCase()}`;
+  if (DIAG_CLUSTER[key]) return DIAG_CLUSTER[key];
+  const r = resolveStandard(`MGSE${grade}.${strand}`).gaCluster;
+  return r && !/^MGSE/i.test(r) ? r : null; // avoid echoing the MGSE input
 }
 
 export interface CreateDiagnosticItemDto {
@@ -40,9 +56,25 @@ export class DiagnosticBankService {
   /** One-time populate from the in-code calibrated bank (the 89). Idempotent:
    *  does nothing once seed items exist. Seeds land as published (they are the
    *  live calibrated set) with provisional DOK + inferred standard. */
-  async seedFromCode(): Promise<{ seeded: number; alreadyPresent: number }> {
+  async seedFromCode(): Promise<{ seeded: number; alreadyPresent: number; updated: number }> {
     const seedCount = await this.prisma.diagnosticItem.count({ where: { source: 'seed' } });
-    if (seedCount > 0) return { seeded: 0, alreadyPresent: seedCount };
+    if (seedCount > 0) {
+      // Already seeded — re-derive standards with the current mapping so improved
+      // grade+strand inference fixes existing items. DOK is left as-is (may be edited).
+      const seeds = await this.prisma.diagnosticItem.findMany({
+        where: { source: 'seed' },
+        select: { id: true, grade: true, strand: true },
+      });
+      let updated = 0;
+      for (const s of seeds) {
+        await this.prisma.diagnosticItem.update({
+          where: { id: s.id },
+          data: { standard: standardFor(s.grade, s.strand) },
+        });
+        updated++;
+      }
+      return { seeded: 0, alreadyPresent: seedCount, updated };
+    }
     const rows = DIAGNOSTIC_ITEM_BANK.map((it) => ({
       id: it.id,
       grade: it.grade,
@@ -58,7 +90,7 @@ export class DiagnosticBankService {
       source: 'seed',
     }));
     await this.prisma.diagnosticItem.createMany({ data: rows, skipDuplicates: true });
-    return { seeded: rows.length, alreadyPresent: 0 };
+    return { seeded: rows.length, alreadyPresent: 0, updated: 0 };
   }
 
   list(q: { grade?: number; status?: string; strand?: string; take?: number }) {
