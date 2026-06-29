@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AIRouterService } from '../ai-router/ai-router.service';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import { resolveStandard } from '../item-generation/mgse-ga-crosswalk';
 
@@ -51,7 +52,10 @@ export interface CreateDiagnosticItemDto {
 
 @Injectable()
 export class DiagnosticBankService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ai: AIRouterService,
+  ) {}
 
   /** One-time populate from the in-code calibrated bank (the 89). Idempotent:
    *  does nothing once seed items exist. Seeds land as published (they are the
@@ -149,6 +153,86 @@ export class DiagnosticBankService {
       data: { status: 'published' },
     });
     return { published: res.count };
+  }
+
+  /**
+   * AI-generate diagnostic items for a grade+strand straight into the staging
+   * bank as drafts (source 'generated') for human review. Helps close the
+   * per-grade viability gap. Never published automatically — drafts only.
+   */
+  async generateForGrade(
+    body: { grade: number; strand: string; count?: number },
+    createdBy?: string,
+  ): Promise<{ created: number }> {
+    const grade = Number(body.grade);
+    const strand = String(body.strand || '').trim().toUpperCase();
+    if (!grade || !strand) {
+      throw new BadRequestException({ error: { code: 'bad_input', message: 'grade and strand required' } });
+    }
+    const count = Math.min(Math.max(Number(body.count) || 10, 5), 20);
+    const standard = standardFor(grade, strand);
+
+    const systemPrompt =
+      "You are EdKairos's diagnostic item writer. Produce calibrated-style multiple-choice math " +
+      'items for ONE grade and standard. Return VALID JSON ONLY: an array of objects with keys ' +
+      '{ "stem", "options" (exactly 4 short plain-text strings), "correct" (0-based index of the ' +
+      'right option), "kc" (short skill name), "dok" (integer 1-4), "b" (difficulty, -2.0 to 2.0) }. ' +
+      'Rules: exactly one correct option; four distinct plausible options; the stem is a single ' +
+      'plain-English sentence (NO tables, markdown, or images); aligned to the grade. Vary difficulty ' +
+      'across the set (some easy with negative b, some hard with positive b) and include fraction and ' +
+      'decimal quantities where appropriate. No prose outside the JSON array.';
+    const prompt = `Grade ${grade}, strand ${strand}${standard ? `, standard ${standard}` : ''}. Write ${count} diagnostic items.`;
+
+    const res = await this.ai.chat({
+      systemPrompt,
+      prompt,
+      preferredProvider: 'claude',
+      timeoutMs: 60_000,
+      maxTokens: 8000,
+    });
+
+    const raw = this.parseJsonArray(res.text) as Array<{
+      stem?: unknown; options?: unknown; correct?: unknown; kc?: unknown; dok?: unknown; b?: unknown;
+    }>;
+    const rows = raw
+      .map((it) => {
+        const options = Array.isArray(it.options) ? it.options.map((o) => String(o)).filter((o) => o.trim()) : [];
+        const correct = typeof it.correct === 'number' ? it.correct : Number(it.correct);
+        const stem = String(it.stem ?? '').trim();
+        if (!stem || options.length < 2 || !(correct >= 0 && correct < options.length)) return null;
+        const dok = Math.min(4, Math.max(1, Number(it.dok) || 2));
+        const b = Math.min(3, Math.max(-3, typeof it.b === 'number' ? it.b : Number(it.b) || 0));
+        return {
+          grade, strand, kc: String(it.kc ?? '').trim() || `${strand} skill`,
+          standard, dok, b, stem, options, correct,
+          status: 'draft', source: 'generated', createdBy: createdBy ?? null,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    if (rows.length) await this.prisma.diagnosticItem.createMany({ data: rows });
+    return { created: rows.length };
+  }
+
+  /** Tolerant JSON-array parse: salvages complete objects from a truncated array. */
+  private parseJsonArray(rawText: string): unknown[] {
+    const s = rawText.indexOf('[');
+    if (s < 0) return [];
+    const body = rawText.slice(s);
+    const e = body.lastIndexOf(']');
+    if (e >= 0) {
+      try { return JSON.parse(body.slice(0, e + 1)); } catch { /* salvage below */ }
+    }
+    const out: unknown[] = [];
+    let depth = 0, start = -1, inStr = false, esc = false;
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true;
+      else if (c === '{') { if (depth === 0) start = i; depth++; }
+      else if (c === '}') { if (depth > 0) depth--; if (depth === 0 && start >= 0) { try { out.push(JSON.parse(body.slice(start, i + 1))); } catch { /* skip */ } start = -1; } }
+    }
+    return out;
   }
 
   /** Viability + alignment stats: per-grade progress to the minimum, DOK 1–4

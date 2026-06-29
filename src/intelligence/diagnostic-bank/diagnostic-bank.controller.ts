@@ -46,6 +46,15 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('generate')
+  async generate(
+    @Body() body: { grade: number; strand: string; count?: number },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.generateForGrade(body, req.user?.id);
+    return { success: true as const, data };
+  }
+
   @Post('publish')
   async publish() {
     const data = await this.svc.publish();
