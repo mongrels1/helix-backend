@@ -11,6 +11,7 @@ import { SYSTEM_PROMPT, buildUserPrompt } from './prompt';
 import { resolveStandard } from './mgse-ga-crosswalk';
 import { applicableMisconceptions } from './misconception-library';
 import { buildIntegrityReport, type BankRow } from './integrity';
+import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
 
 const PROMOTE_MIN_RESPONSES = 200;
@@ -331,7 +332,7 @@ export class ItemGenerationService {
         difficulty: true,
       },
     })) as unknown as BankRow[];
-    return buildIntegrityReport(rows);
+    return buildIntegrityReport(rows, DIAGNOSTIC_ITEM_BANK);
   }
 
   /** Delete all non-operational items (draft/validated/field_test/rejected). Never deletes operational. */
