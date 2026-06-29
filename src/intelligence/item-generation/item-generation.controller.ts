@@ -29,6 +29,15 @@ export class ItemGenerationController {
     return { success: true as const, data };
   }
 
+  @Post('generate-standard')
+  async generateFromStandard(
+    @Body() body: { standard: string; grade?: number; count?: number },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.generateFromStandard(body, req.user?.id ?? 'super-admin');
+    return { success: true as const, data };
+  }
+
   @Get('jobs/:jobId')
   async job(@Param('jobId') jobId: string) {
     const data = await this.svc.getJob(jobId);

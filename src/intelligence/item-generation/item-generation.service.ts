@@ -9,6 +9,7 @@ import { AIRouterService } from '../ai-router/ai-router.service';
 import { ValidationService } from './validation.service';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompt';
 import { resolveStandard } from './mgse-ga-crosswalk';
+import { nodesForStandard } from './skill-graph';
 import { applicableMisconceptions } from './misconception-library';
 import { buildIntegrityReport, type BankRow } from './integrity';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
@@ -79,6 +80,56 @@ export class ItemGenerationService {
     );
 
     return { batchId, jobId: job.id, status: 'queued', count: total };
+  }
+
+  /**
+   * No-seed ("quick") generation. Synthesizes seed prompts for a standard from
+   * the skill graph (falling back to one generic seed) and runs them through the
+   * normal generate pipeline — so a super-admin can top up a standard's practice
+   * pool without pasting examples. Same validation + dedup as seeded generation.
+   */
+  async generateFromStandard(
+    body: { standard: string; grade?: number; count?: number },
+    createdBy: string,
+  ) {
+    const standard = String(body.standard ?? '').trim();
+    if (!standard) {
+      throw new BadRequestException({ error: { code: 'no_standard', message: 'standard required' } });
+    }
+    const route = resolveStandard(standard);
+    const count = Math.min(Math.max(Number(body.count) || 10, 5), 50);
+    const gradeStr = body.grade ? `Grade ${body.grade} ` : '';
+
+    const nodes = [
+      ...nodesForStandard(standard),
+      ...nodesForStandard(route.ga),
+      ...nodesForStandard(route.gaCluster),
+    ];
+    const seenNode = new Set<string>();
+    const uniqueNodes = nodes.filter((n) => (seenNode.has(n.id) ? false : (seenNode.add(n.id), true)));
+
+    const seeds: BaseItem[] = (uniqueNodes.length
+      ? uniqueNodes.slice(0, 6).map((n) => ({
+          sourceId: `std:${route.ga}:${n.id}`,
+          standard,
+          ga: route.ga,
+          gaCluster: route.gaCluster,
+          stem: `Write an original ${gradeStr}word problem for ${route.ga} — ${n.label}. ${n.masteryIndicator} Use a realistic, fresh scenario with a single correct answer.`,
+          referenceOnly: true,
+        }))
+      : [
+          {
+            sourceId: `std:${route.ga}`,
+            standard,
+            ga: route.ga,
+            gaCluster: route.gaCluster,
+            stem: `Write an original ${gradeStr}word problem aligned to standard ${route.ga}. Use a realistic, fresh scenario with a single correct numeric or short-text answer.`,
+            referenceOnly: true,
+          },
+        ]) as BaseItem[];
+
+    const versions = Math.min(Math.max(Math.ceil(count / seeds.length), 5), 10);
+    return this.generate({ baseItems: seeds, versionsPerItem: versions }, createdBy);
   }
 
   private async processBatch(
