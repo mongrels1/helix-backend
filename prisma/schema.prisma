@@ -88,6 +88,7 @@ model User {
   email        String    @unique
   passwordHash String
   role         Role      @default(STUDENT)
+  plan         String?
   profile      Profile?
   memberships  Membership[]
   taughtClassrooms Classroom[]  @relation("TeacherClassrooms")

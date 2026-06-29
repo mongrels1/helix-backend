@@ -17,6 +17,9 @@ export default () => ({
   app: {
     frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
   },
+  ghl: {
+    webhookSecret: process.env.GHL_WEBHOOK_SECRET ?? '',
+  },
   email: {
     resendApiKey: process.env.RESEND_API_KEY ?? '',
     from: process.env.EMAIL_FROM ?? 'Helix <onboarding@resend.dev>',

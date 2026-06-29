@@ -22,6 +22,7 @@ import { DiagnosticBankModule } from './intelligence/diagnostic-bank/diagnostic-
 import { PracticeModule } from './intelligence/practice/practice.module';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
 import { AuthModule } from '@modules/auth/auth.module';
+import { ProvisioningModule } from '@modules/provisioning/provisioning.module';
 import { AssignmentsModule } from '@modules/assignments/assignments.module';
 import { ClassroomsModule } from '@modules/classrooms/classrooms.module';
 import { CoursesModule } from '@modules/courses/courses.module';
@@ -82,6 +83,7 @@ import { PrismaModule } from './prisma/prisma.module';
     EventsModule,
     AttendanceModule,
     AuthModule,
+    ProvisioningModule,
     AssignmentsModule,
     FilesModule,
     SubmissionsModule,

@@ -19,6 +19,21 @@ export class EmailService {
       text: `Hi ${displayName}, welcome to Helix Intelligence System. Open Helix: ${frontendUrl}`,
     });
   }
+  async sendActivationEmail(to: string, activationUrl: string, firstName?: string): Promise<void> {
+    const displayName = firstName?.trim() || 'there';
+    await this.sendEmail({
+      to,
+      subject: 'Set up your EdKairos account',
+      html: `
+        <p>Hi ${this.escapeHtml(displayName)},</p>
+        <p>Thanks for your purchase — your EdKairos account is ready. Click below to set your password and start learning:</p>
+        <p><a href="${activationUrl}">Set my password &amp; get started</a></p>
+        <p>This link expires in 7 days. If the button doesn't work, paste this into your browser:<br>${this.escapeHtml(activationUrl)}</p>
+      `,
+      text: `Hi ${displayName}, thanks for your purchase — your EdKairos account is ready. Set your password and get started: ${activationUrl}\n\nThis link expires in 7 days.`,
+    });
+  }
+
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
     await this.sendEmail({
       to,
