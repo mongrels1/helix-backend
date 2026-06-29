@@ -108,28 +108,27 @@ export class ItemGenerationService {
     const seenNode = new Set<string>();
     const uniqueNodes = nodes.filter((n) => (seenNode.has(n.id) ? false : (seenNode.add(n.id), true)));
 
-    const seeds: BaseItem[] = (uniqueNodes.length
-      ? uniqueNodes.slice(0, 6).map((n) => ({
-          sourceId: `std:${route.ga}:${n.id}`,
-          standard,
-          ga: route.ga,
-          gaCluster: route.gaCluster,
-          stem: `Write an original ${gradeStr}word problem for ${route.ga} — ${n.label}. ${n.masteryIndicator} Use a realistic, fresh scenario with a single correct answer.`,
-          referenceOnly: true,
-        }))
-      : [
-          {
-            sourceId: `std:${route.ga}`,
-            standard,
-            ga: route.ga,
-            gaCluster: route.gaCluster,
-            stem: `Write an original ${gradeStr}word problem aligned to standard ${route.ga}. Use a realistic, fresh scenario with a single correct numeric or short-text answer.`,
-            referenceOnly: true,
-          },
-        ]) as BaseItem[];
+    // Generate in FULL 10-version slates so each slate carries the whole
+    // representation set (fractions, decimals, percent, figure, psychology, …).
+    // Volume is controlled by how many slates we run, not by shrinking a slate.
+    const slateSize = 10;
+    const numSlates = Math.min(Math.max(Math.ceil(count / slateSize), 1), 6);
+    const seeds: BaseItem[] = Array.from({ length: numSlates }, (_, i) => {
+      const node = uniqueNodes.length ? uniqueNodes[i % uniqueNodes.length] : null;
+      return {
+        // unique per slate so validateBatch gates each slate separately
+        sourceId: node ? `std:${route.ga}:${node.id}:${i}` : `std:${route.ga}:${i}`,
+        standard,
+        ga: route.ga,
+        gaCluster: route.gaCluster,
+        stem: node
+          ? `Write an original ${gradeStr}word problem for ${route.ga} — ${node.label}. ${node.masteryIndicator} Use a realistic, fresh scenario with a single correct answer.`
+          : `Write an original ${gradeStr}word problem aligned to standard ${route.ga}. Use a realistic, fresh scenario with a single correct numeric or short-text answer.`,
+        referenceOnly: true,
+      } as BaseItem;
+    });
 
-    const versions = Math.min(Math.max(Math.ceil(count / seeds.length), 5), 10);
-    return this.generate({ baseItems: seeds, versionsPerItem: versions }, createdBy);
+    return this.generate({ baseItems: seeds, versionsPerItem: slateSize }, createdBy);
   }
 
   private async processBatch(

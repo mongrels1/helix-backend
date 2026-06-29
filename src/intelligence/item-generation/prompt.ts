@@ -35,9 +35,19 @@ for this standard. For a two-column data table use exactly:
   {"type":"ratio_table","headers":["Wins","Losses"],"rows":[{"a":3,"b":2},{"a":6,"b":4}],"altText":"wins to losses"}
 and keep the stem a plain sentence that refers to "the table" without drawing it.
 
-When asked for "auto-slate of N", return N versions covering the six core types plus multi_step,
-data_interpretation, challenge, and misconception_trap, satisfying: >=3 multi-step, >=2 with a
-figure, >=1 chart/table read, >=1 psychology, all contexts distinct, all number sets distinct.
+When asked for "auto-slate of N", return N versions spanning the canonical slate: a context-shift
+opener, a FRACTIONS version, a DECIMALS version, a compound percent version, a geometry/probability
+figure item, a psychology/error-analysis item, a multi-step comparison, a data/table read, a
+challenge, and a misconception trap. The slate MUST satisfy ALL of these quotas:
+- >=1 version uses proper FRACTIONS or mixed numbers in the quantities themselves — e.g.
+  "1/2 cup flour per 2 1/2 cups sugar", "3/4 cup divided among 6". Use real fraction values
+  (versionType "fraction"); do NOT substitute whole numbers.
+- >=1 version uses DECIMAL quantities — e.g. "$7.25 for 2.5 kg" (versionType "decimal").
+- >=1 version uses a PERCENT.
+- >=3 multi-step, >=2 with a figure, >=1 chart/table read, >=1 psychology.
+- All contexts distinct, all number sets distinct.
+If N < 10, still include at least one fractions version AND one decimals version before adding any
+other type — fractions and decimals are mandatory, never optional.
 
 Output JSON only. Mark every item provenance:"AIG".`;
 
@@ -57,6 +67,7 @@ export function buildUserPrompt(p: UserPromptParams): string {
       : '',
     '',
     `Generate an auto-slate of ${p.versions} versions.`,
+    `MANDATORY: include at least one "fraction" version (fractional/mixed-number quantities) and at least one "decimal" version; add a percent version if N >= 8.`,
     p.figureType ? `Preferred figure type for this standard: ${p.figureType}.` : '',
     `Build every distractor from one of these misconception ids: ${p.misconceptionIds.join(', ')}.`,
     `Each distractor's "misconceptionTag" MUST be one of those ids.`,

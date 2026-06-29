@@ -26,6 +26,19 @@ function numbersOf(s: string): string {
 function isMultiStep(it: GeneratedItem): boolean {
   return ['multi_step', 'compound', 'challenge'].includes(it.versionType) || /;/.test(it.solution);
 }
+/** all readable text of an item (stem + option texts) */
+function itemText(it: GeneratedItem): string {
+  return `${it.stem} ${(it.options ?? []).map((o) => o.text).join(' ')}`;
+}
+/** a proper fraction (3/4) or mixed number (2 1/2) appears in the quantities */
+function hasFraction(it: GeneratedItem): boolean {
+  const t = itemText(it);
+  return /\d+\s+\d+\s*\/\s*\d+/.test(t) || /\b\d+\s*\/\s*\d+\b/.test(t);
+}
+/** a decimal quantity (7.25, $2.90) appears */
+function hasDecimal(it: GeneratedItem): boolean {
+  return /\d+\.\d+/.test(itemText(it));
+}
 
 /** validate a single item */
 export function gateItem(it: GeneratedItem): Check[] {
@@ -56,6 +69,10 @@ export function gateSlate(items: GeneratedItem[]): ValidationReport {
   checks.push({ id: 'chart_read>=1', ok: charts >= 1, detail: `${charts}` });
   const psych = items.filter((i) => i.versionType === 'psychology').length;
   checks.push({ id: 'psychology>=1', ok: psych >= 1, detail: `${psych}` });
+  const fracs = items.filter(hasFraction).length;
+  checks.push({ id: 'fractions>=1', ok: fracs >= 1, detail: `${fracs}` });
+  const decs = items.filter(hasDecimal).length;
+  checks.push({ id: 'decimals>=1', ok: decs >= 1, detail: `${decs}` });
 
   const ns = items.map((i) => numbersOf(i.stem));
   checks.push({ id: 'distinct_number_sets', ok: new Set(ns).size === ns.length, detail: `${ns.length - new Set(ns).size} dup` });
