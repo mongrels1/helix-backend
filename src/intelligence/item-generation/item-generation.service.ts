@@ -164,6 +164,7 @@ export class ItemGenerationService {
     const existing = await this.prisma.draftItem.findMany({ select: { stem: true } });
     for (const e of existing) seen.add(this.normStem(e.stem));
     let duplicates = 0;
+    let discarded = 0;
     let firstError = '';
     for (const base of req.baseItems) {
       const route = resolveStandard(base.standard);
@@ -188,9 +189,14 @@ export class ItemGenerationService {
           maxTokens: 8000,
         });
         const items = this.parseModelJson(res.text) as GeneratedItem[];
-        const saved = await this.persistDrafts(batchId, base, items, createdBy, seen, [...new Set(misIds)]);
+        // Correctness self-check: independently re-solve each item and drop any
+        // that is wrong, ambiguous, or malformed BEFORE it can be saved/served.
+        const { kept, dropped } = await this.verifyItems(items);
+        discarded += dropped;
+        const saved = await this.persistDrafts(batchId, base, kept, createdBy, seen, [...new Set(misIds)]);
         duplicates += saved.skipped;
-        this.logger.log(`seed ok: parsed ${items.length}, saved ${saved.saved}, skipped ${saved.skipped}`);
+        discarded += saved.invalid;
+        this.logger.log(`seed ok: parsed ${items.length}, verified ${kept.length}, discarded ${dropped + saved.invalid}, saved ${saved.saved}, skipped ${saved.skipped}`);
       } catch (err) {
         const msg = String((err as Error)?.message ?? err);
         if (!firstError) firstError = msg;
@@ -198,14 +204,64 @@ export class ItemGenerationService {
       }
       await this.prisma.batchJob.update({
         where: { id: jobId },
-        data: { done: { increment: versions }, duplicates },
+        data: { done: { increment: versions }, duplicates, discarded },
       });
     }
     const summary = await this.validation.validateBatch(batchId);
+    // Self-heal: auto-reject any structurally-invalid serveable items (including
+    // ones from older batches) so they stop reaching students.
+    const purged = await this.purgeInvalidDrafts();
     await this.prisma.batchJob.update({
       where: { id: jobId },
-      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, error: firstError || null },
+      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, discarded: discarded + purged, error: firstError || null },
     });
+  }
+
+  /**
+   * Correctness self-check (LLM-as-judge). Independently re-solves each generated
+   * item and keeps ONLY the ones the judge confirms are correct, unambiguous, and
+   * well-formed (and, for error-analysis items, actually built on a real mistake).
+   * Wrong/ambiguous items are dropped before they can be saved. Fails OPEN on a
+   * verifier error (keeps items, which still pass the structural gate) so a
+   * transient hiccup never wipes a batch.
+   */
+  private async verifyItems(items: GeneratedItem[]): Promise<{ kept: GeneratedItem[]; dropped: number }> {
+    if (!Array.isArray(items) || !items.length) return { kept: [], dropped: 0 };
+    const payload = items.map((it, i) => ({
+      i,
+      versionType: it.versionType,
+      stem: it.stem,
+      options: (it.options ?? []).map((o) => o.text),
+      correctIndex: (it.options ?? []).findIndex((o) => o.correct),
+    }));
+    const system =
+      'You are a STRICT K-8 math item checker. For each item, independently solve the problem from ' +
+      'scratch, then judge whether it is SAFE to publish to students. Mark ok=false if ANY of these ' +
+      'hold: the option at correctIndex is NOT the truly correct answer; the item is ambiguous or has ' +
+      'more than one defensible answer; required information is missing; numbers or units are ' +
+      'inconsistent; or (for a "psychology"/error-analysis item) the scenario does NOT depict a ' +
+      'genuine student MISTAKE with a wrong result (e.g. the student was actually correct). Only mark ' +
+      'ok=true when you are confident the marked answer is correct AND the item is unambiguous and ' +
+      'well-formed. Return JSON ONLY: an array of {"i": <index>, "ok": <true|false>, "reason": <short>}. ' +
+      'Be strict — when in doubt, ok=false.';
+    try {
+      const res = await this.ai.chat({
+        systemPrompt: system,
+        prompt: JSON.stringify(payload),
+        preferredProvider: 'claude',
+        timeoutMs: 60_000,
+        maxTokens: 4000,
+      });
+      const verdicts = this.parseModelJson(res.text) as Array<{ i?: number; ok?: boolean }>;
+      if (!verdicts.length) return { kept: items, dropped: 0 }; // fail open on no verdicts
+      const okIndexes = new Set(verdicts.filter((v) => v.ok === true).map((v) => Number(v.i)));
+      const kept = items.filter((_, i) => okIndexes.has(i));
+      // If the judge somehow approved nothing, fail open rather than lose everything.
+      if (!kept.length) return { kept: items, dropped: 0 };
+      return { kept, dropped: items.length - kept.length };
+    } catch {
+      return { kept: items, dropped: 0 }; // fail open on verifier error
+    }
   }
 
   getJob(jobId: string) {
@@ -228,10 +284,11 @@ export class ItemGenerationService {
     createdBy: string,
     seen: Set<string>,
     fallbackTags: string[] = [],
-  ): Promise<{ saved: number; skipped: number }> {
-    if (!Array.isArray(items) || !items.length) return { saved: 0, skipped: 0 };
+  ): Promise<{ saved: number; skipped: number; invalid: number }> {
+    if (!Array.isArray(items) || !items.length) return { saved: 0, skipped: 0, invalid: 0 };
     const rows: Record<string, unknown>[] = [];
     let skipped = 0;
+    let invalid = 0;
     // Resolve the standard once so we can backfill ga / gaCluster when the model
     // (or a seed) leaves them blank — keeps targeted-practice routing intact.
     const resolved = resolveStandard(String(base.standard || ''));
@@ -244,6 +301,12 @@ export class ItemGenerationService {
       }
       seen.add(key);
       const options = this.normalizeOptions(it.options);
+      // Hard structural gate: NEVER save an item that isn't exactly 4 options with
+      // one correct and no blank text. These reach students as drafts otherwise.
+      if (options.length !== 4 || options.filter((o) => o.correct).length !== 1 || options.some((o) => !o.text.trim())) {
+        invalid++;
+        continue;
+      }
       // Every distractor must carry a valid misconception tag. The model
       // occasionally leaves one blank; fill it from this standard's applicable
       // misconceptions (falling back to a generic computation error) so the item
@@ -288,7 +351,32 @@ export class ItemGenerationService {
       });
     }
     if (rows.length) await this.prisma.draftItem.createMany({ data: rows as never });
-    return { saved: rows.length, skipped };
+    return { saved: rows.length, skipped, invalid };
+  }
+
+  /**
+   * Auto-reject any serveable practice items that are structurally invalid (not
+   * exactly 4 options, or not exactly one correct). Self-heals the bank so old
+   * bad items stop reaching students. Runs at the end of every generation.
+   */
+  private async purgeInvalidDrafts(): Promise<number> {
+    const drafts = await this.prisma.draftItem.findMany({
+      where: { status: { in: ['draft', 'validated', 'field_test'] } },
+      select: { id: true, options: true },
+    });
+    const badIds: string[] = [];
+    for (const d of drafts) {
+      let opts: Array<{ correct?: boolean; text?: string }> = [];
+      const raw = d.options as unknown;
+      if (Array.isArray(raw)) opts = raw as typeof opts;
+      else if (typeof raw === 'string') { try { opts = JSON.parse(raw); } catch { opts = []; } }
+      const correct = opts.filter((o) => o?.correct === true).length;
+      if (opts.length !== 4 || correct !== 1) badIds.push(d.id);
+    }
+    if (badIds.length) {
+      await this.prisma.draftItem.updateMany({ where: { id: { in: badIds } }, data: { status: 'rejected' } });
+    }
+    return badIds.length;
   }
 
   /**

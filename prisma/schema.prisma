@@ -586,6 +586,7 @@ model BatchJob {
   passed    Int      @default(0)
   failed    Int      @default(0)
   duplicates Int     @default(0)
+  discarded Int      @default(0)
   error     String?
   createdBy String
   createdAt DateTime @default(now())
