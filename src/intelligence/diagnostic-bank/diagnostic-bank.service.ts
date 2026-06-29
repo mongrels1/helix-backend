@@ -1,0 +1,167 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
+import { resolveStandard } from '../item-generation/mgse-ga-crosswalk';
+
+export const VIABILITY_MIN = 100;
+const STATUSES = ['draft', 'validated', 'rejected', 'published'] as const;
+type DiagStatus = (typeof STATUSES)[number];
+
+/** Provisional DOK from the calibrated Rasch difficulty (b). A starting point a
+ *  Super Admin can refine — harder items lean to higher DOK. */
+function provisionalDok(b: number): number {
+  if (b < -1) return 1;
+  if (b < 0.5) return 2;
+  if (b < 1.5) return 3;
+  return 4;
+}
+
+/** GA standard (cluster) inferred from a diagnostic item's grade + strand. */
+function standardFor(grade: number, strand: string): string | null {
+  return resolveStandard(`MGSE${grade}.${strand}`).gaCluster || null;
+}
+
+export interface CreateDiagnosticItemDto {
+  grade: number;
+  strand: string;
+  kc: string;
+  stem: string;
+  options: string[];
+  correct: number;
+  standard?: string;
+  dok?: number;
+  b?: number;
+}
+
+@Injectable()
+export class DiagnosticBankService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** One-time populate from the in-code calibrated bank (the 89). Idempotent:
+   *  does nothing once seed items exist. Seeds land as published (they are the
+   *  live calibrated set) with provisional DOK + inferred standard. */
+  async seedFromCode(): Promise<{ seeded: number; alreadyPresent: number }> {
+    const seedCount = await this.prisma.diagnosticItem.count({ where: { source: 'seed' } });
+    if (seedCount > 0) return { seeded: 0, alreadyPresent: seedCount };
+    const rows = DIAGNOSTIC_ITEM_BANK.map((it) => ({
+      id: it.id,
+      grade: it.grade,
+      strand: it.strand,
+      kc: it.kc,
+      standard: standardFor(it.grade, it.strand),
+      dok: provisionalDok(it.b),
+      b: it.b,
+      stem: it.stem,
+      options: it.options,
+      correct: it.correct,
+      status: 'published',
+      source: 'seed',
+    }));
+    await this.prisma.diagnosticItem.createMany({ data: rows, skipDuplicates: true });
+    return { seeded: rows.length, alreadyPresent: 0 };
+  }
+
+  list(q: { grade?: number; status?: string; strand?: string; take?: number }) {
+    return this.prisma.diagnosticItem.findMany({
+      where: {
+        grade: q.grade ? Number(q.grade) : undefined,
+        status: q.status || undefined,
+        strand: q.strand || undefined,
+      },
+      orderBy: [{ grade: 'asc' }, { strand: 'asc' }, { createdAt: 'desc' }],
+      take: Math.min(Number(q.take) || 500, 2000),
+    });
+  }
+
+  async create(dto: CreateDiagnosticItemDto, createdBy?: string) {
+    if (!dto.stem?.trim()) throw new BadRequestException({ error: { code: 'no_stem', message: 'Stem required' } });
+    if (!Array.isArray(dto.options) || dto.options.length < 2) {
+      throw new BadRequestException({ error: { code: 'few_options', message: 'At least two options required' } });
+    }
+    if (typeof dto.correct !== 'number' || dto.correct < 0 || dto.correct >= dto.options.length) {
+      throw new BadRequestException({ error: { code: 'bad_correct', message: 'correct must index an option' } });
+    }
+    const grade = Number(dto.grade);
+    const strand = String(dto.strand || '').trim().toUpperCase();
+    return this.prisma.diagnosticItem.create({
+      data: {
+        grade,
+        strand,
+        kc: String(dto.kc || '').trim(),
+        standard: dto.standard?.trim() || standardFor(grade, strand),
+        dok: dto.dok ?? (typeof dto.b === 'number' ? provisionalDok(dto.b) : null),
+        b: typeof dto.b === 'number' ? dto.b : 0,
+        stem: dto.stem.trim(),
+        options: dto.options.map((o) => String(o)),
+        correct: dto.correct,
+        status: 'draft',
+        source: 'manual',
+        createdBy: createdBy ?? null,
+      },
+    });
+  }
+
+  async review(id: string, action: 'validate' | 'reject' | 'restore') {
+    await this.prisma.diagnosticItem.findUniqueOrThrow({ where: { id } }).catch(() => {
+      throw new NotFoundException('Diagnostic item not found');
+    });
+    const status: DiagStatus = action === 'validate' ? 'validated' : action === 'reject' ? 'rejected' : 'draft';
+    return this.prisma.diagnosticItem.update({ where: { id }, data: { status } });
+  }
+
+  /** Publish all validated items — they become the set the live diagnostic will
+   *  serve once the serve-path is wired (next phase). Never touches rejected. */
+  async publish(): Promise<{ published: number }> {
+    const res = await this.prisma.diagnosticItem.updateMany({
+      where: { status: 'validated' },
+      data: { status: 'published' },
+    });
+    return { published: res.count };
+  }
+
+  /** Viability + alignment stats: per-grade progress to the minimum, DOK 1–4
+   *  spread, standard coverage, per-strand counts. Drives the manage screen. */
+  async stats() {
+    const items = await this.prisma.diagnosticItem.findMany({
+      select: { grade: true, strand: true, standard: true, dok: true, status: true },
+    });
+
+    const gradeMap = new Map<number, { total: number; byStatus: Record<string, number>; standards: Set<string> }>();
+    const dok: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, none: 0 };
+    const strandMap = new Map<string, number>();
+    const byStatusTotal: Record<string, number> = { draft: 0, validated: 0, rejected: 0, published: 0 };
+
+    for (const it of items) {
+      const g = gradeMap.get(it.grade) ?? { total: 0, byStatus: {}, standards: new Set<string>() };
+      g.total += 1;
+      g.byStatus[it.status] = (g.byStatus[it.status] ?? 0) + 1;
+      if (it.standard) g.standards.add(it.standard);
+      gradeMap.set(it.grade, g);
+
+      byStatusTotal[it.status] = (byStatusTotal[it.status] ?? 0) + 1;
+      dok[it.dok && it.dok >= 1 && it.dok <= 4 ? String(it.dok) : 'none'] += 1;
+      if (it.strand) strandMap.set(it.strand, (strandMap.get(it.strand) ?? 0) + 1);
+    }
+
+    const byGrade = [...gradeMap.entries()]
+      .map(([grade, v]) => ({
+        grade,
+        total: v.total,
+        viable: v.total >= VIABILITY_MIN,
+        short: Math.max(0, VIABILITY_MIN - v.total),
+        byStatus: v.byStatus,
+        standards: [...v.standards].sort(),
+      }))
+      .sort((a, b) => a.grade - b.grade);
+
+    return {
+      viabilityMin: VIABILITY_MIN,
+      total: items.length,
+      byStatus: byStatusTotal,
+      byGrade,
+      dok,
+      byStrand: [...strandMap.entries()].map(([strand, count]) => ({ strand, count })).sort((a, b) => a.strand.localeCompare(b.strand)),
+      dokComplete: dok['1'] > 0 && dok['2'] > 0 && dok['3'] > 0 && dok['4'] > 0,
+    };
+  }
+}

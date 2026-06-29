@@ -18,6 +18,7 @@ import { MasteryEngineModule } from './intelligence/mastery-engine/mastery-engin
 import { RemediationModule } from './intelligence/remediation/remediation.module';
 import { PacingEngineModule } from './intelligence/pacing-engine/pacing-engine.module';
 import { ItemGenerationModule } from './intelligence/item-generation/item-generation.module';
+import { DiagnosticBankModule } from './intelligence/diagnostic-bank/diagnostic-bank.module';
 import { PracticeModule } from './intelligence/practice/practice.module';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
 import { AuthModule } from '@modules/auth/auth.module';
@@ -76,6 +77,7 @@ import { PrismaModule } from './prisma/prisma.module';
     RemediationModule,
     PacingEngineModule,
     ItemGenerationModule,
+    DiagnosticBankModule,
     PracticeModule,
     EventsModule,
     AttendanceModule,

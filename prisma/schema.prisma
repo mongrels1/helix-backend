@@ -612,3 +612,32 @@ model PracticeResponse {
   @@index([userId])
   @@index([userId, createdAt])
 }
+
+// ---------------------------------------------------------------------------
+// Diagnostic staging bank. A DB-managed copy of the calibrated diagnostic items
+// (originally hardcoded in diagnostic-item-bank.ts), so Super Admins can grow,
+// review, and curate the scored bank toward statistical viability without
+// editing code. The LIVE diagnostic keeps serving from code until items here are
+// explicitly published. status: draft | validated | rejected | published.
+// source: seed (from code) | manual | import | generated.
+// ---------------------------------------------------------------------------
+model DiagnosticItem {
+  id        String   @id @default(uuid())
+  grade     Int
+  strand    String
+  kc        String
+  standard  String?
+  dok       Int?
+  b         Float    @default(0)
+  stem      String
+  options   String[]
+  correct   Int      @default(0)
+  status    String   @default("draft")
+  source    String   @default("manual")
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([grade])
+  @@index([status])
+}
