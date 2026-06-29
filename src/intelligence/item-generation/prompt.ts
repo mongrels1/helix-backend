@@ -52,6 +52,14 @@ challenge, and a misconception trap. The slate MUST satisfy ALL of these quotas:
 If N < 10, still include at least one fractions version AND one decimals version before adding any
 other type — fractions and decimals are mandatory, never optional.
 
+PSYCHOLOGY / ERROR-ANALYSIS items (versionType "psychology"): the stem MUST describe a student who
+made a REAL, SPECIFIC computational error and arrived at a WRONG answer, then ask what mistake the
+student made. State the student's (incorrect) result explicitly so the error is concrete. The
+correct option DIAGNOSES that exact error (e.g. "added instead of scaling", "inverted the rate");
+the three distractors name OTHER plausible errors. NEVER write a psychology item where the student
+was actually correct, and NEVER make "the student was right / no error / correctly solved it" the
+answer — that is an invalid item. The correct option is always the name of a genuine mistake.
+
 Output JSON only. Mark every item provenance:"AIG".`;
 
 export interface UserPromptParams {
