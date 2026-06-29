@@ -96,10 +96,19 @@ export class ItemGenerationService {
     if (!standard) {
       throw new BadRequestException({ error: { code: 'no_standard', message: 'standard required' } });
     }
-    const route = resolveStandard(standard);
-    const count = Math.min(Math.max(Number(body.count) || 10, 5), 50);
-    const gradeStr = body.grade ? `Grade ${body.grade} ` : '';
+    const seeds = this.buildSeedsForStandard(standard, body.grade, Number(body.count) || 10);
+    return this.generate({ baseItems: seeds, versionsPerItem: 10 }, createdBy);
+  }
 
+  /**
+   * Build full 10-version slate seeds for one standard from its skill graph.
+   * Volume is controlled by how many slates we run, not by shrinking a slate, so
+   * each slate carries the whole representation set (fractions, decimals, …).
+   */
+  private buildSeedsForStandard(standard: string, grade: number | undefined, count: number): BaseItem[] {
+    const route = resolveStandard(standard);
+    const c = Math.min(Math.max(Number(count) || 10, 5), 50);
+    const gradeStr = grade ? `Grade ${grade} ` : '';
     const nodes = [
       ...nodesForStandard(standard),
       ...nodesForStandard(route.ga),
@@ -107,16 +116,11 @@ export class ItemGenerationService {
     ];
     const seenNode = new Set<string>();
     const uniqueNodes = nodes.filter((n) => (seenNode.has(n.id) ? false : (seenNode.add(n.id), true)));
-
-    // Generate in FULL 10-version slates so each slate carries the whole
-    // representation set (fractions, decimals, percent, figure, psychology, …).
-    // Volume is controlled by how many slates we run, not by shrinking a slate.
     const slateSize = 10;
-    const numSlates = Math.min(Math.max(Math.ceil(count / slateSize), 1), 6);
-    const seeds: BaseItem[] = Array.from({ length: numSlates }, (_, i) => {
+    const numSlates = Math.min(Math.max(Math.ceil(c / slateSize), 1), 6);
+    return Array.from({ length: numSlates }, (_, i) => {
       const node = uniqueNodes.length ? uniqueNodes[i % uniqueNodes.length] : null;
       return {
-        // unique per slate so validateBatch gates each slate separately
         sourceId: node ? `std:${route.ga}:${node.id}:${i}` : `std:${route.ga}:${i}`,
         standard,
         ga: route.ga,
@@ -127,8 +131,25 @@ export class ItemGenerationService {
         referenceOnly: true,
       } as BaseItem;
     });
+  }
 
-    return this.generate({ baseItems: seeds, versionsPerItem: slateSize }, createdBy);
+  /**
+   * Fan out generation across many standards in one batch — fills the practice
+   * bank broadly with net-new items (dedup still skips repeats). One job covers
+   * every standard supplied.
+   */
+  async generateAllStandards(
+    body: { standards: string[]; countPerStandard?: number },
+    createdBy: string,
+  ) {
+    const standards = (body.standards ?? []).map((s) => String(s).trim()).filter(Boolean);
+    if (!standards.length) {
+      throw new BadRequestException({ error: { code: 'no_standards', message: 'standards required' } });
+    }
+    const count = Math.min(Math.max(Number(body.countPerStandard) || 5, 5), 20);
+    const seeds: BaseItem[] = [];
+    for (const std of standards) seeds.push(...this.buildSeedsForStandard(std, undefined, count));
+    return this.generate({ baseItems: seeds, versionsPerItem: 10 }, createdBy);
   }
 
   private async processBatch(

@@ -38,6 +38,15 @@ export class ItemGenerationController {
     return { success: true as const, data };
   }
 
+  @Post('generate-all-standards')
+  async generateAllStandards(
+    @Body() body: { standards: string[]; countPerStandard?: number },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.generateAllStandards(body, req.user?.id ?? 'super-admin');
+    return { success: true as const, data };
+  }
+
   @Get('jobs/:jobId')
   async job(@Param('jobId') jobId: string) {
     const data = await this.svc.getJob(jobId);
