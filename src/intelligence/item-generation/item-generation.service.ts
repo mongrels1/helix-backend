@@ -217,6 +217,13 @@ export class ItemGenerationService {
       }
       seen.add(key);
       const options = this.normalizeOptions(it.options);
+      // Safety net: the model sometimes omits the top-level "answer" even though
+      // it flags the correct option. Fall back to that option's text so the item
+      // never persists answer-less. Standard is stored in the base's MGSE form so
+      // practice routing (strandOfStandard) can resolve the strand.
+      const correctOpt = options.find((o) => o.correct);
+      const rawAnswer = it.answer === undefined || it.answer === null ? '' : String(it.answer).trim();
+      const answer = rawAnswer || (correctOpt ? correctOpt.text : '');
       rows.push({
         batchId,
         baseSourceId: base.sourceId ?? base.stem.slice(0, 40),
@@ -225,9 +232,9 @@ export class ItemGenerationService {
         stem: String(conv.stem ?? ''),
         figure: (it.figure as object) ?? conv.figure ?? undefined,
         options: options as unknown as object,
-        answer: it.answer === undefined || it.answer === null ? '' : String(it.answer),
+        answer,
         solution: String(it.solution ?? ''),
-        standard: String(it.standard ?? base.standard ?? ''),
+        standard: String(base.standard || it.standard || ''),
         ga: it.ga ?? base.ga ?? undefined,
         gaCluster: it.gaCluster ?? base.gaCluster ?? undefined,
         skillTags: Array.isArray(it.skillTags) ? it.skillTags.map(String) : [],

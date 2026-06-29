@@ -25,6 +25,9 @@ For each version:
   and NEVER make the answer choices themselves tables, graphs, or pictures.
 - Do NOT write questions whose answer is a table/graph/diagram (avoid "Which table shows..." or
   "Which graph represents..."). The four options must always be plain readable text.
+- Every item MUST include a top-level "answer" (the correct option's value as a string — e.g.
+  "$2.90", "1/8 cup", "20 miles") AND a "solution" (a short worked explanation of the steps to
+  reach it). NEVER leave "answer" or "solution" empty — an item without both is invalid.
 - Tag it: "standard" (GA), "skillTags", "misconceptionTags", "dok" (1-4), "difficulty",
   and "microDiagnosticSignal".
 
