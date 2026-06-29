@@ -61,7 +61,7 @@ export class ItemGenerationController {
 
   @Get('queue')
   async queue(
-    @Query() q: { status?: string; batchId?: string; page?: number; pageSize?: number },
+    @Query() q: { status?: string; batchId?: string; page?: number; pageSize?: number; search?: string },
   ) {
     const data = await this.svc.queue(q);
     return { success: true as const, data };

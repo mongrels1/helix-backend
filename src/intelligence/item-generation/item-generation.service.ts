@@ -476,18 +476,24 @@ export class ItemGenerationService {
     return this.prisma.draftItem.update({ where: { id }, data: { status: 'operational' } });
   }
 
-  queue(q: { status?: string; batchId?: string; page?: number; pageSize?: number }) {
-    const page = Number(q.page) || 1;
+  async queue(q: { status?: string; batchId?: string; page?: number; pageSize?: number; search?: string }) {
+    const page = Math.max(1, Number(q.page) || 1);
     const pageSize = Math.min(Number(q.pageSize) || 25, 1000);
-    return this.prisma.draftItem.findMany({
-      where: {
-        status: (q.status as never) || undefined,
-        batchId: q.batchId || undefined,
-      },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      orderBy: { createdAt: 'desc' },
-    });
+    const where = {
+      status: (q.status as never) || undefined,
+      batchId: q.batchId || undefined,
+      stem: q.search ? { contains: String(q.search), mode: 'insensitive' as const } : undefined,
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.draftItem.findMany({
+        where,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.draftItem.count({ where }),
+    ]);
+    return { items, total, page, pageSize };
   }
 
   item(id: string) {
