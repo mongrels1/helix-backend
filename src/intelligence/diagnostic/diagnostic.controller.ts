@@ -69,6 +69,19 @@ export class DiagnosticController {
     return { success: true, data };
   }
 
+  /**
+   * Item ids the signed-in student saw in recent sessions, so the adaptive
+   * diagnostic can skip them and stop repeating the same questions every run.
+   */
+  @Roles(...ANY_USER)
+  @Get('seen')
+  async seen(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ success: true; data: string[] }> {
+    const data = await this.diagnosticService.seenItemIds(user.userId);
+    return { success: true, data };
+  }
+
   /** Fetch one saved diagnostic (owner only). */
   @Roles(...ANY_USER)
   @Get('sessions/:id')

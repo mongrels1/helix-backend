@@ -254,4 +254,25 @@ export class DiagnosticService {
     }
     return session;
   }
+
+  /**
+   * Item ids the student saw in their most recent diagnostic sessions. The
+   * adaptive engine uses these to avoid re-serving the same questions every run
+   * (the "same questions every time" problem). Capped to a few recent sessions
+   * so the finite calibrated bank still rotates back over time, and so a heavy
+   * user is never excluded out of a full-length diagnostic.
+   */
+  async seenItemIds(userId: string, recentSessions = 3): Promise<string[]> {
+    const recent = await this.prisma.diagnosticSession.findMany({
+      where: { userId },
+      orderBy: { completedAt: 'desc' },
+      take: Math.max(1, recentSessions),
+      select: { responses: { select: { itemId: true } } },
+    });
+    const ids = new Set<string>();
+    for (const session of recent) {
+      for (const response of session.responses) ids.add(response.itemId);
+    }
+    return [...ids];
+  }
 }
