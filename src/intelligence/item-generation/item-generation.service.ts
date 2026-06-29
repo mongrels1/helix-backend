@@ -10,6 +10,7 @@ import { ValidationService } from './validation.service';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompt';
 import { resolveStandard } from './mgse-ga-crosswalk';
 import { applicableMisconceptions } from './misconception-library';
+import { buildIntegrityReport, type BankRow } from './integrity';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
 
 const PROMOTE_MIN_RESPONSES = 200;
@@ -305,6 +306,32 @@ export class ItemGenerationService {
 
   item(id: string) {
     return this.prisma.draftItem.findUniqueOrThrow({ where: { id } });
+  }
+
+  /**
+   * Whole-bank integrity report for the Super-Admin "Verify Database" gate run
+   * before opening sales. Pulls every DraftItem (only the fields the report
+   * needs) and runs the pure aggregator in integrity.ts.
+   */
+  async integrity() {
+    const rows = (await this.prisma.draftItem.findMany({
+      select: {
+        id: true,
+        status: true,
+        standard: true,
+        ga: true,
+        gaCluster: true,
+        skillTags: true,
+        misconceptionTags: true,
+        options: true,
+        stem: true,
+        answer: true,
+        solution: true,
+        dok: true,
+        difficulty: true,
+      },
+    })) as unknown as BankRow[];
+    return buildIntegrityReport(rows);
   }
 
   /** Delete all non-operational items (draft/validated/field_test/rejected). Never deletes operational. */

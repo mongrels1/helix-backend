@@ -49,6 +49,12 @@ export class ItemGenerationController {
     return { success: true as const, data };
   }
 
+  @Get('integrity')
+  async integrity() {
+    const data = await this.svc.integrity();
+    return { success: true as const, data };
+  }
+
   @Get('items/:id')
   async item(@Param('id') id: string) {
     const data = await this.svc.item(id);
