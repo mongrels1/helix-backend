@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes, randomUUID } from 'crypto';
 import { EmailService } from '@modules/email/email.service';
@@ -17,6 +18,11 @@ import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 
 const SALT_ROUNDS = 12;
+
+// Roles a person may create for themselves via PUBLIC self-signup. Privileged
+// roles (TEACHER, ORG_ADMIN, SUPER_ADMIN) must never be self-assigned — teachers
+// are created only under a school/org by an admin; admins are provisioned.
+const SELF_SERVE_ROLES = new Set<Role>([Role.STUDENT, Role.PARENT]);
 
 type AuthTokens = {
   accessToken: string;
@@ -41,8 +47,12 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    // Hard guard: a self-signup can ONLY become a Student or Parent. Any other
+    // requested role (incl. a crafted TEACHER/ORG_ADMIN/SUPER_ADMIN) is forced to
+    // STUDENT. Teachers/admins are created through the org/admin paths, not here.
+    const safeRole = dto.role && SELF_SERVE_ROLES.has(dto.role) ? dto.role : Role.STUDENT;
     const user = await this.usersRepository.create(
-      dto as CreateUserDto,
+      { ...dto, role: safeRole } as CreateUserDto,
       passwordHash,
     );
     const tokens = await this.generateTokens(user);

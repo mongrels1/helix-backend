@@ -11,6 +11,8 @@ import type { CreateUserDto } from '@modules/users/dto/create-user.dto';
 const SALT_ROUNDS = 12;
 const ACTIVATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+const DEFAULT_PERIOD_MS = 31 * 24 * 60 * 60 * 1000; // ~1 month if GHL sends no renewal date
+
 /** Loosely-typed GHL purchase webhook payload (field names vary by workflow). */
 type GhlPayload = Record<string, unknown> & {
   email?: string; Email?: string;
@@ -18,6 +20,8 @@ type GhlPayload = Record<string, unknown> & {
   last_name?: string; lastName?: string;
   full_name?: string; name?: string;
   product?: string; product_name?: string; productName?: string; tag?: string;
+  type?: string; event?: string; event_type?: string; status?: string;
+  next_billing_date?: string; current_period_end?: string; renewal_date?: string;
   contact?: { email?: string; first_name?: string; last_name?: string };
 };
 
@@ -43,6 +47,7 @@ export class ProvisioningService {
     created: boolean;
     email: string;
     loginUrl: string;
+    status: 'active' | 'canceled';
   }> {
     const expected = (this.config.get<string>('ghl.webhookSecret') ?? '').trim();
     if (!expected) {
@@ -57,8 +62,23 @@ export class ProvisioningService {
     if (!email) {
       throw new BadRequestException({ error: { code: 'no_email', message: 'A buyer email is required' } });
     }
+
+    // Cancellation / refund: revoke access (keep the account + history). Never
+    // creates a user. Access ends now; planRenewsAt is left as-is for reference.
+    if (this.isCancel(payload)) {
+      const u = await this.users.findByEmail(email);
+      if (u) {
+        await this.prisma.user.update({ where: { id: u.id }, data: { planStatus: 'canceled' } });
+        this.logger.log(`Subscription canceled for ${email}`);
+      }
+      return { created: false, email, loginUrl: '', status: 'canceled' as const };
+    }
+
+    // Active payment — a new purchase OR a renewal. Grants/extends access.
     const { firstName, lastName } = this.pickName(payload);
     const product = this.pickProduct(payload);
+    const config = this.planConfig(product);
+    const renewsAt = this.pickRenewsAt(payload) ?? new Date(Date.now() + DEFAULT_PERIOD_MS);
 
     const existing = await this.users.findByEmail(email);
     let userId: string;
@@ -68,39 +88,51 @@ export class ProvisioningService {
     } else {
       const tempPassword = randomBytes(24).toString('hex');
       const passwordHash = await bcrypt.hash(tempPassword, SALT_ROUNDS);
+      // A family product creates a PARENT (holds the family subscription + adds
+      // child logins); single products create a STUDENT.
       const newUser = await this.users.create(
-        { email, firstName, lastName, role: Role.STUDENT, password: tempPassword } as CreateUserDto,
+        { email, firstName, lastName, role: config.role, password: tempPassword } as CreateUserDto,
         passwordHash,
       );
       userId = newUser.id;
       created = true;
     }
 
-    if (product) {
-      await this.prisma.user
-        .update({ where: { id: userId }, data: { plan: product } })
-        .catch((err) => this.logger.warn(`Could not record plan for ${email}: ${String(err)}`));
+    await this.prisma.user
+      .update({
+        where: { id: userId },
+        data: {
+          plan: product ?? undefined,
+          planStatus: 'active',
+          planRenewsAt: renewsAt,
+          // Seat limit tracks the current plan (only when we know the product).
+          ...(product ? { maxStudents: config.maxStudents } : {}),
+        },
+      })
+      .catch((err) => this.logger.warn(`Could not set entitlement for ${email}: ${String(err)}`));
+
+    // Only NEW accounts get an activation email + set-password link. Renewals on
+    // an existing account just extend access silently.
+    let loginUrl = '';
+    if (created) {
+      const token = randomBytes(32).toString('hex');
+      await this.prisma.passwordResetToken.create({
+        data: { userId, token, expiresAt: new Date(Date.now() + ACTIVATION_TTL_MS) },
+      });
+      const frontendUrl = (this.config.get<string>('app.frontendUrl') ?? 'http://localhost:3000').replace(/\/$/, '');
+      loginUrl = `${frontendUrl}/reset-password?token=${token}`;
+      try {
+        await this.email.sendActivationEmail(email, loginUrl, firstName);
+      } catch (err) {
+        this.logger.error(`Activation email failed for ${email}: ${String(err)}`);
+      }
     }
 
-    // One-time activation token (reuses the password-reset token table).
-    const token = randomBytes(32).toString('hex');
-    await this.prisma.passwordResetToken.create({
-      data: { userId, token, expiresAt: new Date(Date.now() + ACTIVATION_TTL_MS) },
-    });
-
-    const frontendUrl = (this.config.get<string>('app.frontendUrl') ?? 'http://localhost:3000').replace(/\/$/, '');
-    const loginUrl = `${frontendUrl}/reset-password?token=${token}`;
-
-    // Best-effort email — never fail provisioning if the email send hiccups; the
-    // returned loginUrl can still be delivered by the GHL workflow.
-    try {
-      await this.email.sendActivationEmail(email, loginUrl, firstName);
-    } catch (err) {
-      this.logger.error(`Activation email failed for ${email}: ${String(err)}`);
-    }
-
-    this.logger.log(`Provisioned ${created ? 'NEW' : 'existing'} account for ${email}${product ? ` (plan: ${product})` : ''}`);
-    return { created, email, loginUrl };
+    this.logger.log(
+      `Provisioned ${created ? 'NEW' : 'renewal/existing'} active account for ${email}` +
+        `${product ? ` (plan: ${product})` : ''} until ${renewsAt.toISOString()}`,
+    );
+    return { created, email, loginUrl, status: 'active' as const };
   }
 
   private pickEmail(p: GhlPayload): string {
@@ -127,5 +159,28 @@ export class ProvisioningService {
     const raw = p.product ?? p.product_name ?? p.productName ?? p.tag ?? '';
     const v = String(raw).trim();
     return v || null;
+  }
+
+  /** Map a purchased product to the account role + seat limit. A "family"
+   *  product → PARENT who can add multiple child logins; everything else →
+   *  a single STUDENT. Seat count is tunable here. */
+  private planConfig(product: string | null): { role: Role; maxStudents: number | null } {
+    const p = (product ?? '').toLowerCase();
+    if (p.includes('family')) return { role: Role.PARENT, maxStudents: 6 };
+    return { role: Role.STUDENT, maxStudents: null };
+  }
+
+  /** True when the webhook represents a cancellation/refund (revoke access). */
+  private isCancel(p: GhlPayload): boolean {
+    const raw = String(p.type ?? p.event ?? p.event_type ?? p.status ?? '').toLowerCase();
+    return /cancel|refund|chargeback|revoke/.test(raw);
+  }
+
+  /** Access-until date from the payload, if GHL sends one; else null (→ default ~1 month). */
+  private pickRenewsAt(p: GhlPayload): Date | null {
+    const raw = p.next_billing_date ?? p.current_period_end ?? p.renewal_date ?? '';
+    if (!raw) return null;
+    const d = new Date(String(raw));
+    return isNaN(d.getTime()) ? null : d;
   }
 }

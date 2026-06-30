@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { Public } from '@common/decorators/public.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { UserEntity } from '@modules/users/entities/user.entity';
+import { EntitlementService } from '@modules/entitlement/entitlement.service';
 import { AuthService } from './auth.service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -18,7 +19,10 @@ type CurrentUserPayload = {
 
 @Controller('api/v1/auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly entitlement: EntitlementService,
+  ) {}
 
   @Public()
   @Post('register')
@@ -87,8 +91,9 @@ export class AuthController {
   @Get('me')
   async me(
     @CurrentUser() currentUser: CurrentUserPayload,
-  ): Promise<{ success: true; data: UserEntity }> {
+  ): Promise<{ success: true; data: UserEntity & { entitled: boolean } }> {
     const user = await this.authService.getMe(currentUser.userId);
-    return { success: true, data: user };
+    const entitled = await this.entitlement.isEntitled(currentUser.userId);
+    return { success: true, data: { ...user, entitled } };
   }
 }
