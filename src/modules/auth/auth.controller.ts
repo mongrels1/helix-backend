@@ -28,10 +28,13 @@ export class AuthController {
   @Post('register')
   async register(@Body() registerDto: RegisterDto): Promise<{
     success: true;
-    data: { accessToken: string; refreshToken: string; user: UserEntity };
+    data: { accessToken: string; refreshToken: string; user: UserEntity & { entitled: boolean } };
   }> {
     const data = await this.authService.register(registerDto);
-    return { success: true, data };
+    // Attach the server-computed access flag so clients don't need a follow-up
+    // /me call to know whether paid features are unlocked (matches the /me shape).
+    const entitled = await this.entitlement.isEntitled(data.user.id);
+    return { success: true, data: { ...data, user: { ...data.user, entitled } } };
   }
 
   @Public()
@@ -39,10 +42,13 @@ export class AuthController {
   @HttpCode(200)
   async login(@Body() loginDto: LoginDto): Promise<{
     success: true;
-    data: { accessToken: string; refreshToken: string; user: UserEntity };
+    data: { accessToken: string; refreshToken: string; user: UserEntity & { entitled: boolean } };
   }> {
     const data = await this.authService.login(loginDto);
-    return { success: true, data };
+    // Attach the server-computed access flag so clients don't need a follow-up
+    // /me call to know whether paid features are unlocked (matches the /me shape).
+    const entitled = await this.entitlement.isEntitled(data.user.id);
+    return { success: true, data: { ...data, user: { ...data.user, entitled } } };
   }
 
   @Public()

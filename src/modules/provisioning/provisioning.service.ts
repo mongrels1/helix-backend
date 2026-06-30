@@ -13,6 +13,12 @@ const ACTIVATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const DEFAULT_PERIOD_MS = 31 * 24 * 60 * 60 * 1000; // ~1 month if GHL sends no renewal date
 
+// Fallback plan label when the GHL webhook omits a product field, so a paid
+// account is never left with a null plan. NOTE: this only fixes the *label* —
+// family/tier detection (PARENT role + seat count) still needs GHL to send
+// `product`; without it we assume the default single-student plan.
+const DEFAULT_PLAN_LABEL = 'EdKairos Standard';
+
 /** Loosely-typed GHL purchase webhook payload (field names vary by workflow). */
 type GhlPayload = Record<string, unknown> & {
   email?: string; Email?: string;
@@ -102,11 +108,13 @@ export class ProvisioningService {
       .update({
         where: { id: userId },
         data: {
-          plan: product ?? undefined,
+          // Record a plan label even if GHL didn't send a product, so the
+          // account is never left with a null plan (see DEFAULT_PLAN_LABEL).
+          plan: product ?? DEFAULT_PLAN_LABEL,
           planStatus: 'active',
           planRenewsAt: renewsAt,
-          // Seat limit tracks the current plan (only when we know the product).
-          ...(product ? { maxStudents: config.maxStudents } : {}),
+          // Seat limit tracks the resolved plan (null = single-student default).
+          maxStudents: config.maxStudents,
         },
       })
       .catch((err) => this.logger.warn(`Could not set entitlement for ${email}: ${String(err)}`));
