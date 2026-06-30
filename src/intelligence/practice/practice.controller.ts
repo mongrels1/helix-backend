@@ -1,12 +1,14 @@
-import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { EntitlementGuard } from '@common/guards/entitlement.guard';
 import { PracticeService } from './practice.service';
 
 /**
- * Student practice surface. No @Roles decorator -> the global RolesGuard allows
- * any authenticated user (the global JwtAuthGuard still requires a valid token),
- * so signed-in students can pull approved practice items.
+ * Student practice surface. Gated by EntitlementGuard: a learner needs an active
+ * subscription (own or a linked parent's family plan); staff bypass. The global
+ * JwtAuthGuard still requires a valid token.
  */
 @Controller('api/v1/practice')
+@UseGuards(EntitlementGuard)
 export class PracticeController {
   constructor(private readonly svc: PracticeService) {}
 

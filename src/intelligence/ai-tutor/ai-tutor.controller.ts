@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { Role, TutorMessage, TutorSession } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
+import { EntitlementGuard } from '@common/guards/entitlement.guard';
 import { SendMessageDto } from './dto/send-message.dto';
 import { StartSessionDto } from './dto/start-session.dto';
 import { TutorSessionWithMessages } from './ai-tutor.repository';
@@ -13,6 +14,7 @@ interface AuthenticatedUser {
 }
 
 @Controller('api/v1/tutor')
+@UseGuards(EntitlementGuard)
 export class AITutorController {
   constructor(private readonly aiTutorService: AITutorService) {}
 
