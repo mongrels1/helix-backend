@@ -13,3 +13,6 @@ yarn-error.log*
 tsconfig.build.tsbuildinfo
 .env.*
 !.env.example
+
+# editor/backup files
+*.bak

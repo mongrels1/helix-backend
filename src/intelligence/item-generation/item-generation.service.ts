@@ -42,21 +42,55 @@ export class ItemGenerationService {
     if (!text) {
       throw new BadRequestException({ error: { code: 'no_text', message: 'No text provided' } });
     }
-    const res = await this.ai.chat({
-      systemPrompt:
-        'You extract math questions from raw text that is often messy (copied from a PDF or OCR). ' +
-        'Return ONLY a JSON array of strings. Each string is ONE complete, self-contained question, ' +
-        'copied close to verbatim, on a single line with no internal line breaks. ' +
-        'Drop multiple-choice options, item numbers, headers, answer keys, and anything that is not a question. ' +
-        'If a question depends on a missing image or is unreadable, skip it. No prose outside the JSON.',
-      prompt: text.slice(0, 24000),
-      preferredProvider: 'claude',
-      timeoutMs: 45_000,
-      maxTokens: 4000,
-    });
-    const questions = (this.parseModelJson(res.text) as unknown[])
-      .map((q) => String(q).replace(/\s+/g, ' ').trim())
-      .filter((q) => q.length > 8);
+    const system =
+      'You extract math questions from raw text that is often messy (copied from a PDF or OCR). ' +
+      'Return ONLY a JSON array of strings. Each string is ONE complete, self-contained question, ' +
+      'copied close to verbatim, on a single line with no internal line breaks. ' +
+      'Drop multiple-choice options, item numbers, headers, answer keys, and anything that is not a question. ' +
+      'If a question depends on a missing image or is unreadable, skip it. No prose outside the JSON.';
+
+    // A full item bank (e.g. a 48-page DnA export) runs ~120k+ characters. The old
+    // single call read only text.slice(0, 24000) — the first ~19% — so a 50-question
+    // bank yielded ~20. Window the whole document (with a small overlap so a question
+    // straddling a boundary isn't lost) and merge+dedup the results so ALL questions
+    // come through. A generous cap bounds runaway cost on very large uploads.
+    const CHUNK = 20_000;
+    const OVERLAP = 800;
+    const MAX_CHUNKS = 24; // ~460k chars — well beyond a full grade-level bank
+    const windows: string[] = [];
+    for (let i = 0; i < text.length && windows.length < MAX_CHUNKS; i += CHUNK - OVERLAP) {
+      windows.push(text.slice(i, i + CHUNK));
+    }
+
+    const collected: string[] = [];
+    for (const win of windows) {
+      try {
+        const res = await this.ai.chat({
+          systemPrompt: system,
+          prompt: win,
+          preferredProvider: 'claude',
+          timeoutMs: 45_000,
+          maxTokens: 8000,
+        });
+        for (const q of this.parseModelJson(res.text) as unknown[]) {
+          collected.push(String(q).replace(/\s+/g, ' ').trim());
+        }
+      } catch (err) {
+        // One bad window shouldn't sink the whole upload — keep what the others found.
+        this.logger.warn(`ingest window failed: ${String((err as Error)?.message ?? err)}`);
+      }
+    }
+
+    // Case-insensitive dedup (overlap regions repeat a question) while preserving order.
+    const seen = new Set<string>();
+    const questions: string[] = [];
+    for (const q of collected) {
+      if (q.length <= 8) continue;
+      const key = q.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      questions.push(q);
+    }
     return { questions, parsed: questions.length };
   }
 
