@@ -323,15 +323,28 @@ model GradeHistory {
   createdAt   DateTime @default(now())
 }
 
+enum MasteryStatus {
+  NOT_STARTED
+  EMERGING
+  MASTERED
+}
+
 model MasteryScore {
-  id        String           @id @default(uuid())
-  studentId String
-  skillTag  String
-  score     Float
-  student   User             @relation("StudentMastery", fields: [studentId], references: [id])
-  history   MasteryHistory[]
-  updatedAt DateTime         @updatedAt
-  createdAt DateTime         @default(now())
+  id            String           @id @default(uuid())
+  studentId     String
+  skillTag      String
+  score         Float
+  // Growth Engine (BKT): pMastered is the canonical latent mastery posterior,
+  // updated per response with guess/slip. `score` mirrors it for display/back-compat.
+  pMastered     Float            @default(0.25)
+  status        MasteryStatus    @default(NOT_STARTED)
+  masteredAt    DateTime?
+  // Spaced retention: when set and in the past, a mastered skill decays + reopens.
+  nextRecheckAt DateTime?
+  student       User             @relation("StudentMastery", fields: [studentId], references: [id])
+  history       MasteryHistory[]
+  updatedAt     DateTime         @updatedAt
+  createdAt     DateTime         @default(now())
 
   @@unique([studentId, skillTag])
 }
@@ -340,6 +353,11 @@ model MasteryHistory {
   id             String       @id @default(uuid())
   masteryScoreId String
   score          Float
+  // Attempt-level evidence for the three-part mastery gate (breadth + rigor).
+  correct        Boolean      @default(true)
+  rigor          Int?
+  variantKey     String?
+  pAfter         Float?
   submissionId   String?
   masteryScore   MasteryScore @relation(fields: [masteryScoreId], references: [id])
   recordedAt     DateTime     @default(now())

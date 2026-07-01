@@ -3,7 +3,7 @@ import { Role } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { MasteryScoreEntity } from './entities/mastery-score.entity';
-import { MasteryEngineService } from './mastery-engine.service';
+import { MasteryEngineService, MasteryGate } from './mastery-engine.service';
 
 interface AuthenticatedUser {
   userId: string;
@@ -41,6 +41,26 @@ export class MasteryEngineController {
       skillTag,
     );
     if (!data) throw new NotFoundException('Mastery score not found');
+    return { success: true, data };
+  }
+
+  /**
+   * The forced-pathway gate for a student + skill. Drives the student-facing
+   * "X more to lock this skill" prompt and the block on skipping ahead: the
+   * engine, not the student, decides when a skill is mastered.
+   */
+  @Get('student/:studentId/skill/:skillTag/gate')
+  @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN, Role.STUDENT)
+  async getSkillGate(
+    @Param('studentId') studentId: string,
+    @Param('skillTag') skillTag: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ success: true; data: MasteryGate }> {
+    this.assertCanViewStudent(user, studentId);
+    const data = await this.masteryEngineService.getMasteryGate(
+      studentId,
+      skillTag,
+    );
     return { success: true, data };
   }
 

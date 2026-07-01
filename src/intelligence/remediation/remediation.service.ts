@@ -193,6 +193,19 @@ export class RemediationService {
 
     const score = total > 0 ? correct / total : 0;
 
+    // Breadth evidence for the mastery gate: each re-check is a distinct
+    // application variant. Bank re-checks key off the calibrated item ids so
+    // repeating the same items doesn't inflate breadth; AI re-checks are fresh
+    // variants each serve. (Rigor tags flow through once bank items carry them.)
+    const variantKey =
+      dto.source === 'bank'
+        ? `bank:${dto.responses
+            .map((r) => r.id ?? '')
+            .filter(Boolean)
+            .sort()
+            .join(',')}`
+        : `ai:${kc}:${Date.now()}`;
+
     let masteryUpdated = false;
     if (total > 0) {
       try {
@@ -203,6 +216,7 @@ export class RemediationService {
           total,
           undefined,
           dto.classroomId,
+          { variantKey },
         );
         masteryUpdated = true;
       } catch {

@@ -1,9 +1,33 @@
 import { Injectable } from '@nestjs/common';
-import { MasteryHistory, MasteryScore } from '@prisma/client';
+import { MasteryHistory, MasteryScore, MasteryStatus } from '@prisma/client';
 import { EventsService } from '../../events/events.service';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { MasteryScoreEntity } from './entities/mastery-score.entity';
 import { MasteryEngineRepository } from './mastery-engine.repository';
+import {
+  BKT_DEFAULTS,
+  CORRECT_THRESHOLD,
+  RECHECK_INTERVAL_DAYS,
+  bktUpdate,
+  decayedPosterior,
+  evaluateGate,
+  GateResult,
+} from './bkt';
+
+/** Optional per-attempt evidence that feeds the breadth + rigor gate. */
+export interface MasteryUpdateOptions {
+  /** Authored rigor level (DOK/Bloom 1-4) of the item answered. */
+  rigor?: number;
+  /** Stable key identifying the application variant (e.g. item id). */
+  variantKey?: string;
+}
+
+export interface MasteryGate extends GateResult {
+  studentId: string;
+  skillTag: string;
+  pMastered: number;
+  status: MasteryStatus;
+}
 
 @Injectable()
 export class MasteryEngineService {
@@ -13,6 +37,12 @@ export class MasteryEngineService {
     private readonly aiRouterService: AIRouterService,
   ) {}
 
+  /**
+   * Growth Engine update. Converts a scored response into one Bayesian Knowledge
+   * Tracing update of the skill's mastery posterior (guess/slip aware), records
+   * attempt-level evidence, and recomputes the three-part mastery gate. A single
+   * correct answer nudges the posterior; it cannot, on its own, lock a skill.
+   */
   async updateMastery(
     studentId: string,
     skillTag: string,
@@ -20,15 +50,124 @@ export class MasteryEngineService {
     maxScore: number,
     submissionId?: string,
     classroomId?: string,
+    opts?: MasteryUpdateOptions,
   ): Promise<void> {
-    const normalizedScore = this.clampScore(maxScore > 0 ? rawScore / maxScore : 0);
-    await this.repository.upsertScore(
+    const normalized = this.clampScore(maxScore > 0 ? rawScore / maxScore : 0);
+    const correct = normalized >= CORRECT_THRESHOLD;
+
+    const existing = await this.repository.getScoreForSkill(studentId, skillTag);
+    const prior = existing ? existing.pMastered : BKT_DEFAULTS.pL0;
+    const pMastered = bktUpdate(prior, correct, BKT_DEFAULTS);
+
+    // Persist the new posterior + this attempt's evidence first, so the gate is
+    // evaluated over history that INCLUDES the current response.
+    await this.repository.applyUpdate({
       studentId,
       skillTag,
-      normalizedScore,
+      score: pMastered,
+      pMastered,
+      correct,
+      rigor: opts?.rigor,
+      variantKey: opts?.variantKey ?? submissionId,
+      pAfter: pMastered,
       submissionId,
-    );
+      status: existing?.status === MasteryStatus.MASTERED
+        ? MasteryStatus.MASTERED
+        : MasteryStatus.EMERGING,
+      masteredAt: existing?.masteredAt ?? null,
+      nextRecheckAt: existing?.nextRecheckAt ?? null,
+    });
+
+    const gate = await this.computeGate(studentId, skillTag, pMastered);
+
+    // Finalize status/retention on the transition INTO mastery (once), now that
+    // breadth + rigor are known. Skip if the skill was already mastered.
+    if (gate.mastered && existing?.status !== MasteryStatus.MASTERED) {
+      await this.repository.applyUpdate({
+        studentId,
+        skillTag,
+        score: pMastered,
+        pMastered,
+        correct,
+        rigor: opts?.rigor,
+        variantKey: `lock:${skillTag}`,
+        pAfter: pMastered,
+        submissionId,
+        status: MasteryStatus.MASTERED,
+        masteredAt: new Date(),
+        nextRecheckAt: this.addDays(new Date(), RECHECK_INTERVAL_DAYS),
+      });
+    }
+
     await this.checkAndEmitDrop(studentId, skillTag, classroomId);
+  }
+
+  /**
+   * The forced-pathway gate for a student + skill: how many more correct
+   * opportunities are needed to lock it, and whether it is already mastered.
+   * Applies spaced-retention decay lazily on read (a due re-check reopens a
+   * previously mastered skill).
+   */
+  async getMasteryGate(
+    studentId: string,
+    skillTag: string,
+  ): Promise<MasteryGate> {
+    let score = await this.repository.getScoreForSkill(studentId, skillTag);
+    score = await this.maybeDecay(score);
+    const pMastered = score ? score.pMastered : BKT_DEFAULTS.pL0;
+    const gate = await this.computeGate(studentId, skillTag, pMastered);
+    return {
+      ...gate,
+      studentId,
+      skillTag,
+      pMastered,
+      status: score?.status ?? MasteryStatus.NOT_STARTED,
+    };
+  }
+
+  /** Evaluate the three-part gate from stored correct-attempt evidence. */
+  private async computeGate(
+    studentId: string,
+    skillTag: string,
+    pMastered: number,
+  ): Promise<GateResult> {
+    const correctHistory = await this.repository.getCorrectHistory(
+      studentId,
+      skillTag,
+    );
+    const variantKeys = new Set<string>();
+    const rigorLevels: number[] = [];
+    for (const row of correctHistory) {
+      if (row.variantKey?.startsWith('lock:')) continue;
+      variantKeys.add(row.variantKey ?? row.id);
+      if (row.rigor != null) rigorLevels.push(row.rigor);
+    }
+    return evaluateGate({
+      pMastered,
+      variantsCorrect: variantKeys.size,
+      rigorLevels,
+    });
+  }
+
+  /** If a mastered skill's re-check is due, decay the posterior and reopen it. */
+  private async maybeDecay(
+    score: MasteryScore | null,
+  ): Promise<MasteryScore | null> {
+    if (
+      !score ||
+      score.status !== MasteryStatus.MASTERED ||
+      !score.nextRecheckAt ||
+      score.nextRecheckAt > new Date()
+    ) {
+      return score;
+    }
+    const decayed = decayedPosterior(score.pMastered, BKT_DEFAULTS);
+    return this.repository.applyDecay(
+      score.id,
+      decayed,
+      MasteryStatus.EMERGING,
+      null,
+    );
   }
 
   /**
@@ -53,9 +192,7 @@ export class MasteryEngineService {
     });
   }
 
-  async getMasteryForStudent(
-    studentId: string,
-  ): Promise<MasteryScoreEntity[]> {
+  async getMasteryForStudent(studentId: string): Promise<MasteryScoreEntity[]> {
     const scores = await this.repository.getAllScoresForStudent(studentId);
     return scores.map((score) => this.toEntity(score));
   }
@@ -75,7 +212,9 @@ export class MasteryEngineService {
     return { score: this.toEntity(score), history };
   }
 
-  async getClassroomOverview(classroomId: string): Promise<MasteryScoreEntity[]> {
+  async getClassroomOverview(
+    classroomId: string,
+  ): Promise<MasteryScoreEntity[]> {
     const scores = await this.repository.getClassroomMastery(classroomId);
     return scores.map((score) => this.toEntity(score));
   }
@@ -122,13 +261,16 @@ Provide a one-sentence insight for the teacher.`,
     const n = scores.length;
     const sumX = scores.reduce((sum, _, index) => sum + index, 0);
     const sumY = scores.reduce((sum, score) => sum + score, 0);
-    const sumXY = scores.reduce(
-      (sum, score, index) => sum + index * score,
-      0,
-    );
+    const sumXY = scores.reduce((sum, score, index) => sum + index * score, 0);
     const sumX2 = scores.reduce((sum, _, index) => sum + index * index, 0);
     const denominator = n * sumX2 - sumX * sumX;
     return denominator === 0 ? 0 : (n * sumXY - sumX * sumY) / denominator;
+  }
+
+  private addDays(date: Date, days: number): Date {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    return d;
   }
 
   private clampScore(score: number): number {
@@ -141,6 +283,8 @@ Provide a one-sentence insight for the teacher.`,
       studentId: score.studentId,
       skillTag: score.skillTag,
       score: score.score,
+      pMastered: score.pMastered,
+      status: score.status,
       updatedAt: score.updatedAt,
     };
   }

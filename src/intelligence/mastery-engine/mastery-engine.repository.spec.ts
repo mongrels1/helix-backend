@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { MasteryStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MasteryEngineRepository } from './mastery-engine.repository';
 
@@ -15,6 +16,8 @@ describe('MasteryEngineRepository', () => {
           studentId: 'student-1',
           skillTag: 'fractions',
           score: 0.8,
+          pMastered: 0.8,
+          status: MasteryStatus.EMERGING,
           createdAt: new Date(),
           updatedAt: new Date(),
         }),
@@ -34,29 +37,43 @@ describe('MasteryEngineRepository', () => {
     repository = module.get(MasteryEngineRepository);
   });
 
-  it('upserts mastery score and appends a history row', async () => {
-    await repository.upsertScore('student-1', 'fractions', 0.8, 'submission-1');
-
-    expect(prisma.masteryScore.upsert).toHaveBeenCalledWith({
-      where: {
-        studentId_skillTag: {
-          studentId: 'student-1',
-          skillTag: 'fractions',
-        },
-      },
-      update: { score: 0.8 },
-      create: {
-        studentId: 'student-1',
-        skillTag: 'fractions',
-        score: 0.8,
-      },
+  it('upserts the posterior and appends an attempt-level history row', async () => {
+    await repository.applyUpdate({
+      studentId: 'student-1',
+      skillTag: 'fractions',
+      score: 0.8,
+      pMastered: 0.8,
+      correct: true,
+      rigor: 2,
+      variantKey: 'item-42',
+      pAfter: 0.8,
+      submissionId: 'submission-1',
+      status: MasteryStatus.EMERGING,
+      masteredAt: null,
+      nextRecheckAt: null,
     });
+
+    expect(prisma.masteryScore.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          studentId_skillTag: {
+            studentId: 'student-1',
+            skillTag: 'fractions',
+          },
+        },
+        update: expect.objectContaining({ score: 0.8, pMastered: 0.8 }),
+      }),
+    );
     expect(prisma.masteryHistory.create).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         masteryScoreId: 'mastery-1',
         score: 0.8,
+        correct: true,
+        rigor: 2,
+        variantKey: 'item-42',
+        pAfter: 0.8,
         submissionId: 'submission-1',
-      },
+      }),
     });
   });
 });
