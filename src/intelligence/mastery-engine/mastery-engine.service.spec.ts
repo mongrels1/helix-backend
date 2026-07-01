@@ -6,6 +6,7 @@ describe('MasteryEngineService', () => {
   let service: MasteryEngineService;
   let repository: {
     applyUpdate: jest.Mock;
+    updateStatusFields: jest.Mock;
     applyDecay: jest.Mock;
     getCorrectHistory: jest.Mock;
     getRecentHistory: jest.Mock;
@@ -18,7 +19,8 @@ describe('MasteryEngineService', () => {
 
   beforeEach(() => {
     repository = {
-      applyUpdate: jest.fn().mockResolvedValue(undefined),
+      applyUpdate: jest.fn().mockResolvedValue({ id: 'm1' }),
+      updateStatusFields: jest.fn().mockResolvedValue(undefined),
       applyDecay: jest.fn(),
       getCorrectHistory: jest.fn().mockResolvedValue([]),
       getRecentHistory: jest.fn().mockResolvedValue([]),

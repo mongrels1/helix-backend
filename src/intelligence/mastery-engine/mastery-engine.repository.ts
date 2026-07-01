@@ -70,6 +70,19 @@ export class MasteryEngineRepository {
     });
   }
 
+  /** Reconcile lifecycle status/retention fields only (no history row). */
+  async updateStatusFields(
+    id: string,
+    status: MasteryStatus,
+    masteredAt: Date | null,
+    nextRecheckAt: Date | null,
+  ): Promise<MasteryScore> {
+    return this.prisma.masteryScore.update({
+      where: { id },
+      data: { status, masteredAt, nextRecheckAt },
+    });
+  }
+
   /** Persist a spaced-retention decay (reopen a previously mastered skill). */
   async applyDecay(
     id: string,

@@ -59,9 +59,9 @@ export class MasteryEngineService {
     const prior = existing ? existing.pMastered : BKT_DEFAULTS.pL0;
     const pMastered = bktUpdate(prior, correct, BKT_DEFAULTS);
 
-    // Persist the new posterior + this attempt's evidence first, so the gate is
-    // evaluated over history that INCLUDES the current response.
-    await this.repository.applyUpdate({
+    // Persist the new posterior + this attempt's evidence first (provisional
+    // status), so the gate is evaluated over history that INCLUDES this response.
+    const record = await this.repository.applyUpdate({
       studentId,
       skillTag,
       score: pMastered,
@@ -71,33 +71,28 @@ export class MasteryEngineService {
       variantKey: opts?.variantKey ?? submissionId,
       pAfter: pMastered,
       submissionId,
-      status: existing?.status === MasteryStatus.MASTERED
-        ? MasteryStatus.MASTERED
-        : MasteryStatus.EMERGING,
+      status: MasteryStatus.EMERGING,
       masteredAt: existing?.masteredAt ?? null,
       nextRecheckAt: existing?.nextRecheckAt ?? null,
     });
 
+    // Reconcile the stored lifecycle status with the freshly computed gate, so
+    // the label never disagrees with the enforcing signal: a miss that drops the
+    // posterior below threshold reopens the skill (MASTERED -> EMERGING) too.
     const gate = await this.computeGate(studentId, skillTag, pMastered);
-
-    // Finalize status/retention on the transition INTO mastery (once), now that
-    // breadth + rigor are known. Skip if the skill was already mastered.
-    if (gate.mastered && existing?.status !== MasteryStatus.MASTERED) {
-      await this.repository.applyUpdate({
-        studentId,
-        skillTag,
-        score: pMastered,
-        pMastered,
-        correct,
-        rigor: opts?.rigor,
-        variantKey: `lock:${skillTag}`,
-        pAfter: pMastered,
-        submissionId,
-        status: MasteryStatus.MASTERED,
-        masteredAt: new Date(),
-        nextRecheckAt: this.addDays(new Date(), RECHECK_INTERVAL_DAYS),
-      });
-    }
+    const finalStatus = gate.mastered
+      ? MasteryStatus.MASTERED
+      : MasteryStatus.EMERGING;
+    const masteredAt = gate.mastered ? existing?.masteredAt ?? new Date() : null;
+    const nextRecheckAt = gate.mastered
+      ? existing?.nextRecheckAt ?? this.addDays(new Date(), RECHECK_INTERVAL_DAYS)
+      : null;
+    await this.repository.updateStatusFields(
+      record.id,
+      finalStatus,
+      masteredAt,
+      nextRecheckAt,
+    );
 
     await this.checkAndEmitDrop(studentId, skillTag, classroomId);
   }
