@@ -113,6 +113,24 @@ export class ItemGenerationService {
     if (!req.baseItems?.length) {
       throw new BadRequestException({ error: { code: 'no_items', message: 'baseItems empty' } });
     }
+    // Single-job lock: refuse to start a new batch while one is already running, so an
+    // accidental double-click (or clicking both generators) can't double the AI cost.
+    // Stale jobs (>20 min without an update — e.g. a crashed run) are ignored so
+    // generation can never be locked out permanently.
+    const activeSince = new Date(Date.now() - 20 * 60 * 1000);
+    const running = await this.prisma.batchJob.findFirst({
+      where: { status: 'running', updatedAt: { gt: activeSince } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (running) {
+      throw new ConflictException({
+        error: {
+          code: 'batch_running',
+          message: 'A generation batch is already running. Wait for it to finish before starting another.',
+          details: { batchId: running.batchId, done: running.done, total: running.total },
+        },
+      });
+    }
     const versions = Math.min(Math.max(req.versionsPerItem ?? 5, 5), 10);
     const batchId = `batch-${Date.now()}`;
     const total = req.baseItems.length * versions;
