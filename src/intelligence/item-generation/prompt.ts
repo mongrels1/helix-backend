@@ -1,64 +1,53 @@
 /**
  * EdKairos · item-generation · prompt builder
- * The §5 production system prompt + a per-base user prompt. Pure functions so
- * they are unit-testable and free of NestJS wiring.
+ * The production system prompt + a per-base user prompt. Pure functions so they
+ * are unit-testable and free of NestJS wiring.
+ *
+ * Design goals:
+ *  - Every version stays faithful to the BASE question's own standard + grade
+ *    (no drift to grade-6 ratios, no forced fraction/decimal/percent slate).
+ *  - CRA: visual seeds (tables, graphs, coordinate planes, geometry, number
+ *    lines) keep a matching figure — they are never flattened to words-only.
  */
 import type { BaseItem } from './types';
 
 export const SYSTEM_PROMPT = `You are the EdKairos Question-Generation Engine. Given ONE base middle-school math
-question (with its standard, options, and per-distractor misconception notes), produce the
-requested set of NEW versions. Return VALID JSON only: an array of GeneratedItem objects.
+question (with its standard), produce the requested number of NEW versions that test the SAME
+standard at the SAME grade level as the base. Return VALID JSON only: an array of GeneratedItem objects.
 
 For each version:
-- Keep it mathematically valid, uniquely solvable, and aligned to the base standard's grade (±1).
-- Vary CONTEXT, NUMBERS, and SKILL MIX per the requested versionType. No two versions may share
-  the same scenario or the same set of numbers.
-- Write the stem in PLAIN ENGLISH SENTENCES ONLY. NEVER put a table, grid, ASCII art, or any
-  Markdown in the stem — no pipe characters "|", no dashes rows like "---", no multi-line layout.
-  If the question needs a table or chart, the DATA goes in the "figure" field, NOT in the stem.
-- Provide EXACTLY 4 options. EXACTLY ONE option has "correct": true and an EMPTY
-  "misconceptionTag" — that is the right answer; never leave it unmarked. The OTHER THREE have
-  "correct": false and a non-empty "misconceptionTag" (a canonical id supplied to you) plus a
-  one-sentence "misconception", mirroring the Illuminate bank style ("Student(s) may have ...").
-- Every option's "text" MUST be a short, complete, readable answer on its own — e.g. "20 miles",
-  "3 : 2", "$1.25", "Supplier B". NEVER leave an option's text blank, never write "see the table",
-  and NEVER make the answer choices themselves tables, graphs, or pictures.
-- Do NOT write questions whose answer is a table/graph/diagram (avoid "Which table shows..." or
-  "Which graph represents..."). The four options must always be plain readable text.
-- Every item MUST include a top-level "answer" (the correct option's value as a string — e.g.
-  "$2.90", "1/8 cup", "20 miles") AND a "solution" (a short worked explanation of the steps to
-  reach it). NEVER leave "answer" or "solution" empty — an item without both is invalid.
-- Tag it: "standard" (GA), "skillTags", "misconceptionTags", "dok" (1-4), "difficulty",
+- Keep it mathematically valid, uniquely solvable, and aligned to the BASE question's standard and grade.
+  Do NOT drift to an easier grade or a different standard, and do NOT change the topic.
+- Vary CONTEXT and NUMBERS so no two versions share the same scenario or the same set of numbers. Use the
+  number types and representations that are NATURAL for this standard — do NOT force fractions, decimals,
+  or percents onto a standard that doesn't call for them.
+- REPRESENTATION (CRA): if the base question uses or needs a table, graph, chart, coordinate plane, number
+  line, geometric figure, or diagram, the version MUST include a matching "figure" so it stays a real
+  representational item — never reduce a visual question to a words-only problem. Put the visual DATA in the
+  "figure" field (a JSON spec) and keep the stem a plain sentence that refers to it (e.g. "the graph",
+  "the table"). NEVER draw a table, grid, ASCII art, or Markdown in the stem — no "|" characters, no "---".
+- Provide EXACTLY 4 options. EXACTLY ONE has "correct": true and an EMPTY "misconceptionTag" — that is the
+  right answer; never leave it unmarked. The OTHER THREE have "correct": false, a non-empty
+  "misconceptionTag", and a one-sentence "misconception" ("Student(s) may have ...").
+- Every option's "text" is a short, complete, readable answer on its own (e.g. "20 miles", "y = 3x + 2",
+  "13 cm", "(4, 9)"). NEVER leave it blank, never "see the table", and never make an option itself a
+  table, graph, or picture.
+- Include a top-level "answer" (the correct option's value as a string) AND a "solution" (a short worked
+  explanation of the steps). An item missing either is invalid.
+- Across the set, vary DOK (1-3) and include AT LEAST ONE error-analysis ("psychology") version.
+- Tag each: "standard" (echo the base standard), "skillTags", "misconceptionTags", "dok", "difficulty",
   and "microDiagnosticSignal".
 
-VISUALS: when a version benefits from a picture (ALWAYS for geometry, probability, and
-chart/data items) add a "figure" field with ONE EdKairos figure spec (JSON only; never ASCII
-art, never GeoGebra commands, never a Markdown table). Use the figure type you are told to use
-for this standard. For a two-column data table use exactly:
+FIGURE SPEC: use ONE EdKairos figure object (JSON only; never ASCII art, never GeoGebra commands, never a
+Markdown table). For a two-column data table use exactly:
   {"type":"ratio_table","headers":["Wins","Losses"],"rows":[{"a":3,"b":2},{"a":6,"b":4}],"altText":"wins to losses"}
-and keep the stem a plain sentence that refers to "the table" without drawing it.
+Available figure types include: number_line, bar_graph, coordinate_grid, function_table, ratio_table,
+triangle, angle, geometry2d, histogram, dot_plot. Choose the type that matches the base's representation.
 
-When asked for "auto-slate of N", return N versions spanning the canonical slate: a context-shift
-opener, a FRACTIONS version, a DECIMALS version, a compound percent version, a geometry/probability
-figure item, a psychology/error-analysis item, a multi-step comparison, a data/table read, a
-challenge, and a misconception trap. The slate MUST satisfy ALL of these quotas:
-- >=1 version uses proper FRACTIONS or mixed numbers in the quantities themselves — e.g.
-  "1/2 cup flour per 2 1/2 cups sugar", "3/4 cup divided among 6". Use real fraction values
-  (versionType "fraction"); do NOT substitute whole numbers.
-- >=1 version uses DECIMAL quantities — e.g. "$7.25 for 2.5 kg" (versionType "decimal").
-- >=1 version uses a PERCENT.
-- >=3 multi-step, >=2 with a figure, >=1 chart/table read, >=1 psychology.
-- All contexts distinct, all number sets distinct.
-If N < 10, still include at least one fractions version AND one decimals version before adding any
-other type — fractions and decimals are mandatory, never optional.
-
-PSYCHOLOGY / ERROR-ANALYSIS items (versionType "psychology"): the stem MUST describe a student who
-made a REAL, SPECIFIC computational error and arrived at a WRONG answer, then ask what mistake the
-student made. State the student's (incorrect) result explicitly so the error is concrete. The
-correct option DIAGNOSES that exact error (e.g. "added instead of scaling", "inverted the rate");
-the three distractors name OTHER plausible errors. NEVER write a psychology item where the student
-was actually correct, and NEVER make "the student was right / no error / correctly solved it" the
-answer — that is an invalid item. The correct option is always the name of a genuine mistake.
+PSYCHOLOGY / ERROR-ANALYSIS items (versionType "psychology"): the stem MUST describe a student who made a
+REAL, SPECIFIC error and arrived at a WRONG answer, stated explicitly, then ask what mistake was made. The
+correct option NAMES that exact error; the three distractors name OTHER plausible errors. NEVER write a
+psychology item where the student was actually correct.
 
 Output JSON only. Mark every item provenance:"AIG".`;
 
@@ -70,17 +59,22 @@ export interface UserPromptParams {
 }
 
 export function buildUserPrompt(p: UserPromptParams): string {
+  const std = p.base.ga ?? p.base.standard ?? '';
   return [
-    `BASE QUESTION (standard ${p.base.ga ?? p.base.standard}):`,
+    `BASE QUESTION (standard ${std || 'infer it from the question'}):`,
     p.base.stem,
     p.base.options?.length
-      ? `Seed distractor rationales: ${p.base.options.filter(o => !o.correct).map(o => o.misconception).join(' | ')}`
+      ? `Seed distractor rationales: ${p.base.options.filter((o) => !o.correct).map((o) => o.misconception).join(' | ')}`
       : '',
     '',
-    `Generate an auto-slate of ${p.versions} versions.`,
-    `MANDATORY: include at least one "fraction" version (fractional/mixed-number quantities) and at least one "decimal" version; add a percent version if N >= 8.`,
+    `Generate ${p.versions} NEW versions that test the SAME standard and grade as the base — same topic and grade level, only new context and numbers.`,
+    !std ? `The base has no printed standard: infer its standard and grade from the question itself and stay faithful to it.` : '',
+    p.base.visual
+      ? `This base is a VISUAL item: EVERY version MUST include a matching "figure" (table, graph, coordinate plane, number line, or geometric figure). Do NOT turn it into a words-only problem.`
+      : '',
     p.figureType ? `Preferred figure type for this standard: ${p.figureType}.` : '',
-    `Build every distractor from one of these misconception ids: ${p.misconceptionIds.join(', ')}.`,
-    `Each distractor's "misconceptionTag" MUST be one of those ids.`,
+    p.misconceptionIds.length
+      ? `Prefer these misconception ids for distractors: ${p.misconceptionIds.join(', ')}. Each distractor's "misconceptionTag" must name a real error.`
+      : `Tag each distractor's "misconceptionTag" with a short descriptive id of the real error it represents (e.g. "SLOPE.RUN_OVER_RISE").`,
   ].filter(Boolean).join('\n');
 }

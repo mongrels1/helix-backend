@@ -29,6 +29,8 @@ export interface BaseItem {
   options?: ItemOption[];
   answer?: string | number;
   dok?: 1 | 2 | 3 | 4;
+  /** seed refers to/needs a table, graph, figure, or diagram — preserve it (CRA) */
+  visual?: boolean;
   referenceOnly: boolean;      // ALWAYS true for ingested seed/purchased items
 }
 

@@ -42,12 +42,19 @@ export class ItemGenerationService {
     if (!text) {
       throw new BadRequestException({ error: { code: 'no_text', message: 'No text provided' } });
     }
+    // Extract each question WITH the standard code printed beside it and whether it
+    // is a visual item, so generation can align each seed to its OWN standard/grade
+    // (no forced global standard) and preserve tables/graphs/figures (CRA) instead
+    // of flattening to words-only.
     const system =
       'You extract math questions from raw text that is often messy (copied from a PDF or OCR). ' +
-      'Return ONLY a JSON array of strings. Each string is ONE complete, self-contained question, ' +
-      'copied close to verbatim, on a single line with no internal line breaks. ' +
-      'Drop multiple-choice options, item numbers, headers, answer keys, and anything that is not a question. ' +
-      'If a question depends on a missing image or is unreadable, skip it. No prose outside the JSON.';
+      'Return ONLY a JSON array of objects, one per question: {"question": string, "standard": string, "visual": boolean}. ' +
+      '"question" is ONE complete, self-contained question copied close to verbatim, on a single line with no ' +
+      'internal line breaks; drop the multiple-choice options, item numbers, headers, and answer keys. ' +
+      '"standard" is the standard code printed with that item if present (e.g. "MGSE8.F.5", "MGSE7.RP.3", or "8.FGR.5"), else "". ' +
+      '"visual" is true if the item refers to or needs a table, graph, chart, coordinate plane, number line, diagram, ' +
+      'or geometric figure (e.g. it mentions "the graph", "the table", "shown below", or is a geometry item), else false. ' +
+      'If a question is unreadable, skip it. No prose outside the JSON.';
 
     // A full item bank (e.g. a 48-page DnA export) runs ~120k+ characters. The old
     // single call read only text.slice(0, 24000) — the first ~19% — so a 50-question
@@ -62,7 +69,7 @@ export class ItemGenerationService {
       windows.push(text.slice(i, i + CHUNK));
     }
 
-    const collected: string[] = [];
+    const collected: { stem: string; standard: string; visual: boolean }[] = [];
     for (const win of windows) {
       try {
         const res = await this.ai.chat({
@@ -72,8 +79,15 @@ export class ItemGenerationService {
           timeoutMs: 45_000,
           maxTokens: 8000,
         });
-        for (const q of this.parseModelJson(res.text) as unknown[]) {
-          collected.push(String(q).replace(/\s+/g, ' ').trim());
+        for (const raw of this.parseModelJson(res.text) as unknown[]) {
+          const o = raw as { question?: unknown; standard?: unknown; visual?: unknown };
+          const stem = String(o?.question ?? '').replace(/\s+/g, ' ').trim();
+          if (!stem) continue;
+          collected.push({
+            stem,
+            standard: String(o?.standard ?? '').replace(/\s+/g, '').trim(),
+            visual: o?.visual === true,
+          });
         }
       } catch (err) {
         // One bad window shouldn't sink the whole upload — keep what the others found.
@@ -83,10 +97,10 @@ export class ItemGenerationService {
 
     // Case-insensitive dedup (overlap regions repeat a question) while preserving order.
     const seen = new Set<string>();
-    const questions: string[] = [];
+    const questions: { stem: string; standard: string; visual: boolean }[] = [];
     for (const q of collected) {
-      if (q.length <= 8) continue;
-      const key = q.toLowerCase();
+      if (q.stem.length <= 8) continue;
+      const key = q.stem.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
       questions.push(q);
@@ -326,11 +340,19 @@ export class ItemGenerationService {
     // Resolve the standard once so we can backfill ga / gaCluster when the model
     // (or a seed) leaves them blank — keeps targeted-practice routing intact.
     const resolved = resolveStandard(String(base.standard || ''));
+    // Seeds are reference-only and must NEVER be persisted. Guard against a
+    // generated version coming back as (or containing) the source question verbatim
+    // so a copyrighted seed can't leak into the bank.
+    const seedKey = this.normStem(String(base.stem || ''));
     for (const it of items) {
       const conv = it.figure ? { stem: it.stem, figure: null } : this.tableToFigure(it.stem);
       const key = this.normStem(conv.stem);
       if (!key || seen.has(key)) {
         skipped++;
+        continue;
+      }
+      if (seedKey && (key === seedKey || key.includes(seedKey))) {
+        skipped++; // near-verbatim copy of the seed — drop it
         continue;
       }
       seen.add(key);
