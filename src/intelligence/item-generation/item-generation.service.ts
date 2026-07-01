@@ -304,10 +304,18 @@ export class ItemGenerationService {
       'You are a STRICT K-8 math item checker. For each item, independently solve the problem from ' +
       'scratch, then judge whether it is SAFE to publish to students. Mark ok=false if ANY of these ' +
       'hold: the option at correctIndex is NOT the truly correct answer; the item is ambiguous or has ' +
-      'more than one defensible answer; required information is missing; numbers or units are ' +
-      'inconsistent; or (for a "psychology"/error-analysis item) the scenario does NOT depict a ' +
-      'genuine student MISTAKE with a wrong result (e.g. the student was actually correct). Only mark ' +
-      'ok=true when you are confident the marked answer is correct AND the item is unambiguous and ' +
+      'more than one defensible answer; required information is missing; or numbers or units are ' +
+      'inconsistent. ' +
+      'EXTRA RULE for "psychology"/error-analysis items (the stem shows a student who reached a WRONG ' +
+      'answer and asks what mistake was made): (1) compute the TRUE correct answer; (2) read the ' +
+      "student's stated wrong answer from the stem; (3) take the specific error named by the option at " +
+      "correctIndex and APPLY it yourself — it MUST mechanically reproduce the student's exact stated " +
+      'wrong answer. If it does not, ok=false. Concrete reject example: the correct slope is -2/3 and the ' +
+      'student wrote -1/3, but the marked error "ran over rise / inverted the slope" actually yields ' +
+      "-3/2 (not -1/3), so the named mistake does NOT produce the student's answer → ok=false. Also " +
+      'reject any error-analysis item where the student was actually correct. ' +
+      'Only mark ok=true when you are confident the marked answer is correct, AND (for error-analysis) the ' +
+      "named mistake reproduces the student's stated wrong answer, AND the item is unambiguous and " +
       'well-formed. Return JSON ONLY: an array of {"i": <index>, "ok": <true|false>, "reason": <short>}. ' +
       'Be strict — when in doubt, ok=false.';
     try {
