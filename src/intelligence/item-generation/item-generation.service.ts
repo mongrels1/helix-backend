@@ -550,22 +550,32 @@ export class ItemGenerationService {
     return this.prisma.draftItem.update({ where: { id }, data: { status: 'operational' } });
   }
 
-  async queue(q: { status?: string; batchId?: string; page?: number; pageSize?: number; search?: string }) {
+  async queue(q: { status?: string; batchId?: string; page?: number; pageSize?: number; search?: string; grade?: string }) {
     const page = Math.max(1, Number(q.page) || 1);
     const pageSize = Math.min(Number(q.pageSize) || 25, 1000);
-    const where = {
+    const where: Record<string, unknown> = {
       status: (q.status as never) || undefined,
       batchId: q.batchId || undefined,
       stem: q.search ? { contains: String(q.search), mode: 'insensitive' as const } : undefined,
     };
+    // Grade filter: match on the standard/GA code prefix (grade 8 = MGSE8.* or 8.*),
+    // so you can slice the whole bank by grade regardless of which batch made an item.
+    const g = q.grade ? String(q.grade).trim() : '';
+    if (g) {
+      where.OR = [
+        { standard: { startsWith: `MGSE${g}` } },
+        { standard: { startsWith: `${g}.` } },
+        { ga: { startsWith: `${g}.` } },
+      ];
+    }
     const [items, total] = await this.prisma.$transaction([
       this.prisma.draftItem.findMany({
-        where,
+        where: where as never,
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.draftItem.count({ where }),
+      this.prisma.draftItem.count({ where: where as never }),
     ]);
     return { items, total, page, pageSize };
   }
