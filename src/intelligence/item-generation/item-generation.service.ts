@@ -12,6 +12,7 @@ import { resolveStandard } from './mgse-ga-crosswalk';
 import { nodesForStandard } from './skill-graph';
 import { applicableMisconceptions } from './misconception-library';
 import { g6SeedForStandard } from './g6-seed';
+import { g7SeedForStandard } from './g7-seed';
 import { buildIntegrityReport, type BankRow } from './integrity';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
@@ -188,20 +189,24 @@ export class ItemGenerationService {
     // Curated G6 seed (Illuminate-derived misconception patterns + DOK-gap target).
     // Reference-only: seeds distractor rationales into the prompt so generated
     // items inherit real, documented student errors and fill the DOK-3/4 gap.
-    const g6 = g6SeedForStandard(standard) ?? g6SeedForStandard(route.ga || '');
+    const seed =
+      g6SeedForStandard(standard) ??
+      g7SeedForStandard(standard) ??
+      g6SeedForStandard(route.ga || '') ??
+      g7SeedForStandard(route.ga || '');
     const dokNote =
-      g6 && (g6.dokGap.dok3 > 0 || g6.dokGap.dok4 > 0)
-        ? ` Emphasize higher-rigor DOK 3${g6.dokGap.dok4 > 0 ? '–4' : ''} versions (multi-step reasoning, modeling, interpret/justify) to fill the rigor gap.`
+      seed && (seed.dokGap.dok3 > 0 || seed.dokGap.dok4 > 0)
+        ? ` Emphasize higher-rigor DOK 3${seed.dokGap.dok4 > 0 ? '–4' : ''} versions (multi-step reasoning, modeling, interpret/justify) to fill the rigor gap.`
         : '';
     return Array.from({ length: numSlates }, (_, i) => {
       const node = uniqueNodes.length ? uniqueNodes[i % uniqueNodes.length] : null;
       // Rotate through the curated misconceptions so different slates surface
       // different documented errors as seed distractor rationales.
       const seedOptions =
-        g6 && g6.misconceptions.length
+        seed && seed.misconceptions.length
           ? [
               { text: '(correct answer varies by context)', correct: true, misconceptionTag: '' },
-              ...Array.from({ length: 3 }, (_, k) => g6.misconceptions[(i * 3 + k) % g6.misconceptions.length])
+              ...Array.from({ length: 3 }, (_, k) => seed.misconceptions[(i * 3 + k) % seed.misconceptions.length])
                 .filter(Boolean)
                 .map((m) => ({ text: '(distractor)', correct: false, misconception: m, misconceptionTag: '' })),
             ]
