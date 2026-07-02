@@ -91,6 +91,17 @@ export class ItemGenerationController {
     return { success: true as const, data };
   }
 
+  /**
+   * Firewalled dual-write: stage a finished batch's practice drafts into the
+   * diagnostic bank as `draft` rows for human validate -> publish. They never
+   * score a placement until published and calibrated.
+   */
+  @Post('stage-diagnostic')
+  async stageDiagnostic(@Body() body: { batchId: string }) {
+    const data = await this.svc.stageBatchToDiagnostic(body.batchId);
+    return { success: true as const, data };
+  }
+
   @Post('review/:id')
   async review(
     @Param('id') id: string,

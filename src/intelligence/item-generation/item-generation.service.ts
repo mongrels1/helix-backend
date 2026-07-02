@@ -11,6 +11,7 @@ import { SYSTEM_PROMPT, buildUserPrompt } from './prompt';
 import { resolveStandard } from './mgse-ga-crosswalk';
 import { nodesForStandard } from './skill-graph';
 import { applicableMisconceptions } from './misconception-library';
+import { g6SeedForStandard } from './g6-seed';
 import { buildIntegrityReport, type BankRow } from './integrity';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
@@ -184,16 +185,36 @@ export class ItemGenerationService {
     const uniqueNodes = nodes.filter((n) => (seenNode.has(n.id) ? false : (seenNode.add(n.id), true)));
     const slateSize = 10;
     const numSlates = Math.min(Math.max(Math.ceil(c / slateSize), 1), 6);
+    // Curated G6 seed (Illuminate-derived misconception patterns + DOK-gap target).
+    // Reference-only: seeds distractor rationales into the prompt so generated
+    // items inherit real, documented student errors and fill the DOK-3/4 gap.
+    const g6 = g6SeedForStandard(standard) ?? g6SeedForStandard(route.ga || '');
+    const dokNote =
+      g6 && (g6.dokGap.dok3 > 0 || g6.dokGap.dok4 > 0)
+        ? ` Emphasize higher-rigor DOK 3${g6.dokGap.dok4 > 0 ? '–4' : ''} versions (multi-step reasoning, modeling, interpret/justify) to fill the rigor gap.`
+        : '';
     return Array.from({ length: numSlates }, (_, i) => {
       const node = uniqueNodes.length ? uniqueNodes[i % uniqueNodes.length] : null;
+      // Rotate through the curated misconceptions so different slates surface
+      // different documented errors as seed distractor rationales.
+      const seedOptions =
+        g6 && g6.misconceptions.length
+          ? [
+              { text: '(correct answer varies by context)', correct: true, misconceptionTag: '' },
+              ...Array.from({ length: 3 }, (_, k) => g6.misconceptions[(i * 3 + k) % g6.misconceptions.length])
+                .filter(Boolean)
+                .map((m) => ({ text: '(distractor)', correct: false, misconception: m, misconceptionTag: '' })),
+            ]
+          : undefined;
       return {
         sourceId: node ? `std:${route.ga}:${node.id}:${i}` : `std:${route.ga}:${i}`,
         standard,
         ga: route.ga,
         gaCluster: route.gaCluster,
-        stem: node
+        stem: (node
           ? `Write an original ${gradeStr}word problem for ${route.ga} — ${node.label}. ${node.masteryIndicator} Use a realistic, fresh scenario with a single correct answer.`
-          : `Write an original ${gradeStr}word problem aligned to standard ${route.ga}. Use a realistic, fresh scenario with a single correct numeric or short-text answer.`,
+          : `Write an original ${gradeStr}word problem aligned to standard ${route.ga}. Use a realistic, fresh scenario with a single correct numeric or short-text answer.`) + dokNote,
+        options: seedOptions,
         referenceOnly: true,
       } as BaseItem;
     });
@@ -434,6 +455,75 @@ export class ItemGenerationService {
     }
     if (rows.length) await this.prisma.draftItem.createMany({ data: rows as never });
     return { saved: rows.length, skipped, invalid };
+  }
+
+  /**
+   * Firewalled dual-write: stage a completed batch's serveable practice drafts
+   * into the DIAGNOSTIC bank as `draft` rows (source 'generated'). They enter the
+   * review pipeline (validate -> publish) and NEVER score a placement until a
+   * human publishes them AND they are calibrated. This is how one authoring run
+   * feeds both banks while preserving the measurement firewall.
+   */
+  async stageBatchToDiagnostic(
+    batchId: string,
+  ): Promise<{ staged: number; skipped: number }> {
+    const drafts = await this.prisma.draftItem.findMany({
+      where: { batchId, status: { not: 'rejected' } },
+    });
+    if (!drafts.length) return { staged: 0, skipped: 0 };
+    const existing = await this.prisma.diagnosticItem.findMany({
+      select: { stem: true },
+    });
+    const seen = new Set(existing.map((e) => this.normStem(e.stem)));
+    const rows: Record<string, unknown>[] = [];
+    let skipped = 0;
+    for (const d of drafts) {
+      const key = this.normStem(d.stem);
+      if (!key || seen.has(key)) {
+        skipped++;
+        continue;
+      }
+      const opts = Array.isArray(d.options)
+        ? (d.options as unknown as { text?: string; correct?: boolean }[])
+        : [];
+      const correct = opts.findIndex((o) => o?.correct);
+      // Only stage structurally sound items; the firewall keeps them non-scoring
+      // until human-published, but there's no reason to stage broken ones.
+      if (opts.length !== 4 || correct < 0) {
+        skipped++;
+        continue;
+      }
+      seen.add(key);
+      const std = String(d.ga || d.standard || '');
+      rows.push({
+        grade: this.gradeFromStandard(std) ?? 6,
+        strand: this.strandFromStandard(std),
+        kc: d.skillNode || d.standard || '',
+        standard: std,
+        dok: typeof d.dok === 'number' ? d.dok : null,
+        b: 0,
+        stem: d.stem,
+        options: opts.map((o) => String(o?.text ?? '')),
+        correct,
+        status: 'draft',
+        source: 'generated',
+        createdBy: d.createdBy ?? null,
+      });
+    }
+    if (rows.length)
+      await this.prisma.diagnosticItem.createMany({ data: rows as never });
+    return { staged: rows.length, skipped };
+  }
+
+  private gradeFromStandard(s: string): number | null {
+    const m = s.match(/(?:MGSE)?(\d+)\s*\./i) || s.match(/(\d+)/);
+    const g = m ? Number(m[1]) : NaN;
+    return Number.isFinite(g) && g >= 0 && g <= 12 ? g : null;
+  }
+
+  private strandFromStandard(s: string): string {
+    const m = s.toUpperCase().match(/(?:MGSE)?\d+\.?([A-Z]{1,3})/);
+    return m ? m[1] : '';
   }
 
   /**
