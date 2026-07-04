@@ -190,9 +190,10 @@ export class DiagnosticBankService {
       'right option), "kc" (short skill name), "dok" (integer 1-4), "b" (difficulty, -2.0 to 2.0), and ' +
       'OPTIONAL "figure" (a JSON figure spec) }. INCLUDE a "figure" whenever the standard involves a ' +
       'graph, table, coordinate plane, number line, dot plot, histogram, or geometric figure (types: ' +
-      'number_line, bar_graph, coordinate_grid, dot_plot, histogram, ratio_table, or ' +
-      '{"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"]} ' +
-      'for geometry); omit it for purely numeric items. Rules: exactly one correct option; four distinct ' +
+      'number_line, bar_graph, coordinate_grid, dot_plot, histogram, ratio_table); do NOT emit a "geogebra" ' +
+      'figure and do NOT attempt 3-D solids or labeled/to-scale geometry diagrams — OMIT the "figure" for ' +
+      'those (a clean text item beats a wrong picture). Omit it for purely numeric items too. Rules: ' +
+      'exactly one correct option; four distinct ' +
       'plausible options; the stem is a single plain-English sentence that refers to any figure in words ' +
       'but never draws a table in text; aligned to the grade. Vary difficulty across the set (some easy ' +
       'with negative b, some hard with positive b). No prose outside the JSON array.';
@@ -277,8 +278,10 @@ export class DiagnosticBankService {
         '{"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4,4,5],"altText":"..."}, ' +
         '{"type":"histogram","bins":[{"label":"0-9","count":3}],"altText":"..."}, ' +
         '{"type":"ratio_table","headers":["x","y"],"rows":[{"a":1,"b":2},{"a":2,"b":4}],"altText":"x to y"}, ' +
-        'and for geometry (triangles, Pythagorean, circles, 3-D solids) ' +
-        '{"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle"}. ' +
+        'and (2-D geometry only) {"type":"triangle",...} or {"type":"rect",...} or {"type":"angle",...}. ' +
+        'Do NOT emit a "geogebra" figure, and do NOT attempt 3-D solids (cones, cylinders, spheres, prisms) ' +
+        'or labeled/to-scale geometry diagrams — for ANY of those, OMIT the "figure" entirely (a clean text ' +
+        'item is far better than a wrong or unlabeled picture). ' +
         'Rules: exactly one correct option; four distinct plausible options; the stem is ONE plain-English ' +
         'sentence that REFERS to the figure ("the graph below", "the dot plot") but never draws a table/grid ' +
         'in text (no ASCII/markdown); the four options stay plain text; stay at the source\'s grade level. ' +
