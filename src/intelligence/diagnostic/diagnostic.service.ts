@@ -264,7 +264,7 @@ export class DiagnosticService {
   async publishedBank() {
     const items = await this.prisma.diagnosticItem.findMany({
       where: { status: 'published' },
-      select: { id: true, grade: true, strand: true, kc: true, b: true, stem: true, options: true, correct: true },
+      select: { id: true, grade: true, strand: true, kc: true, b: true, stem: true, options: true, correct: true, figure: true },
       orderBy: [{ grade: 'asc' }, { strand: 'asc' }],
     });
     return items.map((it) => ({
@@ -276,6 +276,7 @@ export class DiagnosticService {
       stem: it.stem,
       opts: it.options,
       correct: it.correct,
+      figure: it.figure ?? undefined,
     }));
   }
 

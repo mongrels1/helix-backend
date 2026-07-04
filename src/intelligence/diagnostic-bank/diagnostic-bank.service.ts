@@ -187,11 +187,15 @@ export class DiagnosticBankService {
       "You are EdKairos's diagnostic item writer. Produce calibrated-style multiple-choice math " +
       'items for ONE grade and standard. Return VALID JSON ONLY: an array of objects with keys ' +
       '{ "stem", "options" (exactly 4 short plain-text strings), "correct" (0-based index of the ' +
-      'right option), "kc" (short skill name), "dok" (integer 1-4), "b" (difficulty, -2.0 to 2.0) }. ' +
-      'Rules: exactly one correct option; four distinct plausible options; the stem is a single ' +
-      'plain-English sentence (NO tables, markdown, or images); aligned to the grade. Vary difficulty ' +
-      'across the set (some easy with negative b, some hard with positive b) and include fraction and ' +
-      'decimal quantities where appropriate. No prose outside the JSON array.';
+      'right option), "kc" (short skill name), "dok" (integer 1-4), "b" (difficulty, -2.0 to 2.0), and ' +
+      'OPTIONAL "figure" (a JSON figure spec) }. INCLUDE a "figure" whenever the standard involves a ' +
+      'graph, table, coordinate plane, number line, dot plot, histogram, or geometric figure (types: ' +
+      'number_line, bar_graph, coordinate_grid, dot_plot, histogram, ratio_table, or ' +
+      '{"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"]} ' +
+      'for geometry); omit it for purely numeric items. Rules: exactly one correct option; four distinct ' +
+      'plausible options; the stem is a single plain-English sentence that refers to any figure in words ' +
+      'but never draws a table in text; aligned to the grade. Vary difficulty across the set (some easy ' +
+      'with negative b, some hard with positive b). No prose outside the JSON array.';
     const prompt = `Grade ${grade}, strand ${strand}${standard ? `, standard ${standard}` : ''}. Write ${count} diagnostic items.`;
 
     const res = await this.ai.chat({
@@ -203,7 +207,7 @@ export class DiagnosticBankService {
     });
 
     const raw = this.parseJsonArray(res.text) as Array<{
-      stem?: unknown; options?: unknown; correct?: unknown; kc?: unknown; dok?: unknown; b?: unknown;
+      stem?: unknown; options?: unknown; correct?: unknown; kc?: unknown; dok?: unknown; b?: unknown; figure?: unknown;
     }>;
     const rows = raw
       .map((it) => {
@@ -216,6 +220,7 @@ export class DiagnosticBankService {
         return {
           grade, strand, kc: String(it.kc ?? '').trim() || `${strand} skill`,
           standard, dok, b, stem, options, correct,
+          figure: (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined,
           status: 'draft', source: 'generated', createdBy: createdBy ?? null,
         };
       })
@@ -230,9 +235,10 @@ export class DiagnosticBankService {
    * bank), each aligned to its OWN standard/grade — not a single grade+strand.
    * Every generated item is independently re-solved (correctness verifier) and
    * wrong/ambiguous ones are dropped before saving. Seeds are reference-only and
-   * never stored; only new AI items land, as drafts for review. Text-only, since
-   * DiagnosticItem has no figure field. Capped per request to stay well within
-   * the HTTP timeout — run again for a larger bank (duplicates are skipped).
+   * never stored; only new AI items land, as drafts for review. Emits a "figure"
+   * (graph/table/number line/dot plot/geometry) whenever the standard calls for one
+   * (CRA visuals). Capped per request to stay within the HTTP timeout — run again
+   * for a larger bank (duplicates are skipped).
    */
   async generateFromSeeds(
     body: { seeds: Array<{ stem?: string; standard?: string }> },
@@ -260,15 +266,28 @@ export class DiagnosticBankService {
         'standard and grade — same topic, fresh numbers/context, NOT a copy of the source. Return VALID ' +
         'JSON ONLY: an array in the SAME ORDER as the sources, one object each: { "stem", "options" ' +
         '(exactly 4 short plain-text strings), "correct" (0-based index of the right option), "kc" (short ' +
-        'skill name), "dok" (integer 1-4), "b" (difficulty -2.0..2.0) }. Rules: exactly one correct ' +
-        'option; four distinct plausible options; the stem is ONE plain-English sentence with NO tables, ' +
-        'markdown, or images (diagnostic items are text-only); stay at the source\'s grade level. No prose ' +
-        'outside the JSON array.';
+        'skill name), "dok" (integer 1-4), "b" (difficulty -2.0..2.0), and OPTIONAL "figure" (a JSON figure ' +
+        'spec). CRA VISUALS: INCLUDE a "figure" whenever the standard/item involves a table, graph, ' +
+        'coordinate plane, number line, dot plot, histogram, or geometric figure (many standards — e.g. ' +
+        'unit rates, proportional relationships, functions, statistics — REQUIRE graphs/tables); omit it ' +
+        'only for purely numeric items. Figure types: ' +
+        '{"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":6,"label":"6"}],"altText":"..."}, ' +
+        '{"type":"bar_graph","bars":[{"label":"A","value":3}],"altText":"..."}, ' +
+        '{"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3}],"line":{"m":1,"b":0},"altText":"..."}, ' +
+        '{"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4,4,5],"altText":"..."}, ' +
+        '{"type":"histogram","bins":[{"label":"0-9","count":3}],"altText":"..."}, ' +
+        '{"type":"ratio_table","headers":["x","y"],"rows":[{"a":1,"b":2},{"a":2,"b":4}],"altText":"x to y"}, ' +
+        'and for geometry (triangles, Pythagorean, circles, 3-D solids) ' +
+        '{"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle"}. ' +
+        'Rules: exactly one correct option; four distinct plausible options; the stem is ONE plain-English ' +
+        'sentence that REFERS to the figure ("the graph below", "the dot plot") but never draws a table/grid ' +
+        'in text (no ASCII/markdown); the four options stay plain text; stay at the source\'s grade level. ' +
+        'No prose outside the JSON array.';
       const user = group
         .map((s, k) => `${k + 1}) [standard ${s.standard}] ${s.stem}`)
         .join('\n');
 
-      let items: Array<{ stem?: unknown; options?: unknown; correct?: unknown; kc?: unknown; dok?: unknown; b?: unknown }>;
+      let items: Array<{ stem?: unknown; options?: unknown; correct?: unknown; kc?: unknown; dok?: unknown; b?: unknown; figure?: unknown }>;
       try {
         const res = await this.ai.chat({ systemPrompt: sys, prompt: user, preferredProvider: 'claude', timeoutMs: 60_000, maxTokens: 8000 });
         items = this.parseJsonArray(res.text) as typeof items;
@@ -297,6 +316,7 @@ export class DiagnosticBankService {
             kc: String(it.kc ?? '').trim() || `${gs.strand} skill`,
             standard: standardFor(gs.grade, gs.strand) ?? seed.standard,
             dok, b, stem, options, correct,
+            figure: (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined,
             status: 'draft', source: 'generated', createdBy: createdBy ?? null,
           };
         })

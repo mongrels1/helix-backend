@@ -655,6 +655,7 @@ model DiagnosticItem {
   stem      String
   options   String[]
   correct   Int      @default(0)
+  figure    Json?
   status    String   @default("draft")
   source    String   @default("manual")
   createdBy String?
