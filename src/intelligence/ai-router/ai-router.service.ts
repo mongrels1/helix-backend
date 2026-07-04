@@ -178,7 +178,7 @@ export class AIRouterService {
     const startedAt = Date.now();
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: req.claudeModel ?? 'claude-haiku-4-5-20251001',
       max_tokens: req.maxTokens ?? 1024,
       temperature: req.temperature ?? 0.7,
       ...(req.systemPrompt ? { system: req.systemPrompt } : {}),

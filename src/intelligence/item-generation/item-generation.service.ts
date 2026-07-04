@@ -441,7 +441,7 @@ export class ItemGenerationService {
         status: 'draft',
         versionType: String(it.versionType ?? 'item'),
         stem: String(conv.stem ?? ''),
-        figure: (it.figure as object) ?? conv.figure ?? undefined,
+        figure: this.sanitizeFigure(String(conv.stem ?? ''), (it.figure as object) ?? conv.figure ?? undefined),
         options: options as unknown as object,
         answer,
         solution: String(it.solution ?? ''),
@@ -595,6 +595,29 @@ export class ItemGenerationService {
       [opts[i], opts[j]] = [opts[j], opts[i]];
     }
     return opts;
+  }
+
+  /**
+   * Deterministic figure↔stem consistency guard (mirror of the diagnostic bank's).
+   * A flat triangle/rect can never stand in for a cone/cylinder/sphere/volume item,
+   * and a (right) triangle only belongs on a real triangle/Pythagorean item — drop
+   * a mismatched figure so a wrong picture never reaches even a draft.
+   */
+  private sanitizeFigure(stem: string, figure: object | undefined): object | undefined {
+    if (!figure || typeof figure !== 'object') return undefined;
+    const t = String((figure as { type?: unknown }).type ?? '');
+    const s = stem.toLowerCase();
+    const isSolidOrVolume = /\b(volume|surface area|cone|cylinder|sphere|prism|pyramid|cubic)\b/.test(s);
+    if (isSolidOrVolume && ['right_triangle', 'triangle', 'rect', 'angle'].includes(t)) return undefined;
+    if (t === 'right_triangle' || t === 'triangle') {
+      const looksTriangle =
+        /triangle|hypotenuse|\bleg(s)?\b|right angle|pythag|ladder|\bramp\b|\brope\b|\bwire\b|diagonal|slant|how (far|high)|distance (between|from|to)|shortest/.test(s);
+      if (!looksTriangle) return undefined;
+    }
+    if (t === 'cylinder' && !/cylind/.test(s)) return undefined;
+    if (t === 'cone' && !/(\bcone|conical)/.test(s)) return undefined;
+    if (t === 'sphere' && !/(spher|\bball\b|\bglobe\b)/.test(s)) return undefined;
+    return figure;
   }
 
   private tableToFigure(stem: string): { stem: string; figure: Record<string, unknown> | null } {

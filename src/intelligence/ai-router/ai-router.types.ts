@@ -14,6 +14,8 @@ export interface AIRequest {
   preferredProvider?: AIProvider;
   systemPrompt?: string;
   timeoutMs?: number;
+  /** Override the Claude model (e.g. a stronger model for a strict correctness check). Claude path only. */
+  claudeModel?: string;
 }
 
 export interface AIResponse {

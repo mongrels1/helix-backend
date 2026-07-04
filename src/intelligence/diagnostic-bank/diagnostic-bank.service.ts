@@ -495,7 +495,7 @@ export class DiagnosticBankService {
    *  judge confirms are correct + unambiguous. Fails OPEN (keeps all) on error so a
    *  transient hiccup never wipes a batch. */
   private async verifyDiagnostic(
-    items: Array<{ stem?: unknown; options?: unknown; correct?: unknown }>,
+    items: Array<{ stem?: unknown; options?: unknown; correct?: unknown; figure?: unknown }>,
   ): Promise<Set<number>> {
     const keepAll = () => new Set(items.map((_, i) => i));
     if (!items.length) return new Set();
@@ -504,16 +504,23 @@ export class DiagnosticBankService {
       stem: String(it.stem ?? ''),
       options: Array.isArray(it.options) ? it.options.map((o) => String(o)) : [],
       correctIndex: typeof it.correct === 'number' ? it.correct : Number(it.correct),
+      // Include the figure: a coordinate/rotation/graph item can ONLY be checked
+      // against the data in its figure (e.g. the point coordinates being transformed).
+      figure: it.figure && typeof it.figure === 'object' ? it.figure : undefined,
     }));
     const system =
       'You are a STRICT K-8 math item checker. For each item, independently solve the problem from ' +
       'scratch, then mark ok=false if ANY hold: the option at correctIndex is NOT the truly correct ' +
       'answer; the item is ambiguous or has more than one defensible answer; required info is missing; ' +
-      'or numbers/units are inconsistent. Only ok=true when confident the marked answer is correct and ' +
-      'the item is unambiguous. Return JSON ONLY: an array of {"i": <index>, "ok": <true|false>}. Be ' +
-      'strict — when in doubt, ok=false.';
+      'or numbers/units are inconsistent. If the item has a "figure", the answer MUST be consistent with ' +
+      'the figure\'s data — read coordinates/values from it and use them. For a TRANSFORMATION, compute the ' +
+      'image EXACTLY: rotation 180° about the origin maps (x,y)->(-x,-y); 90° CCW maps (x,y)->(-y,x); 90° CW ' +
+      'maps (x,y)->(y,-x); reflection across the x-axis maps (x,y)->(x,-y); across the y-axis (x,y)->(-x,y); a ' +
+      'translation adds the given amounts. Verify the marked coordinates match your computation exactly. ' +
+      'Only ok=true when confident the marked answer is correct and the item is unambiguous. Return JSON ' +
+      'ONLY: an array of {"i": <index>, "ok": <true|false>}. Be strict — when in doubt, ok=false.';
     try {
-      const res = await this.ai.chat({ systemPrompt: system, prompt: JSON.stringify(payload), preferredProvider: 'claude', timeoutMs: 60_000, maxTokens: 3000 });
+      const res = await this.ai.chat({ systemPrompt: system, prompt: JSON.stringify(payload), preferredProvider: 'claude', claudeModel: 'claude-sonnet-5', timeoutMs: 90_000, maxTokens: 3000 });
       const verdicts = this.parseJsonArray(res.text) as Array<{ i?: number; ok?: boolean }>;
       if (!verdicts.length) return keepAll(); // fail open
       const ok = new Set(verdicts.filter((v) => v.ok === true).map((v) => Number(v.i)));
