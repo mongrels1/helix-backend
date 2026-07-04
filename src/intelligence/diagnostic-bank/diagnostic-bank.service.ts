@@ -38,6 +38,17 @@ function standardFor(grade: number, strand: string): string | null {
   return r && !/^MGSE/i.test(r) ? r : null; // avoid echoing the MGSE input
 }
 
+/** Parse grade + strand from a standard code, e.g. "MGSE8.EE.7" -> {8,"EE"},
+ *  "8.FGR.5" -> {8,"FGR"}. Used to route a seed's generated item to the right
+ *  grade/strand when generating diagnostic items from uploaded questions. */
+function gradeStrandFromStandard(code: string): { grade: number; strand: string } | null {
+  const c = String(code || '').toUpperCase().replace(/\s+/g, '');
+  const m = c.match(/^MGSE(\d+)\.([A-Z]+)/) || c.match(/^(\d+)\.([A-Z]+)/);
+  if (!m) return null;
+  const grade = Number(m[1]);
+  return grade ? { grade, strand: m[2] } : null;
+}
+
 export interface CreateDiagnosticItemDto {
   grade: number;
   strand: string;
@@ -212,6 +223,124 @@ export class DiagnosticBankService {
 
     if (rows.length) await this.prisma.diagnosticItem.createMany({ data: rows });
     return { created: rows.length };
+  }
+
+  /**
+   * Generate diagnostic items from UPLOADED/pasted source questions (e.g. a DnA
+   * bank), each aligned to its OWN standard/grade — not a single grade+strand.
+   * Every generated item is independently re-solved (correctness verifier) and
+   * wrong/ambiguous ones are dropped before saving. Seeds are reference-only and
+   * never stored; only new AI items land, as drafts for review. Text-only, since
+   * DiagnosticItem has no figure field. Capped per request to stay well within
+   * the HTTP timeout — run again for a larger bank (duplicates are skipped).
+   */
+  async generateFromSeeds(
+    body: { seeds: Array<{ stem?: string; standard?: string }> },
+    createdBy?: string,
+  ): Promise<{ created: number; discarded: number; requested: number; skippedNoStandard: number }> {
+    const all = (body.seeds ?? [])
+      .map((s) => ({ stem: String(s?.stem ?? '').trim(), standard: String(s?.standard ?? '').trim() }))
+      .filter((s) => s.stem.length > 8);
+    if (!all.length) {
+      throw new BadRequestException({ error: { code: 'no_seeds', message: 'No usable seed questions' } });
+    }
+    // A seed needs a parseable standard so we can route grade+strand. Skip the rest.
+    const seeds = all.filter((s) => gradeStrandFromStandard(s.standard));
+    const skippedNoStandard = all.length - seeds.length;
+    const capped = seeds.slice(0, 24); // bound per-request time (run again for more)
+
+    let created = 0;
+    let discarded = 0;
+    const BATCH = 8;
+    for (let i = 0; i < capped.length; i += BATCH) {
+      const group = capped.slice(i, i + BATCH);
+      const sys =
+        "You are EdKairos's diagnostic item writer. You are given SOURCE questions, each with its " +
+        'standard. For EACH source, write ONE NEW diagnostic multiple-choice item that tests the SAME ' +
+        'standard and grade — same topic, fresh numbers/context, NOT a copy of the source. Return VALID ' +
+        'JSON ONLY: an array in the SAME ORDER as the sources, one object each: { "stem", "options" ' +
+        '(exactly 4 short plain-text strings), "correct" (0-based index of the right option), "kc" (short ' +
+        'skill name), "dok" (integer 1-4), "b" (difficulty -2.0..2.0) }. Rules: exactly one correct ' +
+        'option; four distinct plausible options; the stem is ONE plain-English sentence with NO tables, ' +
+        'markdown, or images (diagnostic items are text-only); stay at the source\'s grade level. No prose ' +
+        'outside the JSON array.';
+      const user = group
+        .map((s, k) => `${k + 1}) [standard ${s.standard}] ${s.stem}`)
+        .join('\n');
+
+      let items: Array<{ stem?: unknown; options?: unknown; correct?: unknown; kc?: unknown; dok?: unknown; b?: unknown }>;
+      try {
+        const res = await this.ai.chat({ systemPrompt: sys, prompt: user, preferredProvider: 'claude', timeoutMs: 60_000, maxTokens: 8000 });
+        items = this.parseJsonArray(res.text) as typeof items;
+      } catch {
+        continue; // one bad batch shouldn't sink the run
+      }
+
+      // Correctness verifier: independently re-solve; keep only confirmed-correct, unambiguous items.
+      const okSet = await this.verifyDiagnostic(items);
+
+      const rows = items
+        .map((it, k) => {
+          if (!okSet.has(k)) return null;
+          const seed = group[k];
+          const gs = seed ? gradeStrandFromStandard(seed.standard) : null;
+          if (!gs) return null;
+          const options = Array.isArray(it.options) ? it.options.map((o) => String(o)).filter((o) => o.trim()) : [];
+          const correct = typeof it.correct === 'number' ? it.correct : Number(it.correct);
+          const stem = String(it.stem ?? '').trim();
+          if (!stem || options.length !== 4 || !(correct >= 0 && correct < options.length)) return null;
+          const dok = Math.min(4, Math.max(1, Number(it.dok) || provisionalDok(Number(it.b) || 0)));
+          const b = Math.min(3, Math.max(-3, typeof it.b === 'number' ? it.b : Number(it.b) || 0));
+          return {
+            grade: gs.grade,
+            strand: gs.strand,
+            kc: String(it.kc ?? '').trim() || `${gs.strand} skill`,
+            standard: standardFor(gs.grade, gs.strand) ?? seed.standard,
+            dok, b, stem, options, correct,
+            status: 'draft', source: 'generated', createdBy: createdBy ?? null,
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+
+      discarded += group.length - rows.length;
+      if (rows.length) {
+        const saved = await this.prisma.diagnosticItem.createMany({ data: rows, skipDuplicates: true });
+        created += saved.count;
+      }
+    }
+    return { created, discarded, requested: capped.length, skippedNoStandard };
+  }
+
+  /** Independently re-solve each generated diagnostic item; return the indexes the
+   *  judge confirms are correct + unambiguous. Fails OPEN (keeps all) on error so a
+   *  transient hiccup never wipes a batch. */
+  private async verifyDiagnostic(
+    items: Array<{ stem?: unknown; options?: unknown; correct?: unknown }>,
+  ): Promise<Set<number>> {
+    const keepAll = () => new Set(items.map((_, i) => i));
+    if (!items.length) return new Set();
+    const payload = items.map((it, i) => ({
+      i,
+      stem: String(it.stem ?? ''),
+      options: Array.isArray(it.options) ? it.options.map((o) => String(o)) : [],
+      correctIndex: typeof it.correct === 'number' ? it.correct : Number(it.correct),
+    }));
+    const system =
+      'You are a STRICT K-8 math item checker. For each item, independently solve the problem from ' +
+      'scratch, then mark ok=false if ANY hold: the option at correctIndex is NOT the truly correct ' +
+      'answer; the item is ambiguous or has more than one defensible answer; required info is missing; ' +
+      'or numbers/units are inconsistent. Only ok=true when confident the marked answer is correct and ' +
+      'the item is unambiguous. Return JSON ONLY: an array of {"i": <index>, "ok": <true|false>}. Be ' +
+      'strict — when in doubt, ok=false.';
+    try {
+      const res = await this.ai.chat({ systemPrompt: system, prompt: JSON.stringify(payload), preferredProvider: 'claude', timeoutMs: 60_000, maxTokens: 3000 });
+      const verdicts = this.parseJsonArray(res.text) as Array<{ i?: number; ok?: boolean }>;
+      if (!verdicts.length) return keepAll(); // fail open
+      const ok = new Set(verdicts.filter((v) => v.ok === true).map((v) => Number(v.i)));
+      return ok.size ? ok : keepAll(); // if judge approved nothing, fail open
+    } catch {
+      return keepAll();
+    }
   }
 
   /** Tolerant JSON-array parse: salvages complete objects from a truncated array. */

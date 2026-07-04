@@ -55,6 +55,15 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('generate-from-seeds')
+  async generateFromSeeds(
+    @Body() body: { seeds: Array<{ stem?: string; standard?: string }> },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.generateFromSeeds(body, req.user?.id);
+    return { success: true as const, data };
+  }
+
   @Post('publish')
   async publish() {
     const data = await this.svc.publish();
