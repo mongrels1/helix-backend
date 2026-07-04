@@ -245,11 +245,15 @@ export class DiagnosticBankService {
    * for a larger bank (duplicates are skipped).
    */
   async generateFromSeeds(
-    body: { seeds: Array<{ stem?: string; standard?: string }> },
+    body: { seeds: Array<{ stem?: string; standard?: string; figure?: object }> },
     createdBy?: string,
   ): Promise<{ created: number; discarded: number; requested: number; skippedNoStandard: number }> {
     const all = (body.seeds ?? [])
-      .map((s) => ({ stem: String(s?.stem ?? '').trim(), standard: String(s?.standard ?? '').trim() }))
+      .map((s) => ({
+        stem: String(s?.stem ?? '').trim(),
+        standard: String(s?.standard ?? '').trim(),
+        figure: s?.figure && typeof s.figure === 'object' ? s.figure : undefined,
+      }))
       .filter((s) => s.stem.length > 8);
     if (!all.length) {
       throw new BadRequestException({ error: { code: 'no_seeds', message: 'No usable seed questions' } });
@@ -294,7 +298,13 @@ export class DiagnosticBankService {
         'in text (no ASCII/markdown); the four options stay plain text; stay at the source\'s grade level. ' +
         'No prose outside the JSON array.';
       const user = group
-        .map((s, k) => `${k + 1}) [standard ${s.standard}] ${s.stem}`)
+        .map((s, k) => {
+          const base = `${k + 1}) [standard ${s.standard}] ${s.stem}`;
+          if (!s.figure) return base;
+          const t = (s.figure as { type?: unknown }).type;
+          // Vision read the source's figure: require the new item to carry the same TYPE, fresh values.
+          return `${base}\n   SOURCE FIGURE (type "${String(t)}"): your new item MUST include a "figure" of type "${String(t)}" with fresh values. Reference: ${JSON.stringify(s.figure)}`;
+        })
         .join('\n');
 
       let items: Array<{ stem?: unknown; options?: unknown; correct?: unknown; kc?: unknown; dok?: unknown; b?: unknown; figure?: unknown }>;
@@ -339,6 +349,95 @@ export class DiagnosticBankService {
       }
     }
     return { created, discarded, requested: capped.length, skippedNoStandard };
+  }
+
+  /**
+   * Vision figure-extraction pass (CRA). Given rendered PDF pages (base64 image)
+   * plus the question stems parsed from each page, uses Claude vision to READ the
+   * graphs/tables/figures actually on the page and return an EdKairos figure spec
+   * matched to each question. The frontend attaches these to the seeds before
+   * generate-from-seeds, so generated items keep the visual their source had.
+   * Admin-only, opt-in (vision cost), Claude-only. Never reproduces 3-D solids.
+   */
+  async extractFigures(body: {
+    pages: Array<{ image?: string; stems?: string[] }>;
+  }): Promise<{ figures: Array<{ stem: string; figure: object }>; scannedPages: number }> {
+    const pages = (body.pages ?? []).filter(
+      (p) => typeof p?.image === 'string' && p.image.length > 100,
+    );
+    if (!pages.length) {
+      throw new BadRequestException({ error: { code: 'no_pages', message: 'No page images to scan' } });
+    }
+    const sys =
+      "You are EdKairos's figure reader. You are shown ONE page image from a middle-school math " +
+      'worksheet plus the text of the questions on it. Reproduce every graph, chart, table, coordinate ' +
+      'plane, number line, dot plot, histogram, scatter plot, or right triangle you actually SEE on the ' +
+      'page as an EdKairos figure spec, matched to the question it belongs to. Return VALID JSON ONLY: an ' +
+      'array of { "stem": <the first ~12 words of the question this figure belongs to, read from the page ' +
+      '(or copied from the list below if provided)>, "figure": <figure spec> }. Figure types: ' +
+      '{"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":6,"label":"6"}]}, ' +
+      '{"type":"bar_graph","bars":[{"label":"A","value":3}]}, ' +
+      '{"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3}],"line":{"m":1,"b":0}}, ' +
+      '{"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4]}, ' +
+      '{"type":"histogram","bins":[{"label":"0-9","count":3}]}, ' +
+      '{"type":"ratio_table","headers":["x","y"],"rows":[{"a":1,"b":2},{"a":2,"b":4}]}, ' +
+      '{"type":"scatter_plot","points":[{"x":1,"y":2},{"x":2,"y":3}],"line":{"m":1,"b":1}}, ' +
+      '{"type":"right_triangle","a":6,"b":8,"labelC":"x"}, and (2-D only) {"type":"triangle",...}, ' +
+      '{"type":"rect",...}, {"type":"angle",...}. Read ACTUAL values off the image (axis labels, plotted ' +
+      'points, table cells, bar heights, tick marks) — do NOT invent data. Do NOT return a figure for a ' +
+      'question that has no visual, and do NOT attempt 3-D solids (cones, cylinders, spheres, prisms) or ' +
+      'any diagram you cannot reproduce faithfully — skip those entirely. No prose outside the JSON array.';
+    const out: Array<{ stem: string; figure: object }> = [];
+    for (const page of pages.slice(0, 40)) {
+      const { base64, mediaType } = this.splitDataUrl(page.image ?? '');
+      if (!base64) continue;
+      const stems = (page.stems ?? [])
+        .map((s) => String(s ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 30);
+      const user = stems.length
+        ? 'Questions on this page (match your figures to these):\n' +
+          stems.map((s, i) => `${i + 1}) ${s.slice(0, 160)}`).join('\n')
+        : 'Return a figure spec for every distinct graph/table/figure on this page.';
+      let text: string;
+      try {
+        text = await this.ai.claudeVision({
+          systemPrompt: sys,
+          text: user,
+          images: [{ base64, mediaType }],
+          maxTokens: 4000,
+          timeoutMs: 60_000,
+        });
+      } catch {
+        continue; // one unreadable page shouldn't sink the scan
+      }
+      const parsed = this.parseJsonArray(text) as Array<{ stem?: unknown; figure?: unknown }>;
+      for (const row of parsed) {
+        const stem = String(row?.stem ?? '').trim();
+        const fig = row?.figure;
+        if (stem.length > 4 && fig && typeof fig === 'object' && this.isAllowedFigure(fig)) {
+          out.push({ stem, figure: fig as object });
+        }
+      }
+    }
+    return { figures: out, scannedPages: pages.length };
+  }
+
+  /** Split a data URL into media type + base64 payload; tolerate a bare base64 string. */
+  private splitDataUrl(dataUrl: string): { base64: string; mediaType: string } {
+    const m = /^data:(image\/(?:png|jpe?g|gif|webp));base64,(.+)$/i.exec(dataUrl.trim());
+    if (m) return { mediaType: m[1].toLowerCase().replace('jpg', 'jpeg'), base64: m[2] };
+    return { mediaType: 'image/png', base64: dataUrl.replace(/^data:[^,]*,/, '') };
+  }
+
+  /** Only accept figure types we have deterministic renderers for. */
+  private isAllowedFigure(fig: object): boolean {
+    const t = (fig as { type?: unknown }).type;
+    const allowed = new Set([
+      'number_line', 'bar_graph', 'coordinate_grid', 'function_table', 'ratio_table',
+      'dot_plot', 'histogram', 'scatter_plot', 'right_triangle', 'triangle', 'rect', 'angle',
+    ]);
+    return typeof t === 'string' && allowed.has(t);
   }
 
   /** Independently re-solve each generated diagnostic item; return the indexes the

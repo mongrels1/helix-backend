@@ -199,6 +199,56 @@ export class AIRouterService {
     };
   }
 
+  /**
+   * Claude-only vision call. Used by the CRA figure-extraction pass: given a
+   * rendered PDF page (base64 PNG/JPEG) plus a text prompt, returns the model's
+   * text (expected to be a JSON array of figure specs). Deliberately OUTSIDE the
+   * openai/gemini fallback chain — figure extraction is a batch, admin-only
+   * operation where we want Claude's vision specifically, not a silent fallback.
+   * Vision-capable model; can be upgraded to a stronger model for higher fidelity.
+   */
+  async claudeVision(opts: {
+    text: string;
+    images: { base64: string; mediaType: string }[];
+    systemPrompt?: string;
+    maxTokens?: number;
+    timeoutMs?: number;
+    model?: string;
+  }): Promise<string> {
+    const apiKey = this.config.get<string>('ai.anthropicKey');
+    if (!apiKey) throw new Error('Claude not configured');
+    const client = new Anthropic({ apiKey });
+    const content: Anthropic.Messages.ContentBlockParam[] = [
+      ...opts.images.map(
+        (img): Anthropic.Messages.ContentBlockParam => ({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: img.mediaType as
+              | 'image/png'
+              | 'image/jpeg'
+              | 'image/gif'
+              | 'image/webp',
+            data: img.base64,
+          },
+        }),
+      ),
+      { type: 'text', text: opts.text },
+    ];
+    const call = client.messages.create({
+      model: opts.model ?? 'claude-haiku-4-5-20251001',
+      max_tokens: opts.maxTokens ?? 4000,
+      temperature: 0,
+      ...(opts.systemPrompt ? { system: opts.systemPrompt } : {}),
+      messages: [{ role: 'user', content }],
+    });
+    const response = await this.withTimeout(call, opts.timeoutMs ?? 60_000);
+    return response.content
+      .filter((block) => block.type === 'text')
+      .map((block) => ('text' in block ? block.text : ''))
+      .join('');
+  }
+
   private buildPrompt(req: AIRequest): string {
     const context = req.context
       ? `\n\nContext:\n${JSON.stringify(req.context, null, 2)}`

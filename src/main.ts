@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from '@common/filters/http-exception.filter';
 
@@ -21,7 +22,11 @@ const allowedOrigins = [
 ];
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  // Vision figure-extraction posts base64 page images, so raise the JSON limit
+  // well above express's 100kb default (a rendered PDF page can be a few hundred KB).
+  app.use(json({ limit: '30mb' }));
+  app.use(urlencoded({ extended: true, limit: '30mb' }));
   app.enableCors({
     origin: Array.from(new Set(allowedOrigins)),
     credentials: true,

@@ -55,9 +55,17 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('extract-figures')
+  async extractFigures(
+    @Body() body: { pages: Array<{ image?: string; stems?: string[] }> },
+  ) {
+    const data = await this.svc.extractFigures(body);
+    return { success: true as const, data };
+  }
+
   @Post('generate-from-seeds')
   async generateFromSeeds(
-    @Body() body: { seeds: Array<{ stem?: string; standard?: string }> },
+    @Body() body: { seeds: Array<{ stem?: string; standard?: string; figure?: object }> },
     @Req() req: { user?: { id?: string } },
   ) {
     const data = await this.svc.generateFromSeeds(body, req.user?.id);
