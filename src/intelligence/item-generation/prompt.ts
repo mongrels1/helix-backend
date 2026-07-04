@@ -44,9 +44,12 @@ Markdown table). For a two-column data table use exactly:
 Available figure types: number_line, bar_graph, coordinate_grid, function_table, ratio_table, histogram,
 dot_plot, triangle, angle, {"type":"scatter_plot","points":[{"x":1,"y":2}],"line":{"m":1,"b":1}} (bivariate
 data / line of best fit), and {"type":"right_triangle","a":6,"b":8,"labelC":"x"} (right triangles /
-Pythagorean — a,b are leg lengths, labels are what to show). Do NOT use a "geogebra" figure and do NOT
-attempt 3-D solids or other geometry we can't draw — OMIT the figure for those. Choose the type that
-matches the base's representation.
+Pythagorean — a,b are leg lengths, labels are what to show). For VOLUME / 3-D solids use the MATCHING solid
+and label radius + height: {"type":"cylinder","r":3,"h":10,"rLabel":"3 cm","hLabel":"10 cm"},
+{"type":"cone","r":4,"h":9,"rLabel":"4 cm","hLabel":"9 cm"}, or {"type":"sphere","r":5,"rLabel":"5 cm"} —
+the figure MUST match the solid named in the base (a cone gets a cone, never a triangle or cylinder). Use
+{"type":"circle","r":5,"show":"radius","label":"5 cm"} for circle items. Do NOT use a "geogebra" figure;
+for a prism/pyramid OMIT the figure. Choose the type that matches the base's representation.
 
 PSYCHOLOGY / ERROR-ANALYSIS items (versionType "psychology"): the stem MUST describe a student who made a
 REAL, SPECIFIC error and arrived at a WRONG answer, stated explicitly, then ask what mistake was made. The

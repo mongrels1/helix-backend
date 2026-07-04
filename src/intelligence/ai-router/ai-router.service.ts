@@ -235,14 +235,29 @@ export class AIRouterService {
       ),
       { type: 'text', text: opts.text },
     ];
-    const call = client.messages.create({
-      model: opts.model ?? 'claude-haiku-4-5-20251001',
-      max_tokens: opts.maxTokens ?? 4000,
-      temperature: 0,
-      ...(opts.systemPrompt ? { system: opts.systemPrompt } : {}),
-      messages: [{ role: 'user', content }],
-    });
-    const response = await this.withTimeout(call, opts.timeoutMs ?? 60_000);
+    const fallback = 'claude-haiku-4-5-20251001';
+    const run = (model: string) =>
+      this.withTimeout(
+        client.messages.create({
+          model,
+          max_tokens: opts.maxTokens ?? 4000,
+          temperature: 0,
+          ...(opts.systemPrompt ? { system: opts.systemPrompt } : {}),
+          messages: [{ role: 'user', content }],
+        }),
+        opts.timeoutMs ?? 60_000,
+      );
+    const wanted = opts.model ?? fallback;
+    let response;
+    try {
+      response = await run(wanted);
+    } catch (err) {
+      // If the requested (e.g. top-tier) model isn't enabled on the key, don't let
+      // the whole vision pass silently fail — fall back to the known-good model.
+      if (wanted === fallback) throw err;
+      this.logger.warn(`claudeVision model ${wanted} failed (${String(err)}); retrying with ${fallback}`);
+      response = await run(fallback);
+    }
     return response.content
       .filter((block) => block.type === 'text')
       .map((block) => ('text' in block ? block.text : ''))

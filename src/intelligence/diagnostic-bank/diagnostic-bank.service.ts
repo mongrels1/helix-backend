@@ -194,11 +194,12 @@ export class DiagnosticBankService {
       '{"type":"scatter_plot","points":[{"x":1,"y":2}],"line":{"m":1,"b":1}} for bivariate data / line of ' +
       'best fit, and {"type":"right_triangle","a":6,"b":8,"labelC":"10"} ONLY for right-triangle/Pythagorean ' +
       'items — a and b are the two LEGS, labelC is the HYPOTENUSE (longest side: a rope/ladder/wire/ramp is ' +
-      'always the hypotenuse, never a leg); put each real value or the unknown on the side it actually is); ' +
-      'a cone/cylinder/sphere/volume item is NOT a triangle — OMIT the figure for any volume or 3-D solid ' +
-      'question; do NOT emit a "geogebra" ' +
-      'figure and do NOT attempt 3-D solids or other labeled/to-scale geometry diagrams — OMIT the "figure" for ' +
-      'those (a clean text item beats a wrong picture). Omit it for purely numeric items too. Rules: ' +
+      'always the hypotenuse, never a leg); put each real value or the unknown on the side it actually is. ' +
+      'For VOLUME / 3-D solids use the matching solid: {"type":"cylinder","r":3,"h":10,"rLabel":"3 cm","hLabel":"10 cm"}, ' +
+      '{"type":"cone","r":4,"h":9,"rLabel":"4 cm","hLabel":"9 cm"}, or {"type":"sphere","r":5,"rLabel":"5 cm"} — the ' +
+      'figure MUST match the solid in the stem (a cone gets a cone, never a triangle or cylinder); use ' +
+      '{"type":"circle","r":5,"show":"radius","label":"5 cm"} for circles. Do NOT emit a "geogebra" ' +
+      'figure; for a prism/pyramid OMIT the "figure". Omit it for purely numeric items too. Rules: ' +
       'exactly one correct option; four distinct ' +
       'plausible options; the stem is a single plain-English sentence that refers to any figure in words ' +
       'but never draws a table in text; aligned to the grade. Vary difficulty across the set (some easy ' +
@@ -296,9 +297,14 @@ export class DiagnosticBankService {
         "side's real value, or the unknown as \"x\"/\"height\", on the side it actually is (a rope/ladder is " +
         'ALWAYS the hypotenuse, never a leg). ' +
         'and (2-D geometry only) {"type":"triangle",...} or {"type":"rect",...} or {"type":"angle",...}. ' +
-        'A cone/cylinder/sphere/volume item is NOT a triangle: for ANY volume or 3-D solid question OMIT the ' +
-        '"figure" entirely. Do NOT emit a "geogebra" figure, and do NOT attempt 3-D solids (cones, cylinders, ' +
-        'spheres, prisms) or other labeled/to-scale geometry diagrams — for those, OMIT the "figure" (a clean text ' +
+        'For VOLUME / 3-D solids, use the MATCHING solid figure and label radius + height: ' +
+        '{"type":"cylinder","r":3,"h":10,"rLabel":"3 cm","hLabel":"10 cm"}, ' +
+        '{"type":"cone","r":4,"h":9,"rLabel":"4 cm","hLabel":"9 cm"}, or ' +
+        '{"type":"sphere","r":5,"rLabel":"5 cm"} — the figure MUST match the solid named in the stem (a cone ' +
+        'question gets a cone, never a triangle or a cylinder). Use {"type":"circle","r":5,"show":"radius","label":"5 cm"} ' +
+        'for circle items, and {"type":"transformation","preimage":[{"x":1,"y":1},{"x":3,"y":1},{"x":1,"y":4}],' +
+        '"image":[{"x":1,"y":-1},{"x":3,"y":-1},{"x":1,"y":-4}],"kind":"reflection"} for transformations. ' +
+        'Do NOT emit a "geogebra" figure. For a prism/pyramid (no matching type yet) OMIT the "figure" (a clean text ' +
         'item is far better than a wrong or unlabeled picture). ' +
         'Rules: exactly one correct option; four distinct plausible options; the stem is ONE plain-English ' +
         'sentence that REFERS to the figure ("the graph below", "the dot plot") but never draws a table/grid ' +
@@ -389,11 +395,16 @@ export class DiagnosticBankService {
       '{"type":"histogram","bins":[{"label":"0-9","count":3}]}, ' +
       '{"type":"ratio_table","headers":["x","y"],"rows":[{"a":1,"b":2},{"a":2,"b":4}]}, ' +
       '{"type":"scatter_plot","points":[{"x":1,"y":2},{"x":2,"y":3}],"line":{"m":1,"b":1}}, ' +
-      '{"type":"right_triangle","a":6,"b":8,"labelC":"x"}, and (2-D only) {"type":"triangle",...}, ' +
+      '{"type":"right_triangle","a":6,"b":8,"labelC":"x"}, {"type":"cylinder","r":3,"h":10,"rLabel":"3 cm","hLabel":"10 cm"}, ' +
+      '{"type":"cone","r":4,"h":9,"rLabel":"4 cm","hLabel":"9 cm"}, {"type":"sphere","r":5,"rLabel":"5 cm"}, ' +
+      '{"type":"circle","r":5,"show":"radius","label":"5 cm"}, ' +
+      '{"type":"transformation","preimage":[{"x":1,"y":1},{"x":3,"y":1},{"x":1,"y":4}],"image":[{"x":-1,"y":1},{"x":-3,"y":1},{"x":-1,"y":4}],"kind":"reflection"}, ' +
+      'and (2-D only) {"type":"triangle",...}, ' +
       '{"type":"rect",...}, {"type":"angle",...}. Read ACTUAL values off the image (axis labels, plotted ' +
       'points, table cells, bar heights, tick marks) — do NOT invent data. Do NOT return a figure for a ' +
-      'question that has no visual, and do NOT attempt 3-D solids (cones, cylinders, spheres, prisms) or ' +
-      'any diagram you cannot reproduce faithfully — skip those entirely. No prose outside the JSON array.';
+      'question that has no visual. A cylinder/cone/sphere IS supported (use the types above with real ' +
+      'radius/height); but do NOT attempt a prism, pyramid, or any diagram you cannot reproduce faithfully — ' +
+      'skip those entirely. No prose outside the JSON array.';
     const out: Array<{ stem: string; figure: object }> = [];
     for (const page of pages.slice(0, 40)) {
       const { base64, mediaType } = this.splitDataUrl(page.image ?? '');
@@ -413,7 +424,8 @@ export class DiagnosticBankService {
           text: user,
           images: [{ base64, mediaType }],
           maxTokens: 4000,
-          timeoutMs: 60_000,
+          timeoutMs: 90_000,
+          model: 'claude-opus-4-8', // top-tier vision for maximum read fidelity (the one place model choice matters)
         });
       } catch {
         continue; // one unreadable page shouldn't sink the scan
@@ -443,6 +455,7 @@ export class DiagnosticBankService {
     const allowed = new Set([
       'number_line', 'bar_graph', 'coordinate_grid', 'function_table', 'ratio_table',
       'dot_plot', 'histogram', 'scatter_plot', 'right_triangle', 'triangle', 'rect', 'angle',
+      'cylinder', 'cone', 'sphere', 'circle', 'transformation',
     ]);
     return typeof t === 'string' && allowed.has(t);
   }
@@ -460,18 +473,21 @@ export class DiagnosticBankService {
     if (!figure || typeof figure !== 'object') return undefined;
     const t = String((figure as { type?: unknown }).type ?? '');
     const s = stem.toLowerCase();
-    // 3-D solids / volume / surface-area items must be TEXT-ONLY: we have no
-    // faithful solid renderer, and a 2-D triangle/rect standing in for a cone or
-    // cylinder is simply wrong. Strip any geometry figure from these.
-    const isSolidOrVolume = /\b(volume|surface area|cone|cylinder|sphere|prism|pyramid|cubic|radius)\b/.test(s);
+    // A flat 2-D triangle/rect/angle can never stand in for a 3-D solid or a
+    // volume/surface-area item — that is mathematically wrong. Strip those.
+    const isSolidOrVolume = /\b(volume|surface area|cone|cylinder|sphere|prism|pyramid|cubic)\b/.test(s);
     if (isSolidOrVolume && ['right_triangle', 'triangle', 'rect', 'angle'].includes(t)) return undefined;
-    // A (right) triangle figure only belongs on an actual triangle / Pythagorean
-    // item. If the stem isn't clearly one, drop the figure.
+    // A (right) triangle figure only belongs on an actual triangle / Pythagorean item.
     if (t === 'right_triangle' || t === 'triangle') {
       const looksTriangle =
         /triangle|hypotenuse|\bleg(s)?\b|right angle|pythag|ladder|\bramp\b|\brope\b|\bwire\b|diagonal|slant|how (far|high)|distance (between|from|to)|shortest/.test(s);
       if (!looksTriangle) return undefined;
     }
+    // Each solid figure must match the solid actually named in the stem, so a cone
+    // question can't get a cylinder (or vice-versa).
+    if (t === 'cylinder' && !/cylind/.test(s)) return undefined;
+    if (t === 'cone' && !/(\bcone|conical)/.test(s)) return undefined;
+    if (t === 'sphere' && !/(spher|\bball\b|\bglobe\b)/.test(s)) return undefined;
     return figure;
   }
 
