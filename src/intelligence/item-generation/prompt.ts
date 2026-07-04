@@ -41,8 +41,12 @@ For each version:
 FIGURE SPEC: use ONE EdKairos figure object (JSON only; never ASCII art, never GeoGebra commands, never a
 Markdown table). For a two-column data table use exactly:
   {"type":"ratio_table","headers":["Wins","Losses"],"rows":[{"a":3,"b":2},{"a":6,"b":4}],"altText":"wins to losses"}
-Available figure types include: number_line, bar_graph, coordinate_grid, function_table, ratio_table,
-triangle, angle, geometry2d, histogram, dot_plot. Choose the type that matches the base's representation.
+Available figure types: number_line, bar_graph, coordinate_grid, function_table, ratio_table, histogram,
+dot_plot, triangle, angle, {"type":"scatter_plot","points":[{"x":1,"y":2}],"line":{"m":1,"b":1}} (bivariate
+data / line of best fit), and {"type":"right_triangle","a":6,"b":8,"labelC":"x"} (right triangles /
+Pythagorean — a,b are leg lengths, labels are what to show). Do NOT use a "geogebra" figure and do NOT
+attempt 3-D solids or other geometry we can't draw — OMIT the figure for those. Choose the type that
+matches the base's representation.
 
 PSYCHOLOGY / ERROR-ANALYSIS items (versionType "psychology"): the stem MUST describe a student who made a
 REAL, SPECIFIC error and arrived at a WRONG answer, stated explicitly, then ask what mistake was made. The

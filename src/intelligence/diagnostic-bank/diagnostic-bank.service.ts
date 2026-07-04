@@ -189,9 +189,12 @@ export class DiagnosticBankService {
       '{ "stem", "options" (exactly 4 short plain-text strings), "correct" (0-based index of the ' +
       'right option), "kc" (short skill name), "dok" (integer 1-4), "b" (difficulty, -2.0 to 2.0), and ' +
       'OPTIONAL "figure" (a JSON figure spec) }. INCLUDE a "figure" whenever the standard involves a ' +
-      'graph, table, coordinate plane, number line, dot plot, histogram, or geometric figure (types: ' +
-      'number_line, bar_graph, coordinate_grid, dot_plot, histogram, ratio_table); do NOT emit a "geogebra" ' +
-      'figure and do NOT attempt 3-D solids or labeled/to-scale geometry diagrams — OMIT the "figure" for ' +
+      'graph, table, coordinate plane, number line, dot plot, histogram, scatter/bivariate data, or a ' +
+      'right triangle (types: number_line, bar_graph, coordinate_grid, dot_plot, histogram, ratio_table, ' +
+      '{"type":"scatter_plot","points":[{"x":1,"y":2}],"line":{"m":1,"b":1}} for bivariate data / line of ' +
+      'best fit, and {"type":"right_triangle","a":6,"b":8,"labelC":"x"} for Pythagorean/right triangles — ' +
+      'a,b are leg lengths, labels are what to show); do NOT emit a "geogebra" ' +
+      'figure and do NOT attempt 3-D solids or other labeled/to-scale geometry diagrams — OMIT the "figure" for ' +
       'those (a clean text item beats a wrong picture). Omit it for purely numeric items too. Rules: ' +
       'exactly one correct option; four distinct ' +
       'plausible options; the stem is a single plain-English sentence that refers to any figure in words ' +
@@ -278,9 +281,13 @@ export class DiagnosticBankService {
         '{"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4,4,5],"altText":"..."}, ' +
         '{"type":"histogram","bins":[{"label":"0-9","count":3}],"altText":"..."}, ' +
         '{"type":"ratio_table","headers":["x","y"],"rows":[{"a":1,"b":2},{"a":2,"b":4}],"altText":"x to y"}, ' +
+        '{"type":"scatter_plot","points":[{"x":1,"y":2},{"x":2,"y":3}],"line":{"m":1,"b":1},"altText":"..."} ' +
+        '(bivariate data / line of best fit), ' +
+        '{"type":"right_triangle","a":6,"b":8,"labelC":"x","altText":"..."} (Pythagorean/right triangles — ' +
+        'a,b are leg lengths, labels are what to show), ' +
         'and (2-D geometry only) {"type":"triangle",...} or {"type":"rect",...} or {"type":"angle",...}. ' +
         'Do NOT emit a "geogebra" figure, and do NOT attempt 3-D solids (cones, cylinders, spheres, prisms) ' +
-        'or labeled/to-scale geometry diagrams — for ANY of those, OMIT the "figure" entirely (a clean text ' +
+        'or other labeled/to-scale geometry diagrams — for ANY of those, OMIT the "figure" entirely (a clean text ' +
         'item is far better than a wrong or unlabeled picture). ' +
         'Rules: exactly one correct option; four distinct plausible options; the stem is ONE plain-English ' +
         'sentence that REFERS to the figure ("the graph below", "the dot plot") but never draws a table/grid ' +
