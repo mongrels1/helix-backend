@@ -72,6 +72,14 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('reject-all')
+  async rejectAll(@Body() body: { grade?: number }) {
+    const data = await this.svc.rejectAllDrafts(
+      typeof body?.grade === 'number' ? body.grade : Number(body?.grade),
+    );
+    return { success: true as const, data };
+  }
+
   @Post('publish')
   async publish() {
     const data = await this.svc.publish();

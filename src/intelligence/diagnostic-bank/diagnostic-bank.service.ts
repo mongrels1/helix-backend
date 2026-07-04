@@ -156,6 +156,17 @@ export class DiagnosticBankService {
     return this.prisma.diagnosticItem.update({ where: { id }, data: { status } });
   }
 
+  /** Bulk-reject every current draft (optionally just one grade). Reversible — the
+   *  items become status 'rejected' and can be individually restored. Only touches
+   *  drafts, never a validated/published item. */
+  async rejectAllDrafts(grade?: number): Promise<{ rejected: number }> {
+    const res = await this.prisma.diagnosticItem.updateMany({
+      where: { status: 'draft', ...(typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {}) },
+      data: { status: 'rejected' },
+    });
+    return { rejected: res.count };
+  }
+
   /** Publish all validated items — they become the set the live diagnostic will
    *  serve once the serve-path is wired (next phase). Never touches rejected. */
   async publish(): Promise<{ published: number }> {
