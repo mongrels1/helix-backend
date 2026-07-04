@@ -225,10 +225,12 @@ export class DiagnosticBankService {
         if (!stem || options.length < 2 || !(correct >= 0 && correct < options.length)) return null;
         const dok = Math.min(4, Math.max(1, Number(it.dok) || 2));
         const b = Math.min(3, Math.max(-3, typeof it.b === 'number' ? it.b : Number(it.b) || 0));
+        const figure = this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined);
+        if (!this.factCheck(stem, options, correct, figure)) return null;
         return {
           grade, strand, kc: String(it.kc ?? '').trim() || `${strand} skill`,
           standard, dok, b, stem, options, correct,
-          figure: this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined),
+          figure,
           status: 'draft', source: 'generated', createdBy: createdBy ?? null,
         };
       })
@@ -343,13 +345,15 @@ export class DiagnosticBankService {
           if (!stem || options.length !== 4 || !(correct >= 0 && correct < options.length)) return null;
           const dok = Math.min(4, Math.max(1, Number(it.dok) || provisionalDok(Number(it.b) || 0)));
           const b = Math.min(3, Math.max(-3, typeof it.b === 'number' ? it.b : Number(it.b) || 0));
+          const figure = this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined);
+          if (!this.factCheck(stem, options, correct, figure)) return null;
           return {
             grade: gs.grade,
             strand: gs.strand,
             kc: String(it.kc ?? '').trim() || `${gs.strand} skill`,
             standard: standardFor(gs.grade, gs.strand) ?? seed.standard,
             dok, b, stem, options, correct,
-            figure: this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined),
+            figure,
             status: 'draft', source: 'generated', createdBy: createdBy ?? null,
           };
         })
@@ -489,6 +493,39 @@ export class DiagnosticBankService {
     if (t === 'cone' && !/(\bcone|conical)/.test(s)) return undefined;
     if (t === 'sphere' && !/(spher|\bball\b|\bglobe\b)/.test(s)) return undefined;
     return figure;
+  }
+
+  /**
+   * Deterministic fact-check gate. Returns false to DROP an item that is provably
+   * broken — no model opinion involved:
+   *  1. The stem refers to a figure ("shown below", "the diagram", "the graph
+   *     below") but no figure is attached → the item is unanswerable.
+   *  2. A 2-point coordinate-distance item whose marked answer doesn't equal the
+   *     computed distance between the plotted points.
+   */
+  private factCheck(stem: string, options: string[], correct: number, figure: object | undefined): boolean {
+    const s = stem.toLowerCase();
+    const refsFigure =
+      /(shown|pictured|graphed|plotted|drawn|given)\s+(below|above)|the (figure|diagram|graph|grid|number line)\b|in the (figure|diagram|graph)|below[.?]?\s*$|following (figure|diagram|graph)/.test(s);
+    if (refsFigure && !figure) return false;
+
+    const numOf = (str: string): number | null => {
+      const m = /-?\d+(?:\.\d+)?/.exec(str ?? '');
+      return m ? parseFloat(m[0]) : null;
+    };
+    const fig = figure as { type?: string; points?: { x: number; y: number }[] } | undefined;
+    if (fig?.type === 'coordinate_grid' && Array.isArray(fig.points) && fig.points.length === 2) {
+      const asksDistance = /distance|length of the (segment|line|diagonal)|how far|between the (two )?(points|endpoints)/.test(s);
+      if (asksDistance) {
+        const [p, q] = fig.points;
+        if ([p?.x, p?.y, q?.x, q?.y].every((v) => typeof v === 'number')) {
+          const expected = Math.hypot(p.x - q.x, p.y - q.y);
+          const got = numOf(options[correct]);
+          if (got === null || Math.abs(got - expected) > 0.1) return false;
+        }
+      }
+    }
+    return true;
   }
 
   /** Independently re-solve each generated diagnostic item; return the indexes the
