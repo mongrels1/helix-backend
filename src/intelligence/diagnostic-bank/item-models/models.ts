@@ -234,6 +234,34 @@ const volumeSphere: ItemModel = {
 };
 
 // ---------------------------------------------------------------------------
+// 8.G.7 — Pythagorean, real-world: ladder against a wall (find the height).
+// This is a NUMBER-SWAP CLONE of the source item (Item 54239): same wording,
+// same real-world scene, same distractor logic — only the numbers move.
+// ---------------------------------------------------------------------------
+
+const ladderPythagorean: ItemModel = {
+  id: 'ladder-pythagorean', standard: GA_G, grade: 8, strand: 'G',
+  generate(rng) {
+    const [l1, l2, hyp] = rng.pick(TRIPLES);
+    const base = Math.min(l1, l2);   // distance from the wall (ground)
+    const height = Math.max(l1, l2); // how high the ladder reaches (the answer, x)
+    const correct = `${height} m`;
+    const options = buildOptions(rng, correct, [
+      { text: `√${hyp * hyp + base * base} m`, misconception: 'Added the two squared terms (a²+c²=b²) instead of subtracting them (c²−a²=b²).' },
+      { text: `${hyp} m`, misconception: 'Believed the height of the wall equals the length of the ladder, and did not use the Pythagorean Theorem.' },
+      { text: `${hyp - base} m`, misconception: 'Simply subtracted the two lengths.' },
+    ]);
+    if (!options) return null;
+    return {
+      standard: GA_G, grade: 8, strand: 'G', kc: 'Pythagorean theorem — find a leg (ladder against a wall)',
+      stem: `A ladder that has a length of ${hyp} m leans against a wall with the base of the ladder ${base} m away from the bottom of the wall. Use this information to find how high above the ground the ladder meets the wall.`,
+      options, answer: correct, dok: 2, b: 0.2,
+      figure: { type: 'ladder_wall', base, height, baseLabel: `${base} m`, heightLabel: 'x', hypLabel: `${hyp} m` },
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // 8.NS — Distance on a number line (NUMBER SENSE, not geometry)
 // ---------------------------------------------------------------------------
 
@@ -267,6 +295,7 @@ export const ITEM_MODELS: ItemModel[] = [
   translatePolygon,
   distanceCoordinate,
   pythagoreanHypotenuse,
+  ladderPythagorean,
   volumeCylinder,
   volumeCone,
   volumeSphere,
