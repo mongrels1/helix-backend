@@ -111,14 +111,18 @@ const translatePolygon: ItemModel = {
 // 8.G — Distance between two points (coordinate plane)
 // ---------------------------------------------------------------------------
 
+// Small triples only, so both points fit on a readable grid.
+const SMALL_TRIPLES: [number, number, number][] = [[3, 4, 5], [6, 8, 10], [5, 12, 13], [8, 15, 17]];
+
 const distanceCoordinate: ItemModel = {
   id: 'distance-coordinate', standard: GA_G, grade: 8, strand: 'G',
   generate(rng) {
-    const [p, q, r] = rng.pick(TRIPLES);
-    const start = { x: rng.int(-3, 1), y: rng.int(-3, 1) };
-    const A = start;
-    const Bx = start.x + p, By = start.y + q;
-    const B = { x: Bx, y: By };
+    const [p, q, r] = rng.pick(SMALL_TRIPLES);
+    // orient the legs randomly (±x, ±y) but keep both points on-grid
+    const sx = rng.bool() ? 1 : -1;
+    const sy = rng.bool() ? 1 : -1;
+    const A = { x: rng.int(-2, 2), y: rng.int(-2, 2) };
+    const B = { x: A.x + sx * p, y: A.y + sy * q };
     const correct = `${r} units`;
     const options = buildOptions(rng, correct, [
       { text: `${p + q} units`, misconception: 'Added the legs instead of using the Pythagorean theorem' },
@@ -126,11 +130,13 @@ const distanceCoordinate: ItemModel = {
       { text: `${p * p + q * q} units`, misconception: 'Forgot the square root' },
     ]);
     if (!options) return null;
+    const lo = Math.min(A.x, A.y, B.x, B.y) - 1;
+    const hi = Math.max(A.x, A.y, B.x, B.y) + 1;
     return {
       standard: GA_G, grade: 8, strand: 'G', kc: 'Distance between two points',
       stem: 'What is the distance between the two points shown on the coordinate grid?',
       options, answer: correct, dok: 2, b: 0.4,
-      figure: { type: 'coordinate_grid', min: -8, max: 8, points: [{ x: A.x, y: A.y, label: `(${A.x}, ${A.y})` }, { x: B.x, y: B.y, label: `(${B.x}, ${B.y})` }] },
+      figure: { type: 'coordinate_grid', min: lo, max: hi, points: [{ x: A.x, y: A.y, label: `(${A.x}, ${A.y})` }, { x: B.x, y: B.y, label: `(${B.x}, ${B.y})` }] },
     };
   },
 };

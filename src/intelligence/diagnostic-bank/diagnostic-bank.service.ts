@@ -237,6 +237,13 @@ export class DiagnosticBankService {
     if (!grade || !strand) {
       throw new BadRequestException({ error: { code: 'bad_input', message: 'grade and strand required' } });
     }
+    // AUTO-ROUTE: if this grade+strand has deterministic models (the computable
+    // geometry/number standards), NEVER let the LLM freehand them — generate them
+    // exactly instead. This makes a wrong/unlabeled geometry item structurally
+    // impossible, ticked box or not.
+    if (modelsFor(grade, strand).length) {
+      return this.generateDeterministic({ grade, strand, count: body.count }, createdBy);
+    }
     const count = Math.min(Math.max(Number(body.count) || 10, 5), 20);
     const standard = standardFor(grade, strand);
 
