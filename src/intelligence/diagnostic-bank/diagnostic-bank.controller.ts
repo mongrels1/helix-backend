@@ -55,6 +55,15 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('generate-deterministic')
+  async generateDeterministic(
+    @Body() body: { grade: number; strand?: string; count?: number },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.generateDeterministic(body, req.user?.id);
+    return { success: true as const, data };
+  }
+
   @Post('extract-figures')
   async extractFigures(
     @Body() body: { pages: Array<{ image?: string; stems?: string[] }> },

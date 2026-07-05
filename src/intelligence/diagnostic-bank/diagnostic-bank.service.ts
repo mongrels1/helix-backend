@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import { resolveStandard } from '../item-generation/mgse-ga-crosswalk';
+import { modelsFor } from './item-models/models';
+import { makeRng } from './item-models/rng';
 
 export const VIABILITY_MIN = 100;
 const STATUSES = ['draft', 'validated', 'rejected', 'published'] as const;
@@ -154,6 +156,50 @@ export class DiagnosticBankService {
     });
     const status: DiagStatus = action === 'validate' ? 'validated' : action === 'reject' ? 'rejected' : 'draft';
     return this.prisma.diagnosticItem.update({ where: { id }, data: { status } });
+  }
+
+  /**
+   * DETERMINISTIC generation — no LLM. Draws items from the parameterized item
+   * models (reflections, rotations, distance, Pythagorean, volumes, number line),
+   * each correct + labeled + coherent BY CONSTRUCTION. Every item is re-validated
+   * (exactly 4 distinct options, one correct) before it's saved as a draft.
+   */
+  async generateDeterministic(
+    body: { grade: number; strand?: string; count?: number },
+    createdBy?: string,
+  ): Promise<{ created: number; requested: number }> {
+    const grade = Number(body.grade);
+    const models = modelsFor(grade, body.strand);
+    if (!models.length) {
+      throw new BadRequestException({
+        error: { code: 'no_models', message: `No deterministic models for grade ${grade}${body.strand && body.strand !== 'all' ? ` strand ${body.strand}` : ''} yet.` },
+      });
+    }
+    const want = Math.min(60, Math.max(1, Number(body.count) || 12));
+    const rows: Array<{
+      grade: number; strand: string; kc: string; standard: string; dok: number; b: number;
+      stem: string; options: string[]; correct: number; figure: object | undefined;
+      status: string; source: string; createdBy: string | null;
+    }> = [];
+    let seed = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
+    let attempts = 0;
+    while (rows.length < want && attempts < want * 8) {
+      const model = models[attempts % models.length];
+      attempts++;
+      const item = model.generate(makeRng(seed++));
+      if (!item) continue;
+      const texts = item.options.map((o) => o.text);
+      const correct = item.options.findIndex((o) => o.correct);
+      if (texts.length !== 4 || new Set(texts).size !== 4 || correct < 0) continue; // never save a degenerate item
+      rows.push({
+        grade: item.grade, strand: item.strand, kc: item.kc, standard: item.standard,
+        dok: item.dok, b: item.b, stem: item.stem, options: texts, correct,
+        figure: item.figure ? (item.figure as object) : undefined,
+        status: 'draft', source: 'generated', createdBy: createdBy ?? null,
+      });
+    }
+    if (rows.length) await this.prisma.diagnosticItem.createMany({ data: rows, skipDuplicates: true });
+    return { created: rows.length, requested: want };
   }
 
   /** Bulk-reject every current draft (optionally just one grade). Reversible — the
