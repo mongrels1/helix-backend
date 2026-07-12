@@ -11,6 +11,7 @@ import { MetricsMiddleware } from './common/middleware/metrics.middleware';
 import { EventsModule } from './events/events.module';
 import { ExperienceModule } from './experience/experience.module';
 import { AIRouterModule } from './intelligence/ai-router/ai-router.module';
+import { AssistantModule } from './intelligence/assistant/assistant.module';
 import { AITutorModule } from './intelligence/ai-tutor/ai-tutor.module';
 import { InstructorAssistantModule } from './intelligence/instructor-assistant/instructor-assistant.module';
 import { DiagnosticModule } from './intelligence/diagnostic/diagnostic.module';
@@ -71,6 +72,7 @@ import { PrismaModule } from './prisma/prisma.module';
     MetricsModule,
     ExperienceModule,
     AIRouterModule,
+    AssistantModule,
     AITutorModule,
     InstructorAssistantModule,
     DiagnosticModule,
