@@ -12,6 +12,8 @@ const configuredOrigins = (process.env.CORS_ORIGINS ?? process.env.FRONTEND_URL 
 const allowedOrigins = [
   'https://helixlms.com',
   'https://app.edkairos.com',
+  'https://www.edkairos.com',
+  'https://edkairos.com',
   'https://helix-frontend-sigma.vercel.app',
   'https://96e5c841-3f5e-4845-b48b-58d2426dac3e.app-preview.com',
   'http://localhost:5173',
@@ -28,7 +30,15 @@ async function bootstrap(): Promise<void> {
   app.use(json({ limit: '30mb' }));
   app.use(urlencoded({ extended: true, limit: '30mb' }));
   app.enableCors({
-    origin: Array.from(new Set(allowedOrigins)),
+    origin: (origin, callback) => {
+      const isAllowed =
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/helix-marketing-[a-z0-9-]+\.vercel\.app$/i.test(origin);
+      callback(null, isAllowed);
+    },
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type'],
     credentials: true,
   });
   app.useGlobalFilters(new AllExceptionsFilter());
