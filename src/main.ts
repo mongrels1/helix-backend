@@ -30,7 +30,7 @@ async function bootstrap(): Promise<void> {
   app.use(json({ limit: '30mb' }));
   app.use(urlencoded({ extended: true, limit: '30mb' }));
   app.enableCors({
-    origin: (origin, callback) => {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       const isAllowed =
         !origin ||
         allowedOrigins.includes(origin) ||
