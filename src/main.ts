@@ -38,7 +38,7 @@ async function bootstrap(): Promise<void> {
       callback(null, isAllowed);
     },
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   });
   app.useGlobalFilters(new AllExceptionsFilter());
