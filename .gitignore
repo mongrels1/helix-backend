@@ -16,3 +16,5 @@ tsconfig.build.tsbuildinfo
 
 # editor/backup files
 *.bak
+export_items.js
+reject_items.js
