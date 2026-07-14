@@ -118,6 +118,8 @@ model User {
   refreshTokens RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   diagnosticSessions DiagnosticSession[] @relation("UserDiagnostics")
+  referralCode  ReferralCode?
+  referralsMade Referral[]    @relation("ReferralsMade")
 }
 
 model ParentStudentLink {
@@ -664,4 +666,31 @@ model DiagnosticItem {
 
   @@index([grade])
   @@index([status])
+}
+
+model ReferralCode {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model Referral {
+  id           String         @id @default(uuid())
+  referrerId   String
+  referrer     User           @relation("ReferralsMade", fields: [referrerId], references: [id])
+  refereeEmail String
+  status       ReferralStatus @default(REWARDED)
+  note         String?
+  createdAt    DateTime       @default(now())
+
+  @@unique([referrerId, refereeEmail])
+  @@index([referrerId])
+}
+
+enum ReferralStatus {
+  REWARDED
+  SKIPPED
+  FAILED
 }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { EmailModule } from '@modules/email/email.module';
 import { UsersModule } from '@modules/users/users.module';
+import { ReferralModule } from '@modules/referral/referral.module';
 import { ProvisioningController } from './provisioning.controller';
 import { ProvisioningService } from './provisioning.service';
 
@@ -10,7 +11,7 @@ import { ProvisioningService } from './provisioning.service';
  * one-time activation link so a buyer can log straight into the product.
  */
 @Module({
-  imports: [PrismaModule, EmailModule, UsersModule],
+  imports: [PrismaModule, EmailModule, UsersModule, ReferralModule],
   controllers: [ProvisioningController],
   providers: [ProvisioningService],
 })

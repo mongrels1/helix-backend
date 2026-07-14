@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '@modules/email/email.service';
 import { UsersRepository } from '@modules/users/users.repository';
 import type { CreateUserDto } from '@modules/users/dto/create-user.dto';
+import { ReferralService } from '@modules/referral/referral.service';
 
 const SALT_ROUNDS = 12;
 const ACTIVATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -29,6 +30,7 @@ type GhlPayload = Record<string, unknown> & {
   type?: string; event?: string; event_type?: string; status?: string;
   next_billing_date?: string; current_period_end?: string; renewal_date?: string;
   contact?: { email?: string; first_name?: string; last_name?: string };
+  referred_by?: string; referredBy?: string; ref?: string; referral_code?: string;
 };
 
 @Injectable()
@@ -40,6 +42,7 @@ export class ProvisioningService {
     private readonly users: UsersRepository,
     private readonly email: EmailService,
     private readonly config: ConfigService,
+    private readonly referrals: ReferralService,
   ) {}
 
   /**
@@ -136,6 +139,13 @@ export class ProvisioningService {
       }
     }
 
+    // Referral reward: only a brand-new (first-payment) account carrying a code qualifies.
+    if (created) {
+      const referralCode = this.pickReferralCode(payload);
+      if (referralCode) {
+        await this.referrals.handleReferredFirstPayment(referralCode, email);
+      }
+    }
     this.logger.log(
       `Provisioned ${created ? 'NEW' : 'renewal/existing'} active account for ${email}` +
         `${product ? ` (plan: ${product})` : ''} until ${renewsAt.toISOString()}`,
@@ -169,6 +179,11 @@ export class ProvisioningService {
     return v || null;
   }
 
+  private pickReferralCode(p: GhlPayload): string | null {
+    const raw = p.referred_by ?? p.referredBy ?? p.ref ?? p.referral_code ?? '';
+    const v = String(raw).trim();
+    return v || null;
+  }
   /** Map a purchased product to the account role + seat limit. A "family"
    *  product → PARENT who can add multiple child logins; everything else →
    *  a single STUDENT. Seat count is tunable here. */

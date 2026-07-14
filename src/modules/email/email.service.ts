@@ -62,6 +62,21 @@ export class EmailService {
     });
   }
 
+  async sendReferralRewardEmail(to: string, firstName?: string): Promise<void> {
+    const frontendUrl = this.config.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const displayName = firstName?.trim() || 'there';
+    await this.sendEmail({
+      to,
+      subject: 'Your next month is on us',
+      html: `
+        <p>Hi ${this.escapeHtml(displayName)},</p>
+        <p>Great news — a friend you referred just joined EdKairos and became a paying member. As a thank-you, <strong>your next month is free</strong>; the credit is already applied to your next payment.</p>
+        <p><a href="${frontendUrl}">Open EdKairos</a></p>
+      `,
+      text: `Hi ${displayName}, a friend you referred just joined EdKairos as a paying member. Your next month is free — already applied to your next payment. Open EdKairos: ${frontendUrl}`,
+    });
+  }
+
   private async sendEmail(message: {
     to: string;
     subject: string;
