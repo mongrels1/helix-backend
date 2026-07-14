@@ -24,6 +24,7 @@ import { PracticeModule } from './intelligence/practice/practice.module';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
 import { AuthModule } from '@modules/auth/auth.module';
 import { ProvisioningModule } from '@modules/provisioning/provisioning.module';
+import { ReferralModule } from '@modules/referral/referral.module';
 import { AssignmentsModule } from '@modules/assignments/assignments.module';
 import { ClassroomsModule } from '@modules/classrooms/classrooms.module';
 import { CoursesModule } from '@modules/courses/courses.module';
@@ -71,6 +72,7 @@ import { PrismaModule } from './prisma/prisma.module';
     PrismaModule,
     MetricsModule,
     ExperienceModule,
+    ReferralModule,
     AIRouterModule,
     AssistantModule,
     AITutorModule,
