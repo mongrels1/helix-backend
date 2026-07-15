@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Stripe from 'stripe';
+import type Stripe from 'stripe';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const StripeLib = require('stripe');
 
 @Injectable()
 export class StripeService {
@@ -11,7 +13,7 @@ export class StripeService {
   constructor(private readonly config: ConfigService) {
     const key = (this.config.get<string>('stripe.secretKey') ?? '').trim();
     this.couponId = (this.config.get<string>('stripe.referralCouponId') ?? '').trim();
-    this.stripe = key ? new Stripe(key) : null;
+    this.stripe = key ? (new StripeLib(key) as Stripe) : null;
     if (!this.stripe) this.logger.warn('StripeService disabled: STRIPE_SECRET_KEY not set');
   }
 
