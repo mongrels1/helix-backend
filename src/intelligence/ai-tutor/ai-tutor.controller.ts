@@ -45,6 +45,12 @@ export class AITutorController {
     return { success: true, data };
   }
 
+  @Get('usage')
+  @Roles(Role.SUPER_ADMIN)
+  async usage(): Promise<{ success: true; data: Awaited<ReturnType<AITutorService['getUsageReport']>> }> {
+    return { success: true, data: await this.aiTutorService.getUsageReport() };
+  }
+
   @Get('sessions/:id')
   @Roles(Role.STUDENT, Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async getSession(

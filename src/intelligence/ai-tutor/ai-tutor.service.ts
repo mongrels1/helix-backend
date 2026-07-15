@@ -157,6 +157,23 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     return this.repository.findSessionsForStudent(studentId);
   }
 
+  async getUsageReport(): Promise<Array<{ studentId: string; name: string; email: string; messagesThisMonth: number; cap: number; over: boolean; pct: number | null }>> {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const cap = this.config.get<number>('tutor.monthlyMessageCap') ?? 0;
+    const grouped = await this.prisma.tutorMessage.groupBy({ by: ['sessionId'], where: { role: TutorMessageRole.STUDENT, createdAt: { gte: monthStart } }, _count: true });
+    if (!grouped.length) return [];
+    const sessions = await this.prisma.tutorSession.findMany({ where: { id: { in: grouped.map((g) => g.sessionId) } }, select: { id: true, studentId: true, student: { select: { email: true, profile: { select: { firstName: true, lastName: true } } } } } });
+    const byId = new Map(sessions.map((se) => [se.id, se]));
+    const per = new Map<string, { studentId: string; name: string; email: string; messagesThisMonth: number }>();
+    for (const g of grouped) {
+      const se = byId.get(g.sessionId); if (!se) continue;
+      const e = per.get(se.studentId) ?? { studentId: se.studentId, name: [se.student.profile?.firstName, se.student.profile?.lastName].filter(Boolean).join(' ') || se.student.email, email: se.student.email, messagesThisMonth: 0 };
+      e.messagesThisMonth += g._count; per.set(se.studentId, e);
+    }
+    return [...per.values()].map((e) => ({ ...e, cap, over: cap > 0 && e.messagesThisMonth >= cap, pct: cap > 0 ? Math.round((e.messagesThisMonth / cap) * 100) : null })).sort((a, b) => b.messagesThisMonth - a.messagesThisMonth);
+  }
+
   async endSession(
     sessionId: string,
     requestingUserId: string,
