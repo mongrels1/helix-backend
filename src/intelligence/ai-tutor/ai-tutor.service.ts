@@ -11,6 +11,7 @@ import {
   TutorSession,
   TutorSessionStatus,
 } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { ConversationMessage } from '../ai-router/ai-router.types';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -35,6 +36,7 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     private readonly repository: AITutorRepository,
     private readonly aiRouterService: AIRouterService,
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
   ) {}
 
   async startSession(
@@ -95,6 +97,18 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     }
     if (session.status === TutorSessionStatus.ENDED) {
       throw new BadRequestException('Tutor session has ended');
+    }
+    // Fair-use cap: monthly per-student tutoring-message limit (0 = disabled).
+    const monthlyCap = this.config.get<number>('tutor.monthlyMessageCap') ?? 0;
+    if (monthlyCap > 0) {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const used = await this.repository.countStudentMessagesSince(session.studentId, monthStart);
+      if (used >= monthlyCap) {
+        throw new ForbiddenException({
+          error: { code: 'tutor_limit_reached', message: 'Monthly tutoring limit reached for this plan. Resets at the start of next month.' },
+        });
+      }
     }
 
     await this.repository.appendMessage(

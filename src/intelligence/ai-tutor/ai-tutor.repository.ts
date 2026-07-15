@@ -62,4 +62,14 @@ export class AITutorRepository {
       where: { studentId, status: TutorSessionStatus.ACTIVE },
     });
   }
+
+  async countStudentMessagesSince(studentId: string, since: Date): Promise<number> {
+    return this.prisma.tutorMessage.count({
+      where: {
+        role: TutorMessageRole.STUDENT,
+        createdAt: { gte: since },
+        session: { studentId },
+      },
+    });
+  }
 }

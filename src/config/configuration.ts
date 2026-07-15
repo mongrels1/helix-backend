@@ -25,6 +25,9 @@ export default () => ({
   ghl: {
     webhookSecret: process.env.GHL_WEBHOOK_SECRET ?? '',
   },
+  tutor: {
+    monthlyMessageCap: parseInt(process.env.TUTOR_MONTHLY_MESSAGE_CAP ?? '0', 10),
+  },
   email: {
     resendApiKey: process.env.RESEND_API_KEY ?? '',
     from: process.env.EMAIL_FROM ?? 'Helix <onboarding@resend.dev>',
