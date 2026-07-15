@@ -40,6 +40,8 @@ import { UsersModule } from '@modules/users/users.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
 import { PrismaModule } from './prisma/prisma.module';
 
+import { ReportsModule } from './modules/reports/reports.module';
+
 @Module({
   imports: [
     LoggerModule.forRoot({
@@ -73,6 +75,7 @@ import { PrismaModule } from './prisma/prisma.module';
     MetricsModule,
     ExperienceModule,
     ReferralModule,
+    ReportsModule,
     AIRouterModule,
     AssistantModule,
     AITutorModule,

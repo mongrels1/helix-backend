@@ -77,6 +77,9 @@ export class EmailService {
     });
   }
 
+  async sendWeeklyReport(to: string, subject: string, html: string, text: string): Promise<void> {
+    await this.sendEmail({ to, subject, html, text });
+  }
   private async sendEmail(message: {
     to: string;
     subject: string;
