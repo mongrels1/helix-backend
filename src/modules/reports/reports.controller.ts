@@ -1,4 +1,4 @@
-import { Controller, HttpCode, Post } from '@nestjs/common';
+import { Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -38,6 +38,15 @@ export class ReportsController {
     success: true;
     data: Awaited<ReturnType<ReportsService['runWeeklyBatch']>>;
   }> {
-    return { success: true, data: await this.reports.runWeeklyBatch() };
+    return { success: true, data: await this.reports.runWeeklyBatch('MANUAL') };
+  }
+
+  @Get('runs')
+  @Roles(Role.SUPER_ADMIN)
+  async runs(): Promise<{
+    success: true;
+    data: Awaited<ReturnType<ReportsService['getRecentRuns']>>;
+  }> {
+    return { success: true, data: await this.reports.getRecentRuns() };
   }
 }

@@ -199,6 +199,7 @@ export class ReportsService {
   }
   async sendReportForUser(
     userId: string,
+    trigger: 'CRON' | 'MANUAL' = 'MANUAL',
   ): Promise<{ sent: boolean; recipient: string; students: number; reason?: string }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -214,17 +215,34 @@ export class ReportsService {
     const studentIds =
       user.role === Role.PARENT ? user.parentLinks.map((l) => l.studentId) : [user.id];
     if (studentIds.length === 0) {
+      await this.prisma.weeklyReportRun.create({
+        data: { recipientId: user.id, recipientEmail: user.email, studentsCount: 0, minutesTotal: 0, status: 'SKIPPED', trigger, detail: 'no linked students' },
+      });
       return { sent: false, recipient: user.email, students: 0, reason: 'no linked students' };
     }
     const reports = await Promise.all(studentIds.map((id) => this.buildStudentReport(id)));
     const recipientName = user.profile?.firstName?.trim() || user.email.split('@')[0];
     const html = this.renderHtml(reports, recipientName);
     const text = this.renderText(reports, recipientName);
-    await this.email.sendWeeklyReport(user.email, 'Your EdKairos weekly report', html, text);
-    this.logger.log(`Weekly report sent to ${user.email} (${reports.length} student[s])`);
-    return { sent: true, recipient: user.email, students: reports.length };
+    const minutesTotal = reports.reduce((a, r) => a + r.timeOnApp.minutes, 0);
+    try {
+      await this.email.sendWeeklyReport(user.email, 'Your EdKairos weekly report', html, text);
+      await this.prisma.weeklyReportRun.create({
+        data: { recipientId: user.id, recipientEmail: user.email, studentsCount: reports.length, minutesTotal, status: 'SENT', trigger },
+      });
+      this.logger.log(`Weekly report sent to ${user.email} (${reports.length} student[s])`);
+      return { sent: true, recipient: user.email, students: reports.length };
+    } catch (e) {
+      await this.prisma.weeklyReportRun.create({
+        data: { recipientId: user.id, recipientEmail: user.email, studentsCount: reports.length, minutesTotal, status: 'FAILED', trigger, detail: (e as Error).message },
+      });
+      throw e;
+    }
   }
-  async runWeeklyBatch(): Promise<{ processed: number; sent: number }> {
+  async getRecentRuns(limit = 100) {
+    return this.prisma.weeklyReportRun.findMany({ orderBy: { createdAt: 'desc' }, take: limit });
+  }
+  async runWeeklyBatch(trigger: 'CRON' | 'MANUAL' = 'CRON'): Promise<{ processed: number; sent: number }> {
     const candidates = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
@@ -239,7 +257,7 @@ export class ReportsService {
     let sent = 0;
     for (const r of recipients) {
       try {
-        const res = await this.sendReportForUser(r.id);
+        const res = await this.sendReportForUser(r.id, trigger);
         if (res.sent) sent += 1;
       } catch (e) {
         this.logger.error(`Weekly report failed for ${r.email}: ${(e as Error).message}`);

@@ -694,3 +694,17 @@ enum ReferralStatus {
   SKIPPED
   FAILED
 }
+
+model WeeklyReportRun {
+  id             String   @id @default(uuid())
+  recipientId    String?
+  recipientEmail String
+  studentsCount  Int      @default(0)
+  minutesTotal   Int      @default(0)
+  status         String
+  trigger        String
+  detail         String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+}
