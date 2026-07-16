@@ -52,6 +52,69 @@ function referencesFigure(it: GeneratedItem): boolean {
   );
 }
 
+/* ---------- double-key detection (deterministic; catches the recurring cases) ---------- */
+function numsIn(s: string): number[] {
+  return (s.match(/\d+\.?\d*/g) ?? []).map(Number);
+}
+/** the three numbers in the text form a Pythagorean (right) triangle */
+function pythTriple(text: string): boolean {
+  const n = numsIn(text);
+  if (n.length !== 3) return false;
+  const [a, b, c] = [...n].sort((x, y) => x - y);
+  return a > 0 && Math.abs(a * a + b * b - c * c) < 1e-6;
+}
+/** the stem asks the student to pick a right triangle / perpendicular sides */
+function asksRightTriangle(stem: string): boolean {
+  const s = stem.toLowerCase();
+  return /(right triangle|right angle|perpendicular|90[-\s]*degree)/.test(s) && /(triangle|sides)/.test(s);
+}
+const SYMMETRY_LINES: Record<string, number> = {
+  'equilateral triangle': 3, 'isosceles triangle': 1, 'scalene triangle': 0, 'right triangle': 0,
+  'square': 4, 'non-square rectangle': 2, 'rectangle': 2, 'rhombus': 2, 'parallelogram': 0,
+  'isosceles trapezoid': 1, 'trapezoid': 0, 'regular pentagon': 5, 'regular hexagon': 6, 'regular octagon': 8,
+};
+/** lines of symmetry for a named shape in the option text, or null if unknown */
+function symmetryOf(text: string): number | null {
+  const t = text.toLowerCase();
+  let best: string | null = null;
+  for (const k of Object.keys(SYMMETRY_LINES)) if (t.includes(k) && (best === null || k.length > best.length)) best = k;
+  return best !== null ? SYMMETRY_LINES[best] : null;
+}
+/** the target line-of-symmetry count the stem asks for, or null if not that kind of item */
+function symmetryTarget(stem: string): number | null {
+  const s = stem.toLowerCase();
+  if (!/lines? of symmetry/.test(s)) return null;
+  const m = s.match(/(\d+)\s+lines? of symmetry/) ?? s.match(/(?:exactly|has|have|with)\s+(\d+)\b/);
+  if (m) return Number(m[1]);
+  const words: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
+  for (const [w, v] of Object.entries(words)) if (new RegExp(`\\b${w}\\b\\s+lines? of symmetry`).test(s)) return v;
+  return null;
+}
+/** normalize an option for equivalent-answer comparison (1/2 == 0.5) */
+function normOpt(text: string): string {
+  let t = text.toLowerCase().trim();
+  t = t.replace(/(\d+)\s*\/\s*(\d+)/g, (_m, a, b) => String(Number(a) / Number(b)));
+  t = t.replace(/\s+/g, ' ').replace(/[$,%]/g, '').trim();
+  return t;
+}
+/** checks that flag an item having MORE THAN ONE defensible correct answer */
+function doubleKeyChecks(it: GeneratedItem): Check[] {
+  const out: Check[] = [];
+  const norm = (it.options ?? []).map((o) => normOpt(o.text));
+  out.push({ id: 'no_duplicate_options', ok: norm.length === new Set(norm).size, detail: `${norm.length - new Set(norm).size} dup` });
+  const tripleOpts = (it.options ?? []).filter((o) => numsIn(o.text).length === 3);
+  if (asksRightTriangle(it.stem) && tripleOpts.length >= 2) {
+    const rc = tripleOpts.filter((o) => pythTriple(o.text)).length;
+    out.push({ id: 'single_right_triangle', ok: rc === 1, detail: `${rc} right-triangle options` });
+  }
+  const symN = symmetryTarget(it.stem);
+  if (symN !== null) {
+    const matches = (it.options ?? []).filter((o) => { const v = symmetryOf(o.text); return v !== null && v === symN; }).length;
+    out.push({ id: 'symmetry_answer_unique', ok: matches === 1, detail: `${matches} options with ${symN} lines` });
+  }
+  return out;
+}
+
 /** validate a single item */
 export function gateItem(it: GeneratedItem): Check[] {
   const checks: Check[] = [];
@@ -69,6 +132,7 @@ export function gateItem(it: GeneratedItem): Check[] {
   // than ship a "see the figure below" item with nothing to see.
   const refsFig = referencesFigure(it);
   checks.push({ id: 'figure_present_when_referenced', ok: !refsFig || !!it.figure, detail: refsFig ? (it.figure ? 'present' : 'MISSING') : 'n/a' });
+  for (const c of doubleKeyChecks(it)) checks.push(c);
   return checks;
 }
 
