@@ -40,6 +40,18 @@ function hasDecimal(it: GeneratedItem): boolean {
   return /\d+\.\d+/.test(itemText(it));
 }
 
+/** the stem points at a figure/diagram/graph the item must actually carry */
+function referencesFigure(it: GeneratedItem): boolean {
+  const s = it.stem.toLowerCase();
+  return (
+    /\b(figure|diagram)\b/.test(s) ||
+    /shown (below|above|here|in the)/.test(s) ||
+    /\bthe (graph|table|number line|coordinate grid|coordinate plane|angle)\b/.test(s) ||
+    /which (triangle|shape|figure|angle|rectangle|graph|number line)\b/.test(s) ||
+    /lines? of symmetry/.test(s)
+  );
+}
+
 /** validate a single item */
 export function gateItem(it: GeneratedItem): Check[] {
   const checks: Check[] = [];
@@ -52,6 +64,11 @@ export function gateItem(it: GeneratedItem): Check[] {
   checks.push({ id: 'has_answer', ok: it.answer !== undefined && it.answer !== '' });
   checks.push({ id: 'has_solution', ok: !!it.solution && it.solution.length > 0 });
   checks.push({ id: 'has_signal', ok: !!it.microDiagnosticSignal });
+  // A figure-referencing item must actually carry a figure. sanitizeFigure drops
+  // mismatched pictures, which can leave a visual item figure-less; fail it rather
+  // than ship a "see the figure below" item with nothing to see.
+  const refsFig = referencesFigure(it);
+  checks.push({ id: 'figure_present_when_referenced', ok: !refsFig || !!it.figure, detail: refsFig ? (it.figure ? 'present' : 'MISSING') : 'n/a' });
   return checks;
 }
 
