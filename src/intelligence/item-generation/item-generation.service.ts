@@ -617,6 +617,7 @@ export class ItemGenerationService {
     if (t === 'cylinder' && !/cylind/.test(s)) return undefined;
     if (t === 'cone' && !/(\bcone|conical)/.test(s)) return undefined;
     if (t === 'sphere' && !/(spher|\bball\b|\bglobe\b)/.test(s)) return undefined;
+    if (t === 'circle' && !/(circle|circular|radius|diameter|circumference|\bpi\b)/.test(s)) return undefined;
     return figure;
   }
 

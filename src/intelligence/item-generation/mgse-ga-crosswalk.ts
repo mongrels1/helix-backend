@@ -45,6 +45,12 @@ export const CROSSWALK: CrosswalkEntry[] = [
     figure: { primary: 'ratio_table', alternates: ['number_line'] } },
 ];
 
+/** GA-native cluster -> figure, for banks coded in CURRENT GA standards (not MGSE). */
+export const GA_CLUSTER_FIGURE: Record<string, FigureType> = {
+  '4.GSR.7': 'angle', '4.GSR.8': 'geometry2d', '5.GSR.8': 'geometry2d',
+  '6.GSR.5': 'geometry2d', '7.GSR.5': 'geometry2d', '8.GSR.8': 'geometry2d',
+};
+
 export interface DomainScaffold { mgsePrefix: string; gaCluster: string; defaultFigure: FigureType; }
 export const DOMAIN_SCAFFOLD: DomainScaffold[] = [
   { mgsePrefix: 'MGSE6.RP', gaCluster: '6.NR.4', defaultFigure: 'ratio_table' },
@@ -87,7 +93,8 @@ export function resolveStandard(code: string): Resolved {
     const exactGa = byGa.get(c);
     const clusterRow = CROSSWALK.find((e) => e.gaCluster === cluster);
     const hit = exactGa ?? clusterRow;
-    return { input: code, ga: c, gaCluster: cluster, figure: hit ? hit.figure.primary : null, exact: !!exactGa };
+    const gaFig = GA_CLUSTER_FIGURE[cluster] ?? null;
+    return { input: code, ga: c, gaCluster: cluster, figure: hit ? hit.figure.primary : gaFig, exact: !!exactGa };
   }
   const exact = byMgse.get(c);
   if (exact) return { input: code, ga: exact.ga, gaCluster: exact.gaCluster, figure: exact.figure.primary, exact: true };
