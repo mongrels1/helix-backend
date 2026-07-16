@@ -98,6 +98,27 @@ function normOpt(text: string): string {
   return t;
 }
 /** checks that flag an item having MORE THAN ONE defensible correct answer */
+/* ---------- standard-code catalog: reject an item tagged with a GA cluster that
+   does not exist for its grade (e.g. a generated "4.GSR.6" - grade 4 has no GSR.6;
+   6 is 4.MDR.6). Verified against Georgia's K-12 Mathematics Standards (K-8). */
+const GA_CLUSTERS = new Set<string>([
+  'K.NR.1','K.NR.2','K.NR.3','K.NR.4','K.NR.5','K.PAR.6','K.MDR.7','K.GSR.8',
+  '1.NR.1','1.NR.2','1.PAR.3','1.GSR.4','1.NR.5','1.MDR.6',
+  '2.NR.1','2.NR.2','2.NR.3','2.PAR.4','2.MDR.5','2.MDR.6','2.GSR.7',
+  '3.NR.1','3.PAR.2','3.PAR.3','3.NR.4','3.MDR.5','3.GSR.6','3.GSR.7','3.GSR.8',
+  '4.NR.1','4.NR.2','4.PAR.3','4.NR.4','4.NR.5','4.MDR.6','4.GSR.7','4.GSR.8',
+  '5.NR.1','5.NR.2','5.NR.3','5.NR.4','5.NR.5','5.PAR.6','5.MDR.7','5.GSR.8',
+  '6.NR.1','6.NR.2','6.NR.3','6.NR.4','6.GSR.5','6.PAR.6','6.PAR.7','6.PAR.8',
+  '7.NR.1','7.PAR.2','7.PAR.3','7.PAR.4','7.GSR.5','7.PR.6',
+  '8.NR.1','8.NR.2','8.PAR.3','8.PAR.4','8.FGR.5','8.FGR.6','8.FGR.7','8.GSR.8',
+]);
+/** the grade.STRAND.N cluster of a GA-format code (drops any .element suffix);
+    null for MGSE / legacy / blank codes, which this rule leaves untouched. */
+function clusterOf(std: string | undefined): string | null {
+  const m = /^([K1-8])\.([A-Z]{2,4})\.(\d{1,2})/.exec(String(std ?? '').trim().toUpperCase());
+  return m ? `${m[1]}.${m[2]}.${m[3]}` : null;
+}
+
 function doubleKeyChecks(it: GeneratedItem): Check[] {
   const out: Check[] = [];
   const norm = (it.options ?? []).map((o) => normOpt(o.text));
@@ -132,6 +153,8 @@ export function gateItem(it: GeneratedItem): Check[] {
   // than ship a "see the figure below" item with nothing to see.
   const refsFig = referencesFigure(it);
   checks.push({ id: 'figure_present_when_referenced', ok: !refsFig || !!it.figure, detail: refsFig ? (it.figure ? 'present' : 'MISSING') : 'n/a' });
+  const cl = clusterOf(it.standard);
+  if (cl) checks.push({ id: 'standard_in_catalog', ok: GA_CLUSTERS.has(cl), detail: GA_CLUSTERS.has(cl) ? cl : `unknown GA standard ${cl}` });
   for (const c of doubleKeyChecks(it)) checks.push(c);
   return checks;
 }
