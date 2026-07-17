@@ -81,6 +81,15 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('import')
+  async import(
+    @Body() body: { items: Array<{ stem?: string; options?: string[]; correct?: number; standard?: string; dok?: number; misconceptions?: string[] }> },
+    @Req() req: { user?: { id?: string } },
+  ) {
+    const data = await this.svc.importItems(body, req.user?.id);
+    return { success: true as const, data };
+  }
+
   @Post('reject-all')
   async rejectAll(@Body() body: { grade?: number }) {
     const data = await this.svc.rejectAllDrafts(

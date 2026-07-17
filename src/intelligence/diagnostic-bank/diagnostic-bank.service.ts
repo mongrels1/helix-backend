@@ -178,7 +178,7 @@ export class DiagnosticBankService {
     const want = Math.min(60, Math.max(1, Number(body.count) || 12));
     const rows: Array<{
       grade: number; strand: string; kc: string; standard: string; dok: number; b: number;
-      stem: string; options: string[]; correct: number; figure: object | undefined;
+      stem: string; options: string[]; correct: number; misconceptions: string[]; figure: object | undefined;
       status: string; source: string; createdBy: string | null;
     }> = [];
     let seed = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
@@ -194,12 +194,50 @@ export class DiagnosticBankService {
       rows.push({
         grade: item.grade, strand: item.strand, kc: item.kc, standard: item.standard,
         dok: item.dok, b: item.b, stem: item.stem, options: texts, correct,
+        misconceptions: item.options.map((o) => (o.correct ? '' : (o.misconception ?? ''))),
         figure: item.figure ? (item.figure as object) : undefined,
         status: 'draft', source: 'generated', createdBy: createdBy ?? null,
       });
     }
     if (rows.length) await this.prisma.diagnosticItem.createMany({ data: rows, skipDuplicates: true });
     return { created: rows.length, requested: want };
+  }
+
+  /**
+   * Import questions AS-IS from a parsed bank (no AI). Each becomes a draft
+   * verbatim - stem, four options, correct index, per-option misconceptions,
+   * standard, DOK - with a geometry figure attached when the stem shows one.
+   */
+  async importItems(
+    body: { items: Array<{ stem?: string; options?: string[]; correct?: number; standard?: string; dok?: number; misconceptions?: string[] }> },
+    createdBy?: string,
+  ): Promise<{ created: number; skipped: number; requested: number }> {
+    const items = Array.isArray(body.items) ? body.items : [];
+    const rows: Array<{
+      grade: number; strand: string; kc: string; standard: string; dok: number; b: number;
+      stem: string; options: string[]; correct: number; misconceptions: string[];
+      figure: object | undefined; status: string; source: string; createdBy: string | null;
+    }> = [];
+    let skipped = 0;
+    for (const it of items) {
+      const stem = String(it.stem ?? '').trim();
+      const options = Array.isArray(it.options) ? it.options.map((o) => String(o ?? '').trim()) : [];
+      const correct = Number(it.correct);
+      const gs = it.standard ? gradeStrandFromStandard(it.standard) : null;
+      if (!stem || options.length !== 4 || new Set(options).size !== 4 || !(correct >= 0 && correct < 4) || !gs) { skipped++; continue; }
+      const misc = Array.isArray(it.misconceptions) ? it.misconceptions.map((m) => String(m ?? '')) : [];
+      while (misc.length < 4) misc.push('');
+      const figure = /^G/i.test(gs.strand) ? this.synthGeometryFigure(stem, options[correct]) : undefined;
+      rows.push({
+        grade: gs.grade, strand: gs.strand, kc: 'Imported item',
+        standard: standardFor(gs.grade, gs.strand) ?? String(it.standard),
+        dok: Math.min(4, Math.max(1, Number(it.dok) || 1)), b: 0,
+        stem, options, correct, misconceptions: misc.slice(0, 4),
+        figure, status: 'draft', source: 'imported', createdBy: createdBy ?? null,
+      });
+    }
+    if (rows.length) await this.prisma.diagnosticItem.createMany({ data: rows, skipDuplicates: true });
+    return { created: rows.length, skipped, requested: items.length };
   }
 
   /** Bulk-reject every current draft (optionally just one grade). Reversible — the
