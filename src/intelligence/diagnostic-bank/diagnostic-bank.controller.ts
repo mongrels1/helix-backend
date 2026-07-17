@@ -98,6 +98,14 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('restore-all')
+  async restoreAll(@Body() body: { grade?: number }) {
+    const data = await this.svc.restoreAllRejected(
+      typeof body?.grade === 'number' ? body.grade : Number(body?.grade),
+    );
+    return { success: true as const, data };
+  }
+
   @Post('publish')
   async publish() {
     const data = await this.svc.publish();

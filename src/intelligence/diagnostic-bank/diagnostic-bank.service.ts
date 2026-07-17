@@ -255,12 +255,28 @@ export class DiagnosticBankService {
   /** Bulk-reject every current draft (optionally just one grade). Reversible — the
    *  items become status 'rejected' and can be individually restored. Only touches
    *  drafts, never a validated/published item. */
-  async rejectAllDrafts(grade?: number): Promise<{ rejected: number }> {
+  async rejectAllDrafts(grade?: number): Promise<{ rejected: number; keptValidated: number; keptPublished: number }> {
+    const scope = typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {};
     const res = await this.prisma.diagnosticItem.updateMany({
-      where: { status: 'draft', ...(typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {}) },
+      where: { status: 'draft', ...scope },
       data: { status: 'rejected' },
     });
-    return { rejected: res.count };
+    const [keptValidated, keptPublished] = await Promise.all([
+      this.prisma.diagnosticItem.count({ where: { status: 'validated', ...scope } }),
+      this.prisma.diagnosticItem.count({ where: { status: 'published', ...scope } }),
+    ]);
+    return { rejected: res.count, keptValidated, keptPublished };
+  }
+
+  /** Reverse of rejectAllDrafts: bring every rejected item (optionally one grade)
+   *  back to draft for re-review. Items are never hard-deleted, so a bulk-reject
+   *  sweep is always fully recoverable. Restored items land as drafts. */
+  async restoreAllRejected(grade?: number): Promise<{ restored: number }> {
+    const res = await this.prisma.diagnosticItem.updateMany({
+      where: { status: 'rejected', ...(typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {}) },
+      data: { status: 'draft' },
+    });
+    return { restored: res.count };
   }
 
   /** Publish all validated items — they become the set the live diagnostic will
