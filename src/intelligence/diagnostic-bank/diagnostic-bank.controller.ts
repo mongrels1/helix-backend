@@ -106,6 +106,14 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('validate-all')
+  async validateAll(@Body() body: { grade?: number }) {
+    const data = await this.svc.validateAllDrafts(
+      typeof body?.grade === 'number' ? body.grade : Number(body?.grade),
+    );
+    return { success: true as const, data };
+  }
+
   @Post('publish')
   async publish() {
     const data = await this.svc.publish();

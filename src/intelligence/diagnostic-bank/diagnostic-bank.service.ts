@@ -279,6 +279,17 @@ export class DiagnosticBankService {
     return { restored: res.count };
   }
 
+  /** Bulk-validate every current draft (optionally one grade) so a restored or
+   *  imported batch counts toward viability without clicking each card. Only
+   *  touches drafts; validated/published/rejected are untouched. */
+  async validateAllDrafts(grade?: number): Promise<{ validated: number }> {
+    const res = await this.prisma.diagnosticItem.updateMany({
+      where: { status: 'draft', ...(typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {}) },
+      data: { status: 'validated' },
+    });
+    return { validated: res.count };
+  }
+
   /** Publish all validated items — they become the set the live diagnostic will
    *  serve once the serve-path is wired (next phase). Never touches rejected. */
   async publish(): Promise<{ published: number }> {
