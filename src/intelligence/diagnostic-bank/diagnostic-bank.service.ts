@@ -613,11 +613,11 @@ export class DiagnosticBankService {
       const deg = /straight/.test(a) ? 180 : /right/.test(a) ? 90 : /obtuse/.test(a) ? 130 : /acute/.test(a) ? 50 : 130;
       return { type: 'angle', degrees: deg };
     }
-    if (/parallel|perpendicular|intersect|\btwo (paths|lines|ships|streets|roads)\b|headings/.test(s)) {
-      const shape = /perpendicular|right angle/.test(a) ? 'perpendicular_lines'
-        : /parallel/.test(a) ? 'parallel_lines'
-        : /intersect|one point|\bmeet\b/.test(a) ? 'intersecting_lines' : 'intersecting_lines';
-      return { type: 'geometry2d', shape };
+    // line-relationship item: NOT a "how many" count; the ANSWER must name the relationship.
+    if (!/\bhow many\b/.test(s) && /\btwo (paths|lines|ships|streets|roads)\b|headings|never (meet|intersect)|same plane|pair of lines/.test(s)) {
+      if (/perpendicular|right angle/.test(a)) return { type: 'geometry2d', shape: 'perpendicular_lines' };
+      if (/parallel/.test(a)) return { type: 'geometry2d', shape: 'parallel_lines' };
+      if (/intersect|one point|\bmeet\b/.test(a)) return { type: 'geometry2d', shape: 'intersecting_lines' };
     }
     const SHAPES: Array<[string, string]> = [
       ['equilateral triangle', 'triangle_equilateral'], ['isosceles triangle', 'triangle_isosceles'],
