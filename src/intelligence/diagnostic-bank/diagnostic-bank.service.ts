@@ -566,6 +566,7 @@ export class DiagnosticBankService {
       'number_line', 'bar_graph', 'coordinate_grid', 'function_table', 'ratio_table',
       'dot_plot', 'histogram', 'scatter_plot', 'right_triangle', 'triangle', 'rect', 'angle',
       'cylinder', 'cone', 'sphere', 'circle', 'transformation',
+      'rect_prism', 'tri_prism', 'angle_pair',
     ]);
     return typeof t === 'string' && allowed.has(t);
   }
@@ -616,6 +617,34 @@ export class DiagnosticBankService {
     const legM = s.match(/legs?\s+(?:of\s+|are\s+|measuring\s+|equal to\s+)?(\d+(?:\.\d+)?)\D{1,18}?(\d+(?:\.\d+)?)/);
     if (/right triangle|hypotenuse|\bleg/.test(s) && legM) {
       return { type: 'right_triangle', a: Number(legM[1]), b: Number(legM[2]), labelA: legM[1], labelB: legM[2], labelC: 'x' };
+    }
+    // --- triangular / rectangular prism (volume & surface area). Draw ONLY when the
+    // dimensions are in the stem; placed before the flat rect/triangle-area blocks so
+    // a prism never gets a 2-D figure. Correct by construction. ---
+    if (/triangular prism/.test(s)) {
+      const tb = grab(/base\D{0,12}(\d+(?:\.\d+)?)/);
+      const th = grab(/height\D{0,12}(\d+(?:\.\d+)?)/);
+      const tl = grab(/length\D{0,12}(\d+(?:\.\d+)?)/) ?? grab(/(?:depth|long)\D{0,12}(\d+(?:\.\d+)?)/);
+      if (tb && th && tl) return { type: 'tri_prism', b: tb, h: th, len: tl, bLabel: `${tb}`, hLabel: `${th}`, lenLabel: `${tl}` };
+    }
+    if (/rectangular prism|right rectangular prism/.test(s)) {
+      const pl = grab(/length\D{0,12}(\d+(?:\.\d+)?)/);
+      const pw = grab(/width\D{0,12}(\d+(?:\.\d+)?)/);
+      const ph = grab(/height\D{0,12}(\d+(?:\.\d+)?)/);
+      if (pl && pw && ph) return { type: 'rect_prism', l: pl, w: pw, h: ph, lLabel: `${pl}`, wLabel: `${pw}`, hLabel: `${ph}` };
+      const m3 = s.match(/(\d+(?:\.\d+)?)\s*(?:by|\u00d7|x)\s*(\d+(?:\.\d+)?)\s*(?:by|\u00d7|x)\s*(\d+(?:\.\d+)?)/);
+      if (m3) return { type: 'rect_prism', l: Number(m3[1]), w: Number(m3[2]), h: Number(m3[3]), lLabel: m3[1], wLabel: m3[2], hLabel: m3[3] };
+    }
+    // --- angle relationship "solve for x": complementary / supplementary / vertical.
+    // Needs a named relationship AND a numeric degree in the stem. ---
+    if (/(complementary|supplementary|vertical) angles?/.test(s) || (/\bsolve for x\b|value of x|find x\b/.test(s) && /angle/.test(s))) {
+      const known = grab(/(\d+(?:\.\d+)?)\s*(?:\u00b0|degrees?|deg\b)/);
+      let kind: 'complementary' | 'supplementary' | 'vertical' | undefined;
+      if (/complementary/.test(s)) kind = 'complementary';
+      else if (/supplementary|straight (?:line|angle)|linear pair/.test(s)) kind = 'supplementary';
+      else if (/vertical/.test(s)) kind = 'vertical';
+      const cap = kind === 'complementary' ? 90 : 180;
+      if (kind && known !== undefined && known > 0 && known < cap) return { type: 'angle_pair', kind, known, unknownLabel: 'x' };
     }
     for (const solid of ['cylinder', 'cone'] as const) {
       if (s.includes(solid)) {

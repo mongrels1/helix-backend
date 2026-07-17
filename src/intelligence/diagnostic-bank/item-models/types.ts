@@ -17,7 +17,10 @@ export type Figure =
   | { type: 'ladder_wall'; base: number; height: number; baseLabel?: string; heightLabel?: string; hypLabel?: string; altText?: string }
   | { type: 'number_line'; min: number; max: number; ticks?: number; marks?: { at: number; label?: string }[]; altText?: string }
   | { type: 'geometry2d'; shape: string; symmetry?: boolean; caption?: string; altText?: string }
-  | { type: 'angle'; degrees: number; label?: string; altText?: string };
+  | { type: 'angle'; degrees: number; label?: string; altText?: string }
+  | { type: 'rect_prism'; l: number; w: number; h: number; lLabel?: string; wLabel?: string; hLabel?: string; altText?: string }
+  | { type: 'tri_prism'; b: number; h: number; len: number; bLabel?: string; hLabel?: string; lenLabel?: string; altText?: string }
+  | { type: 'angle_pair'; kind: 'complementary' | 'supplementary' | 'vertical'; known: number; knownLabel?: string; unknownLabel?: string; altText?: string };
 
 export interface DiagOption {
   text: string;
