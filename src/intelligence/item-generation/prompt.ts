@@ -32,8 +32,16 @@ For each version:
 - Every option's "text" is a short, complete, readable answer on its own (e.g. "20 miles", "y = 3x + 2",
   "13 cm", "(4, 9)"). NEVER leave it blank, never "see the table", and never make an option itself a
   table, graph, or picture.
-- Include a top-level "answer" (the correct option's value as a string) AND a "solution" (a short worked
-  explanation of the steps). An item missing either is invalid.
+- Include a top-level "answer" (the correct option's value as a string) AND a "solution". Write "solution"
+  as a SHORT, LINE-BY-LINE worked flow (Pólya style), NOT a paragraph: each step on its OWN line. Line 1 is
+  the formula / equation / expression you start from; the next lines substitute the numbers and simplify ONE
+  step per line (one "=" per line); then the final-answer line; then AT MOST one short plain "why" sentence.
+  For a box-volume item the "solution" should read as these separate lines:
+    V = l · w · h
+    V = 8 · 3 · 5
+    V = 120 cubic units
+    Multiply the three side lengths.
+  Keep every line terse and mathematical (no run-on prose). An item missing "answer" or "solution" is invalid.
 - Across the set, vary DOK (1-3) and include AT LEAST ONE error-analysis ("psychology") version.
 - Tag each: "standard" (echo the base standard), "skillTags", "misconceptionTags", "dok", "difficulty",
   and "microDiagnosticSignal".
