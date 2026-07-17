@@ -28,6 +28,10 @@ function strandOfStandard(std?: string | null): string | null {
 
 type RawOption = { text?: string; correct?: boolean; misconceptionTag?: string };
 
+/** Consecutive-correct answers on one standard required before practice advances
+ *  to the next standard. Tunable. */
+const MASTERY_STREAK = 4;
+
 interface WeakProfile {
   strands: Set<string>;
   kcs: Set<string>;
@@ -117,7 +121,19 @@ export class PracticeService {
         misconceptionTag,
       },
     });
-    return { recorded: true as const, correct, misconceptionTag };
+    // Read back the updated consecutive-correct streak so the client can advance
+    // to the next standard the moment this one is mastered.
+    const standard = item.standard ?? null;
+    const masteryStreak = standard ? await this.currentStreak(userId, standard) : 0;
+    return {
+      recorded: true as const,
+      correct,
+      misconceptionTag,
+      standard,
+      masteryStreak,
+      masteryTarget: MASTERY_STREAK,
+      mastered: masteryStreak >= MASTERY_STREAK,
+    };
   }
 
   /** Author/teacher-facing summary of a student's misconceptions (never shown to students). */
@@ -195,9 +211,47 @@ export class PracticeService {
       }
     }
 
-    // Misconception-driven ordering: float items that probe the student's recent
-    // active misconceptions to the front, so practice re-tests the exact errors
-    // they've been making. Stable for everyone else.
+    // Mastery sequencing: work ONE standard at a time. Pick the student's current
+    // target standard (a not-yet-mastered standard, preferring one they've already
+    // started), serve ONLY that standard's items, and advance to the next standard
+    // only once they reach MASTERY_STREAK correct-in-a-row. An explicit ?standard=
+    // overrides the gate for a manual drill.
+    let currentStandard: string | null = null;
+    let masteryStreak = 0;
+    let masteredStandards = 0;
+    let remainingStandards = 0;
+    if (q.standard) {
+      currentStandard = shaped.find((it) => it.standard)?.standard ?? String(q.standard);
+      masteryStreak = await this.currentStreak(userId, currentStandard);
+    } else {
+      const poolStandards = [...new Set(shaped.map((it) => it.standard).filter((v): v is string => !!v))];
+      if (poolStandards.length) {
+        const progress = await this.standardProgress(userId, poolStandards);
+        const unmastered = poolStandards.filter((st) => !progress.get(st)!.mastered);
+        masteredStandards = poolStandards.length - unmastered.length;
+        remainingStandards = unmastered.length;
+        if (unmastered.length) {
+          // Keep the student on a standard they've already started (most recent
+          // first); otherwise begin the next fresh standard in code order.
+          unmastered.sort((a, b) => {
+            const pa = progress.get(a)!;
+            const pb = progress.get(b)!;
+            if (pa.started !== pb.started) return pa.started ? -1 : 1;
+            if (pa.started && pb.started) return pb.lastAt - pa.lastAt;
+            return a.localeCompare(b);
+          });
+          currentStandard = unmastered[0];
+          masteryStreak = progress.get(currentStandard)!.streak;
+        }
+      }
+    }
+    if (currentStandard) {
+      shaped = shaped.filter((it) => it.standard === currentStandard);
+    }
+
+    // Misconception-driven ordering: within the current standard, float items that
+    // probe the student's recent active misconceptions to the front, so practice
+    // re-tests the exact errors they've been making.
     const active = await this.activeMisconceptions(userId);
     let focusMisconceptions: string[] = [];
     if (active.size) {
@@ -213,6 +267,55 @@ export class PracticeService {
       basedOn,
       weakStrands,
       focusMisconceptions,
+      currentStandard,
+      masteryStreak,
+      masteryTarget: MASTERY_STREAK,
+      masteredStandards,
+      remainingStandards,
     };
+  }
+
+  /**
+   * Per-standard practice progress from the student's answer history. For each
+   * standard: the current consecutive-correct streak (newest answers, resets on a
+   * miss), whether it's mastered (streak >= MASTERY_STREAK), whether they've
+   * started it, and when they last practiced it.
+   */
+  private async standardProgress(
+    userId: string | undefined,
+    standards: string[],
+  ): Promise<Map<string, { streak: number; mastered: boolean; started: boolean; lastAt: number }>> {
+    const map = new Map<string, { streak: number; mastered: boolean; started: boolean; lastAt: number }>();
+    for (const st of standards) map.set(st, { streak: 0, mastered: false, started: false, lastAt: 0 });
+    if (!userId || !standards.length) return map;
+    const rows = await this.prisma.practiceResponse.findMany({
+      where: { userId, standard: { in: standards } },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    // Newest-first: the leading run of corrects per standard is its current streak.
+    const streakClosed = new Set<string>();
+    for (const r of rows) {
+      const st = r.standard as string | null;
+      if (!st) continue;
+      const e = map.get(st);
+      if (!e) continue;
+      if (!e.started) {
+        e.started = true;
+        e.lastAt = r.createdAt.getTime();
+      }
+      if (!streakClosed.has(st)) {
+        if (r.correct) e.streak += 1;
+        else streakClosed.add(st);
+      }
+    }
+    for (const e of map.values()) e.mastered = e.streak >= MASTERY_STREAK;
+    return map;
+  }
+
+  /** Current consecutive-correct streak on a single standard. */
+  private async currentStreak(userId: string | undefined, standard: string): Promise<number> {
+    const m = await this.standardProgress(userId, [standard]);
+    return m.get(standard)?.streak ?? 0;
   }
 }
