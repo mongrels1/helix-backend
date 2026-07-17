@@ -409,7 +409,11 @@ export class DiagnosticBankService {
           if (!stem || options.length !== 4 || !(correct >= 0 && correct < options.length)) return null;
           const dok = Math.min(4, Math.max(1, Number(it.dok) || provisionalDok(Number(it.b) || 0)));
           const b = Math.min(3, Math.max(-3, typeof it.b === 'number' ? it.b : Number(it.b) || 0));
-          const figure = this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined);
+          let figure = this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined);
+          // CRA figure attachment: a geometry item with no figure gets the correct one
+          // synthesized from its stem + keyed answer, so it renders instead of shipping
+          // figure-less. Non-geometry strands are left untouched.
+          if (!figure && /^G/i.test(String(gs.strand))) figure = this.synthGeometryFigure(stem, options[correct]);
           if (!this.factCheck(stem, options, correct, figure)) return null;
           return {
             grade: gs.grade,
@@ -557,6 +561,40 @@ export class DiagnosticBankService {
     if (t === 'cone' && !/(\bcone|conical)/.test(s)) return undefined;
     if (t === 'sphere' && !/(spher|\bball\b|\bglobe\b)/.test(s)) return undefined;
     return figure;
+  }
+
+  /** CRA figure attachment: for a geometry item with NO figure, read the stem and
+   *  the keyed answer and return the correct geometry2d / angle spec (or undefined
+   *  when it cannot be shown as a single figure - the fact-check then drops it
+   *  rather than ship it figure-less). Correct by construction; no model opinion. */
+  private synthGeometryFigure(stem: string, answer: string): object | undefined {
+    const s = (stem || '').toLowerCase();
+    const a = (answer || '').toLowerCase();
+    if (/\bwhich\b.*\b(triangles|shapes|figures|rectangles|angles|polygons|lines)\b.*(below|shown|following)/.test(s)) return undefined;
+    if (/\btype of angle\b|\bwhich angle\b|\bangle\b.{0,30}\b(shown|below|diagram)\b/.test(s) && !/triangle/.test(s)) {
+      const deg = /straight/.test(a) ? 180 : /right/.test(a) ? 90 : /obtuse/.test(a) ? 130 : /acute/.test(a) ? 50 : 130;
+      return { type: 'angle', degrees: deg };
+    }
+    if (/parallel|perpendicular|intersect|\btwo (paths|lines|ships|streets|roads)\b|headings/.test(s)) {
+      const shape = /perpendicular|right angle/.test(a) ? 'perpendicular_lines'
+        : /parallel/.test(a) ? 'parallel_lines'
+        : /intersect|one point|\bmeet\b/.test(a) ? 'intersecting_lines' : 'intersecting_lines';
+      return { type: 'geometry2d', shape };
+    }
+    const SHAPES: Array<[string, string]> = [
+      ['equilateral triangle', 'triangle_equilateral'], ['isosceles triangle', 'triangle_isosceles'],
+      ['scalene triangle', 'triangle_scalene'], ['right triangle', 'triangle_right'],
+      ['honeycomb', 'hexagon'], ['hexagon', 'hexagon'], ['pentagon', 'pentagon'], ['octagon', 'octagon'],
+      ['square', 'square'], ['rectangle', 'rectangle'], ['rhombus', 'rhombus'],
+      ['parallelogram', 'parallelogram'], ['trapezoid', 'trapezoid'], ['kite', 'kite'], ['triangle', 'triangle_isosceles'],
+    ];
+    const refsFigure = /\bthis \w+|the (shape|figure|triangle|rectangle|square|polygon|angle|diagram)\b|shown|\bbelow\b|drawn|pictured/.test(s);
+    const hit = SHAPES.find(([w]) => s.includes(w) || a.includes(w));
+    if (hit && refsFigure) {
+      const sym = /lines? of symmetry|symmetr/.test(s);
+      return sym ? { type: 'geometry2d', shape: hit[1], symmetry: true } : { type: 'geometry2d', shape: hit[1] };
+    }
+    return undefined;
   }
 
   /**
