@@ -15,7 +15,9 @@ export type Figure =
   | { type: 'cone'; r: number; h: number; rLabel?: string; hLabel?: string; altText?: string }
   | { type: 'sphere'; r: number; rLabel?: string; altText?: string }
   | { type: 'ladder_wall'; base: number; height: number; baseLabel?: string; heightLabel?: string; hypLabel?: string; altText?: string }
-  | { type: 'number_line'; min: number; max: number; ticks?: number; marks?: { at: number; label?: string }[]; altText?: string };
+  | { type: 'number_line'; min: number; max: number; ticks?: number; marks?: { at: number; label?: string }[]; altText?: string }
+  | { type: 'geometry2d'; shape: string; symmetry?: boolean; caption?: string; altText?: string }
+  | { type: 'angle'; degrees: number; label?: string; altText?: string };
 
 export interface DiagOption {
   text: string;

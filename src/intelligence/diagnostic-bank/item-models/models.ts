@@ -289,6 +289,99 @@ const distanceNumberLine: ItemModel = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// 4.GSR — grade-4 geometry: lines of symmetry, angle types, line relationships.
+// Each carries a correct, labeled geometry2d / angle figure BY CONSTRUCTION.
+// ---------------------------------------------------------------------------
+const G4_GSR8 = '4.GSR.8';
+const G4_GSR7 = '4.GSR.7';
+
+const SYM_SHAPES: { shape: string; name: string; lines: number }[] = [
+  { shape: 'square', name: 'square', lines: 4 },
+  { shape: 'rectangle', name: 'rectangle', lines: 2 },
+  { shape: 'rhombus', name: 'rhombus', lines: 2 },
+  { shape: 'triangle_equilateral', name: 'equilateral triangle', lines: 3 },
+  { shape: 'triangle_isosceles', name: 'isosceles triangle', lines: 1 },
+  { shape: 'trapezoid', name: 'isosceles trapezoid', lines: 1 },
+  { shape: 'pentagon', name: 'regular pentagon', lines: 5 },
+  { shape: 'hexagon', name: 'regular hexagon', lines: 6 },
+  { shape: 'octagon', name: 'regular octagon', lines: 8 },
+  { shape: 'parallelogram', name: 'parallelogram', lines: 0 },
+];
+
+const symmetryCount: ItemModel = {
+  id: 'symmetry-count', standard: G4_GSR8, grade: 4, strand: 'G',
+  generate(rng) {
+    const s = rng.pick(SYM_SHAPES);
+    const correct = `${s.lines}`;
+    const cand: [number, string][] = [
+      [s.lines + 1, 'Counted one extra line of symmetry'],
+      [Math.max(0, s.lines - 1), 'Missed a line of symmetry'],
+      [s.lines + 2, 'Overcounted the lines of symmetry'],
+      [s.lines === 0 ? 1 : 0, s.lines === 0 ? 'Assumed every shape has at least one line' : 'Assumed the shape has none'],
+    ];
+    const ds: { text: string; misconception: string }[] = [];
+    for (const [n, mc] of cand) {
+      if (n !== s.lines && !ds.some((d) => d.text === `${n}`)) ds.push({ text: `${n}`, misconception: mc });
+      if (ds.length === 3) break;
+    }
+    if (ds.length < 3) return null;
+    const options = buildOptions(rng, correct, ds);
+    if (!options) return null;
+    return {
+      standard: G4_GSR8, grade: 4, strand: 'G', kc: 'Lines of symmetry',
+      stem: `How many lines of symmetry does the ${s.name} shown have?`,
+      options, answer: correct, dok: 1, b: -0.5,
+      figure: { type: 'geometry2d', shape: s.shape, symmetry: true },
+    };
+  },
+};
+
+const ANGLE_DEGS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160];
+const angleType: ItemModel = {
+  id: 'angle-type', standard: G4_GSR7, grade: 4, strand: 'G',
+  generate(rng) {
+    const deg = rng.pick(ANGLE_DEGS);
+    const type = deg < 90 ? 'Acute' : deg === 90 ? 'Right' : 'Obtuse';
+    const correct = `${type} angle`;
+    const ds = ['Acute angle', 'Right angle', 'Obtuse angle', 'Straight angle']
+      .filter((t) => t !== correct)
+      .map((t) => ({ text: t, misconception: `Misclassified a ${correct.toLowerCase()} as ${t.toLowerCase()}` }));
+    const options = buildOptions(rng, correct, ds);
+    if (!options) return null;
+    return {
+      standard: G4_GSR7, grade: 4, strand: 'G', kc: 'Classify angles',
+      stem: `The angle shown measures ${deg}°. What type of angle is it?`,
+      options, answer: correct, dok: 1, b: -0.6,
+      figure: { type: 'angle', degrees: deg, label: `${deg}°` },
+    };
+  },
+};
+
+const LINE_RELS: { shape: string; name: string }[] = [
+  { shape: 'parallel_lines', name: 'Parallel' },
+  { shape: 'perpendicular_lines', name: 'Perpendicular' },
+  { shape: 'intersecting_lines', name: 'Intersecting' },
+];
+const lineRelationship: ItemModel = {
+  id: 'line-relationship', standard: G4_GSR8, grade: 4, strand: 'G',
+  generate(rng) {
+    const r = rng.pick(LINE_RELS);
+    const correct = r.name;
+    const ds = LINE_RELS.filter((x) => x.name !== r.name)
+      .map((x) => ({ text: x.name, misconception: `Confused ${r.name.toLowerCase()} with ${x.name.toLowerCase()} lines` }));
+    ds.push({ text: 'Curved', misconception: 'Did not recognize the lines as straight' });
+    const options = buildOptions(rng, correct, ds.slice(0, 3));
+    if (!options) return null;
+    return {
+      standard: G4_GSR8, grade: 4, strand: 'G', kc: 'Parallel & perpendicular lines',
+      stem: 'What best describes the pair of lines shown?',
+      options, answer: correct, dok: 1, b: -0.4,
+      figure: { type: 'geometry2d', shape: r.shape },
+    };
+  },
+};
+
 export const ITEM_MODELS: ItemModel[] = [
   reflectAcrossAxis,
   rotateAboutOrigin,
@@ -300,6 +393,9 @@ export const ITEM_MODELS: ItemModel[] = [
   volumeCone,
   volumeSphere,
   distanceNumberLine,
+  symmetryCount,
+  angleType,
+  lineRelationship,
 ];
 
 export function modelsFor(grade: number, strand?: string): ItemModel[] {
