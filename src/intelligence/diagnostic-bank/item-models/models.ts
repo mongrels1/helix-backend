@@ -382,6 +382,116 @@ const lineRelationship: ItemModel = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// 5.GSR.8 — grade-5 geometry: the coordinate plane (first quadrant). Name and
+// locate ordered pairs, and measure distance along a grid line. Each item plots
+// its point(s) on a real grid BY CONSTRUCTION, so a grade-5 coordinate item is
+// never figure-less — the exact gap that made the imported "ordered pair for
+// point K" items unanswerable.
+// ---------------------------------------------------------------------------
+const G5_GSR8 = '5.GSR.8';
+
+/** A first-quadrant point with positive, UNEQUAL coordinates, so its reversal
+ *  (y, x) is always a distinct, plausible distractor. */
+function firstQuadrantPoint(rng: Rng, lo = 1, hi = 8): Pt {
+  const x = rng.int(lo, hi);
+  let y = rng.int(lo, hi);
+  if (y === x) y = x < hi ? x + 1 : x - 1;
+  return { x, y };
+}
+
+// Read the ordered pair of a single plotted, lettered point.
+const readOrderedPair: ItemModel = {
+  id: 'read-ordered-pair', standard: G5_GSR8, grade: 5, strand: 'G',
+  generate(rng) {
+    const label = rng.pick(['P', 'K', 'S', 'M', 'T', 'R'] as const);
+    const pt = firstQuadrantPoint(rng);
+    const correct = P(pt);
+    const options = buildOptions(rng, correct, [
+      { text: P({ x: pt.y, y: pt.x }), misconception: 'Reversed the coordinates — read the y-value before the x-value' },
+      { text: P({ x: 0, y: pt.y }), misconception: 'Read only the vertical distance and used 0 for x' },
+      { text: P({ x: pt.x, y: 0 }), misconception: 'Read only the horizontal distance and used 0 for y' },
+    ]);
+    if (!options) return null;
+    return {
+      standard: G5_GSR8, grade: 5, strand: 'G', kc: 'Name the ordered pair of a point',
+      stem: `What ordered pair gives the location of point ${label} on the coordinate grid?`,
+      options, answer: correct, dok: 1, b: -0.6,
+      figure: { type: 'coordinate_grid', min: 0, max: Math.max(pt.x, pt.y) + 1, points: [{ x: pt.x, y: pt.y, label }] },
+    };
+  },
+};
+
+// Locate a point: which lettered point sits at the given ordered pair?
+const identifyPointAt: ItemModel = {
+  id: 'identify-point-at', standard: G5_GSR8, grade: 5, strand: 'G',
+  generate(rng) {
+    const target = firstQuadrantPoint(rng);
+    const reversed: Pt = { x: target.y, y: target.x };
+    const used = new Set([`${target.x},${target.y}`, `${reversed.x},${reversed.y}`]);
+    const extras: Pt[] = [];
+    let guard = 0;
+    while (extras.length < 2 && guard++ < 40) {
+      const p = firstQuadrantPoint(rng);
+      const k = `${p.x},${p.y}`;
+      if (!used.has(k)) { used.add(k); extras.push(p); }
+    }
+    if (extras.length < 2) return null;
+    const labels = ['K', 'L', 'M', 'N'];
+    const placed = rng
+      .shuffle([
+        { p: target, role: 'correct' as const },
+        { p: reversed, role: 'reversed' as const },
+        { p: extras[0], role: 'other' as const },
+        { p: extras[1], role: 'other' as const },
+      ])
+      .map((e, i) => ({ ...e, label: labels[i] }));
+    const correctLabel = placed.find((e) => e.role === 'correct')!.label;
+    const distractors = placed
+      .filter((e) => e.role !== 'correct')
+      .map((e) => ({
+        text: e.label,
+        misconception: e.role === 'reversed' ? 'Reversed the coordinates — located (y, x) instead of (x, y)' : 'Selected a point at the wrong location',
+      }));
+    const options = buildOptions(rng, correctLabel, distractors);
+    if (!options) return null;
+    const hi = Math.max(...placed.flatMap((e) => [e.p.x, e.p.y]));
+    return {
+      standard: G5_GSR8, grade: 5, strand: 'G', kc: 'Locate a point from its ordered pair',
+      stem: `Which point on the coordinate grid is located at ${P(target)}?`,
+      options, answer: correctLabel, dok: 2, b: -0.3,
+      figure: { type: 'coordinate_grid', min: 0, max: hi + 1, points: placed.map((e) => ({ x: e.p.x, y: e.p.y, label: e.label })) },
+    };
+  },
+};
+
+// Distance between two points on a horizontal or vertical grid line (first quadrant).
+const coordinateDistanceLine: ItemModel = {
+  id: 'coordinate-distance-line', standard: G5_GSR8, grade: 5, strand: 'G',
+  generate(rng) {
+    const vertical = rng.bool();
+    const A = firstQuadrantPoint(rng, 1, 5);
+    const d = rng.int(2, 5);
+    const B: Pt = vertical ? { x: A.x, y: A.y + d } : { x: A.x + d, y: A.y };
+    const correct = `${d} units`;
+    const sum = A.x + A.y + B.x + B.y;
+    const options = buildOptions(rng, correct, [
+      { text: `${d + 1} units`, misconception: 'Counted the grid lines instead of the spaces between them' },
+      { text: `${sum} units`, misconception: 'Added all the coordinates instead of subtracting' },
+      { text: `${Math.max(1, d - 1)} units`, misconception: 'Counting error — came up one space short' },
+    ]);
+    if (!options) return null;
+    const hi = Math.max(A.x, A.y, B.x, B.y);
+    return {
+      standard: G5_GSR8, grade: 5, strand: 'G', kc: 'Distance between two points on a grid line',
+      stem: 'Points A and B are shown on the coordinate grid. How many units apart are they?',
+      options, answer: correct, dok: 2, b: 0,
+      figure: { type: 'coordinate_grid', min: 0, max: hi + 1, points: [{ x: A.x, y: A.y, label: 'A' }, { x: B.x, y: B.y, label: 'B' }] },
+    };
+  },
+};
+
+
 export const ITEM_MODELS: ItemModel[] = [
   reflectAcrossAxis,
   rotateAboutOrigin,
@@ -396,6 +506,9 @@ export const ITEM_MODELS: ItemModel[] = [
   symmetryCount,
   angleType,
   lineRelationship,
+  readOrderedPair,
+  identifyPointAt,
+  coordinateDistanceLine,
 ];
 
 export function modelsFor(grade: number, strand?: string): ItemModel[] {
