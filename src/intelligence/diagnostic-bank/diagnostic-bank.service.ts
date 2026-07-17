@@ -609,6 +609,45 @@ export class DiagnosticBankService {
     const s = (stem || '').toLowerCase();
     const a = (answer || '').toLowerCase();
     if (/\bwhich\b.*\b(triangles|shapes|figures|rectangles|angles|polygons|lines)\b.*(below|shown|following)/.test(s)) return undefined;
+    // ---- number-driven figures (any grade): parse the dimensions from the stem
+    // and reuse the renderer types that already exist. Only draw when the numbers
+    // are actually IN the stem - never fabricate a mislabeled figure. ----
+    const grab = (re: RegExp): number | undefined => { const m = s.match(re); return m ? Number(m[1]) : undefined; };
+    const legM = s.match(/legs?\s+(?:of\s+|are\s+|measuring\s+|equal to\s+)?(\d+(?:\.\d+)?)\D{1,18}?(\d+(?:\.\d+)?)/);
+    if (/right triangle|hypotenuse|\bleg/.test(s) && legM) {
+      return { type: 'right_triangle', a: Number(legM[1]), b: Number(legM[2]), labelA: legM[1], labelB: legM[2], labelC: 'x' };
+    }
+    for (const solid of ['cylinder', 'cone'] as const) {
+      if (s.includes(solid)) {
+        const dm = grab(/diameter\D{0,10}(\d+(?:\.\d+)?)/);
+        const r = grab(/radius\D{0,10}(\d+(?:\.\d+)?)/) ?? (dm !== undefined ? dm / 2 : undefined);
+        const h = grab(/height\D{0,10}(\d+(?:\.\d+)?)/);
+        if (r && h) return { type: solid, r, h, rLabel: `${r}`, hLabel: `${h}` };
+      }
+    }
+    if (/(volume|surface area)/.test(s) && /\bsphere\b|\bglobe\b/.test(s)) {
+      const dm = grab(/diameter\D{0,10}(\d+(?:\.\d+)?)/);
+      const r = grab(/radius\D{0,10}(\d+(?:\.\d+)?)/) ?? (dm !== undefined ? dm / 2 : undefined);
+      if (r) return { type: 'sphere', r, rLabel: `${r}` };
+    }
+    if (/\btriangle\b/.test(s) && /area/.test(s)) {
+      const base = grab(/base\D{0,10}(\d+(?:\.\d+)?)/); const th = grab(/height\D{0,10}(\d+(?:\.\d+)?)/);
+      if (base && th) return { type: 'triangle', base, height: th, mode: 'area' };
+    }
+    if ((/\brectangle\b|rectangular/.test(s)) && /(area|perimeter)/.test(s)) {
+      const rm = s.match(/(\d+(?:\.\d+)?)\s*(?:by|×|x)\s*(\d+(?:\.\d+)?)/);
+      if (rm) return { type: 'rect', w: Number(rm[1]), h: Number(rm[2]), mode: /perimeter/.test(s) ? 'perimeter' : 'area' };
+    }
+    if (/\bcircle\b|circular|paper plate|diameter|circumference/.test(s)) {
+      const d = grab(/diameter\D{0,10}(\d+(?:\.\d+)?)/);
+      const r = grab(/radius\D{0,10}(\d+(?:\.\d+)?)/) ?? (d !== undefined ? d / 2 : undefined);
+      if (r) return { type: 'circle', r, show: d !== undefined ? 'diameter' : 'radius', label: `${d ?? r}` };
+    }
+    const pts = Array.from(s.matchAll(/\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/g)).map((m) => ({ x: Number(m[1]), y: Number(m[2]) }));
+    if (pts.length >= 1 && /plot|graph|coordinate|distance|between|ordered pair|plane|midpoint/.test(s)) {
+      const ext = Math.ceil(Math.max(2, ...pts.flatMap((p) => [Math.abs(p.x), Math.abs(p.y)]))) + 1;
+      return { type: 'coordinate_grid', min: -ext, max: ext, points: pts.slice(0, 4).map((p) => ({ x: p.x, y: p.y, label: `(${p.x}, ${p.y})` })) };
+    }
     if (/\btype of angle\b|\bwhich angle\b|\bangle\b.{0,30}\b(shown|below|diagram)\b/.test(s) && !/triangle/.test(s)) {
       const deg = /straight/.test(a) ? 180 : /right/.test(a) ? 90 : /obtuse/.test(a) ? 130 : /acute/.test(a) ? 50 : 130;
       return { type: 'angle', degrees: deg };
