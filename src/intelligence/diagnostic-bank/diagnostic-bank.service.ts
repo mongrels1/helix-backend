@@ -228,6 +228,11 @@ export class DiagnosticBankService {
       const misc = Array.isArray(it.misconceptions) ? it.misconceptions.map((m) => String(m ?? '')) : [];
       while (misc.length < 4) misc.push('');
       const figure = /^G/i.test(gs.strand) ? this.synthGeometryFigure(stem, options[correct]) : undefined;
+      // Same gate the generation path uses: never import an item that points at a figure
+      // ("the graph shown below", "ordered pair for point K") when none could be synthesized —
+      // it would be an unanswerable blank. Skip + report so those can instead come in through
+      // the vision figure-extraction pass.
+      if (!this.factCheck(stem, options, correct, figure)) { skipped++; continue; }
       rows.push({
         grade: gs.grade, strand: gs.strand, kc: 'Imported item',
         standard: standardFor(gs.grade, gs.strand) ?? String(it.standard),
@@ -717,7 +722,7 @@ export class DiagnosticBankService {
   private factCheck(stem: string, options: string[], correct: number, figure: object | undefined): boolean {
     const s = stem.toLowerCase();
     const refsFigure =
-      /(shown|pictured|graphed|plotted|drawn|given)\s+(below|above)|the (figure|diagram|graph|grid|number line)\b|in the (figure|diagram|graph)|below[.?]?\s*$|following (figure|diagram|graph)/.test(s);
+      /(shown|pictured|graphed|plotted|drawn|given)\s+(below|above)|the (figure|diagram|graph|grid|number line)\b|in the (figure|diagram|graph)|below[.?]?\s*$|following (figure|diagram|graph)|ordered pair\b|location of point\b|which point (is )?(located|at)\b|on the coordinate (grid|plane)\b|the coordinate (grid|plane)\b/.test(s);
     if (refsFigure && !figure) return false;
 
     const numOf = (str: string): number | null => {
