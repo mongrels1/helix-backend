@@ -811,14 +811,17 @@ export class DiagnosticBankService {
       select: { grade: true, strand: true, standard: true, dok: true, status: true },
     });
 
-    const gradeMap = new Map<number, { total: number; byStatus: Record<string, number>; standards: Set<string> }>();
+    const gradeMap = new Map<number, { total: number; vetted: number; byStatus: Record<string, number>; standards: Set<string> }>();
     const dok: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, none: 0 };
     const strandMap = new Map<string, number>();
     const byStatusTotal: Record<string, number> = { draft: 0, validated: 0, rejected: 0, published: 0 };
 
     for (const it of items) {
-      const g = gradeMap.get(it.grade) ?? { total: 0, byStatus: {}, standards: new Set<string>() };
+      const g = gradeMap.get(it.grade) ?? { total: 0, vetted: 0, byStatus: {}, standards: new Set<string>() };
       g.total += 1;
+      // Coverage counts only VETTED items (validated or published) — drafts and
+      // rejected must not inflate a grade toward "viable".
+      if (it.status === 'validated' || it.status === 'published') g.vetted += 1;
       g.byStatus[it.status] = (g.byStatus[it.status] ?? 0) + 1;
       if (it.standard) g.standards.add(it.standard);
       gradeMap.set(it.grade, g);
@@ -832,8 +835,9 @@ export class DiagnosticBankService {
       .map(([grade, v]) => ({
         grade,
         total: v.total,
-        viable: v.total >= VIABILITY_MIN,
-        short: Math.max(0, VIABILITY_MIN - v.total),
+        vetted: v.vetted,
+        viable: v.vetted >= VIABILITY_MIN,
+        short: Math.max(0, VIABILITY_MIN - v.vetted),
         byStatus: v.byStatus,
         standards: [...v.standards].sort(),
       }))
