@@ -588,7 +588,10 @@ export class DiagnosticBankService {
       ['square', 'square'], ['rectangle', 'rectangle'], ['rhombus', 'rhombus'],
       ['parallelogram', 'parallelogram'], ['trapezoid', 'trapezoid'], ['kite', 'kite'], ['triangle', 'triangle_isosceles'],
     ];
-    const refsFigure = /\bthis \w+|the (shape|figure|triangle|rectangle|square|polygon|angle|diagram)\b|shown|\bbelow\b|drawn|pictured/.test(s);
+    // Only a stem that points at an ALREADY-SHOWN figure gets one. NOT "drew/drawn"
+    // (that is the person drawing, e.g. "which shape could she have drawn") - attaching
+    // there would reveal the answer.
+    const refsFigure = /\bthis \w+|\bthe (shape|figure|triangle|rectangle|square|polygon|angle|diagram)\b|\bshown\b|\bbelow\b|pictured/.test(s);
     const hit = SHAPES.find(([w]) => s.includes(w) || a.includes(w));
     if (hit && refsFigure) {
       const sym = /lines? of symmetry|symmetr/.test(s);
