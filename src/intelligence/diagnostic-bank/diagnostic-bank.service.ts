@@ -209,7 +209,7 @@ export class DiagnosticBankService {
    * standard, DOK - with a geometry figure attached when the stem shows one.
    */
   async importItems(
-    body: { items: Array<{ stem?: string; options?: string[]; correct?: number; standard?: string; dok?: number; misconceptions?: string[] }> },
+    body: { items: Array<{ stem?: string; options?: string[]; correct?: number; standard?: string; dok?: number; misconceptions?: string[]; figure?: object }> },
     createdBy?: string,
   ): Promise<{ created: number; skipped: number; requested: number }> {
     const items = Array.isArray(body.items) ? body.items : [];
@@ -227,7 +227,14 @@ export class DiagnosticBankService {
       if (!stem || options.length !== 4 || new Set(options).size !== 4 || !(correct >= 0 && correct < 4) || !gs) { skipped++; continue; }
       const misc = Array.isArray(it.misconceptions) ? it.misconceptions.map((m) => String(m ?? '')) : [];
       while (misc.length < 4) misc.push('');
-      const figure = /^G/i.test(gs.strand) ? this.synthGeometryFigure(stem, options[correct]) : undefined;
+      // Prefer a vision-extracted source figure (attached by the import UI from the original
+      // PDF) when present and coherent; otherwise synthesize from the stem. sanitizeFigure
+      // guards either source so a wrong-shape figure never attaches.
+      const provided =
+        it.figure && typeof it.figure === 'object' && this.isAllowedFigure(it.figure)
+          ? this.sanitizeFigure(stem, it.figure as object)
+          : undefined;
+      const figure = provided ?? (/^G/i.test(gs.strand) ? this.synthGeometryFigure(stem, options[correct]) : undefined);
       // Same gate the generation path uses: never import an item that points at a figure
       // ("the graph shown below", "ordered pair for point K") when none could be synthesized —
       // it would be an unanswerable blank. Skip + report so those can instead come in through
