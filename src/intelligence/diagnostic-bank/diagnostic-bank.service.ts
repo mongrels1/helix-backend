@@ -668,7 +668,7 @@ export class DiagnosticBankService {
    *  never staples a figure onto a plain word problem. */
   private stemReferencesVisual(stem: string): boolean {
     const s = stem.toLowerCase();
-    return /\b(figure|diagram|model|grid|graph|chart|number line|line plot|dot plot|array|shaded|picture|pictured|coordinate plane|drawing|plotted|shown below|shown above)\b/.test(s)
+    return /\b(figure|diagram|model|grid|graph|chart|number line|line plot|dot plot|array|shaded|picture|pictured|coordinate plane|coordinate|ordered pair|point [a-z]|plane|drawing|plotted|shown below|shown above|gr[áa]fica|gr[áa]fico|figura|modelo|cuadr[íi]cula|recta num[ée]rica|plano|punto|diagrama)\b/.test(s)
       || /\bbelow[.:?]?\s*$/.test(s.trim());
   }
 
@@ -685,6 +685,13 @@ export class DiagnosticBankService {
     if (!figure || typeof figure !== 'object') return undefined;
     const t = String((figure as { type?: unknown }).type ?? '');
     const s = stem.toLowerCase();
+    // Figure-type <-> stem consistency: stop a mis-matched vision figure — a data
+    // table or scatter landing on a coordinate/point question, a scatter with no
+    // relationship stem, a table with no table/pattern language.
+    const isCoordinateQ = /coordinate|ordered pair|\bplane\b|\bpoint [a-z]\b|\(-?\d+\s*,\s*-?\d+\)|punto|gr[áa]fica/.test(s);
+    if (isCoordinateQ && ['function_table', 'ratio_table', 'bar_graph', 'histogram', 'scatter_plot', 'dot_plot', 'triangle', 'rect', 'angle'].includes(t)) return undefined;
+    if (t === 'scatter_plot' && !/scatter|relationship|correlation|trend|associat|line of best fit|as .+ increase/.test(s)) return undefined;
+    if ((t === 'function_table' || t === 'ratio_table') && !/table|pattern|rule|input|output|ratio|rate|proportion|equivalent|sequence/.test(s)) return undefined;
     // A flat 2-D triangle/rect/angle can never stand in for a 3-D solid or a
     // volume/surface-area item — that is mathematically wrong. Strip those.
     const isSolidOrVolume = /\b(volume|surface area|cone|cylinder|sphere|prism|pyramid|cubic)\b/.test(s);
