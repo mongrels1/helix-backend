@@ -46,6 +46,15 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('items/:id/figure')
+  async setFigure(
+    @Param('id') id: string,
+    @Body() body: { figure?: object | null },
+  ) {
+    const data = await this.svc.setFigure(id, body?.figure ?? null);
+    return { success: true as const, data };
+  }
+
   @Post('generate')
   async generate(
     @Body() body: { grade: number; strand: string; count?: number },

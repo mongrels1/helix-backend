@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
@@ -156,6 +157,18 @@ export class DiagnosticBankService {
     });
     const status: DiagStatus = action === 'validate' ? 'validated' : action === 'reject' ? 'rejected' : 'draft';
     return this.prisma.diagnosticItem.update({ where: { id }, data: { status } });
+  }
+
+  /** Set or clear one item's figure (the manual figure editor in Review). Passing
+   *  null removes the figure. Stored verbatim; the renderer validates on display. */
+  async setFigure(id: string, figure: object | null) {
+    await this.prisma.diagnosticItem.findUniqueOrThrow({ where: { id } }).catch(() => {
+      throw new NotFoundException('Diagnostic item not found');
+    });
+    return this.prisma.diagnosticItem.update({
+      where: { id },
+      data: { figure: figure == null ? Prisma.JsonNull : (figure as Prisma.InputJsonValue) },
+    });
   }
 
   /**
