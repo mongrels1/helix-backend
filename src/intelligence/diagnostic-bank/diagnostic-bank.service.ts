@@ -290,6 +290,16 @@ export class DiagnosticBankService {
     return { validated: res.count };
   }
 
+  /** PERMANENTLY delete rejected items (optionally one grade). This is the ONLY
+   *  hard-delete in the bank and CANNOT be undone. Only ever touches rejected —
+   *  drafts, validated and published are never removed. */
+  async deleteRejected(grade?: number): Promise<{ deleted: number }> {
+    const res = await this.prisma.diagnosticItem.deleteMany({
+      where: { status: 'rejected', ...(typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {}) },
+    });
+    return { deleted: res.count };
+  }
+
   /** Publish all validated items — they become the set the live diagnostic will
    *  serve once the serve-path is wired (next phase). Never touches rejected. */
   async publish(): Promise<{ published: number }> {

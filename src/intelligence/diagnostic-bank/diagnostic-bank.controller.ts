@@ -114,6 +114,14 @@ export class DiagnosticBankController {
     return { success: true as const, data };
   }
 
+  @Post('delete-rejected')
+  async deleteRejected(@Body() body: { grade?: number }) {
+    const data = await this.svc.deleteRejected(
+      typeof body?.grade === 'number' ? body.grade : Number(body?.grade),
+    );
+    return { success: true as const, data };
+  }
+
   @Post('publish')
   async publish() {
     const data = await this.svc.publish();
