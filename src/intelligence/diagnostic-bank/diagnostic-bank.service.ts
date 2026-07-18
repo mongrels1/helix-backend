@@ -548,6 +548,9 @@ export class DiagnosticBankService {
       'array of { "stem": <the first ~12 words of the question this figure belongs to, read from the page ' +
       '(or copied from the list below if provided)>, "figure": <figure spec> }. Figure types: ' +
       '{"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":6,"label":"6"}]}, ' +
+      '{"type":"decimal_grid","value":0.37,"label":"0.37"}, ' +
+      '{"type":"fraction_bar","whole":4,"shaded":3,"label":"3/4"}, ' +
+      '{"type":"place_value_chart","value":3642,"highlight":["Tens"]}, ' +
       '{"type":"bar_graph","bars":[{"label":"A","value":3}]}, ' +
       '{"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3}],"line":{"m":1,"b":0}}, ' +
       '{"type":"dot_plot","min":0,"max":10,"values":[2,3,3,4]}, ' +
@@ -560,7 +563,11 @@ export class DiagnosticBankService {
       '{"type":"transformation","preimage":[{"x":1,"y":1},{"x":3,"y":1},{"x":1,"y":4}],"image":[{"x":-1,"y":1},{"x":-3,"y":1},{"x":-1,"y":4}],"kind":"reflection"}, ' +
       'and (2-D only) {"type":"triangle",...}, ' +
       '{"type":"rect",...}, {"type":"angle",...}. Read ACTUAL values off the image (axis labels, plotted ' +
-      'points, table cells, bar heights, tick marks) — do NOT invent data. Do NOT return a figure for a ' +
+      'points, table cells, bar heights, tick marks; for a decimal/hundredths grid COUNT the shaded squares ' +
+      'so value = shaded/100, and a tenths strip of 3 of 10 shaded = 0.3; for a fraction bar or a shape split ' +
+      'into equal parts, whole = total parts and shaded = filled parts; for a fraction/decimal number line use ' +
+      'number_line with a mark at the plotted point labeled as the fraction) — do NOT invent data. Do NOT ' +
+      'return a figure for a ' +
       'question that has no visual. A cylinder/cone/sphere IS supported (use the types above with real ' +
       'radius/height); but do NOT attempt a prism, pyramid, or any diagram you cannot reproduce faithfully — ' +
       'skip those entirely. No prose outside the JSON array.';
@@ -616,6 +623,7 @@ export class DiagnosticBankService {
       'dot_plot', 'histogram', 'scatter_plot', 'right_triangle', 'triangle', 'rect', 'angle',
       'cylinder', 'cone', 'sphere', 'circle', 'transformation',
       'rect_prism', 'tri_prism', 'angle_pair',
+      'decimal_grid', 'fraction_bar', 'place_value_chart',
     ]);
     return typeof t === 'string' && allowed.has(t);
   }
