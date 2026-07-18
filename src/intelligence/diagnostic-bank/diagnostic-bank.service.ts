@@ -230,10 +230,13 @@ export class DiagnosticBankService {
       // Prefer a vision-extracted source figure (attached by the import UI from the original
       // PDF) when present and coherent; otherwise synthesize from the stem. sanitizeFigure
       // guards either source so a wrong-shape figure never attaches.
-      const provided =
-        it.figure && typeof it.figure === 'object' && this.isAllowedFigure(it.figure)
+      const providedRaw =
+        it.figure && typeof it.figure === 'object' && this.isAllowedFigure(it.figure) && !this.isJunkDataFigure(it.figure as object)
           ? this.sanitizeFigure(stem, it.figure as object)
           : undefined;
+      // A vetted import keeps a source figure ONLY when the stem actually refers to a
+      // visual — stops the vision pass from stapling a spurious graph onto a word problem.
+      const provided = providedRaw && this.stemReferencesVisual(stem) ? providedRaw : undefined;
       const figure = provided ?? (/^G/i.test(gs.strand) ? this.synthGeometryFigure(stem, options[correct]) : undefined);
       // Same gate the generation path uses: never import an item that points at a figure
       // ("the graph shown below", "ordered pair for point K") when none could be synthesized —
@@ -568,7 +571,11 @@ export class DiagnosticBankService {
       'into equal parts, whole = total parts and shaded = filled parts; for a fraction/decimal number line use ' +
       'number_line with a mark at the plotted point labeled as the fraction) — do NOT invent data. Do NOT ' +
       'return a figure for a ' +
-      'question that has no visual. A cylinder/cone/sphere IS supported (use the types above with real ' +
+      'question that has no visual. ONLY reproduce a figure that is literally DRAWN on the page (a grid, ' +
+      'number line, fraction or area model, plotted graph, table, or geometric diagram); NEVER build one from ' +
+      'the question text, an equation, or the answer choices — labels like "A. $19" are answer options, NOT ' +
+      'graph data. A word problem with no drawn picture gets NOTHING. ' +
+      'A cylinder/cone/sphere IS supported (use the types above with real ' +
       'radius/height); but do NOT attempt a prism, pyramid, or any diagram you cannot reproduce faithfully — ' +
       'skip those entirely. No prose outside the JSON array.';
     const out: Array<{ stem: string; figure: object }> = [];
@@ -600,7 +607,7 @@ export class DiagnosticBankService {
       for (const row of parsed) {
         const stem = String(row?.stem ?? '').trim();
         const fig = row?.figure;
-        if (stem.length > 4 && fig && typeof fig === 'object' && this.isAllowedFigure(fig)) {
+        if (stem.length > 4 && fig && typeof fig === 'object' && this.isAllowedFigure(fig) && !this.isJunkDataFigure(fig as object)) {
           out.push({ stem, figure: fig as object });
         }
       }
@@ -626,6 +633,43 @@ export class DiagnosticBankService {
       'decimal_grid', 'fraction_bar', 'place_value_chart',
     ]);
     return typeof t === 'string' && allowed.has(t);
+  }
+
+  /** Vision sometimes turns answer choices or a word problem into a meaningless
+   *  chart (all-zero bars, option-labelled axes). Drop those outright. */
+  private isJunkDataFigure(figure: object): boolean {
+    const f = figure as Record<string, any>;
+    const t = String(f?.type ?? '');
+    const optionLike = (v: unknown) => /^[A-D][.)]/.test(String(v ?? '').trim());
+    const flat = (nums: number[]) => !nums.length || nums.every((v) => v === 0) || nums.every((v) => v === nums[0]);
+    if (t === 'bar_graph') {
+      const bars = Array.isArray(f.bars) ? f.bars : [];
+      if (bars.length < 2 || flat(bars.map((b: any) => Number(b?.value) || 0))) return true;
+      if (bars.some((b: any) => optionLike(b?.label))) return true;
+    }
+    if (t === 'histogram') {
+      const bins = Array.isArray(f.bins) ? f.bins : [];
+      if (bins.length < 2 || bins.every((b: any) => (Number(b?.count) || 0) === 0)) return true;
+      if (bins.some((b: any) => optionLike(b?.label))) return true;
+    }
+    if (t === 'dot_plot' && (!Array.isArray(f.values) || !f.values.length)) return true;
+    if (t === 'scatter_plot') {
+      const pts = Array.isArray(f.points) ? f.points : [];
+      if (pts.length < 2 || pts.every((q: any) => Number(q?.y) === Number(pts[0]?.y))) return true;
+    }
+    if (t === 'coordinate_grid') {
+      const pts = Array.isArray(f.points) ? f.points : [];
+      if (pts.some((q: any) => optionLike(q?.label))) return true;
+    }
+    return false;
+  }
+
+  /** True only when the stem actually refers to a drawn visual — so a vetted import
+   *  never staples a figure onto a plain word problem. */
+  private stemReferencesVisual(stem: string): boolean {
+    const s = stem.toLowerCase();
+    return /\b(figure|diagram|model|grid|graph|chart|number line|line plot|dot plot|array|shaded|picture|pictured|coordinate plane|drawing|plotted|shown below|shown above)\b/.test(s)
+      || /\bbelow[.:?]?\s*$/.test(s.trim());
   }
 
   /**
