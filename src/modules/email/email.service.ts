@@ -77,6 +77,22 @@ export class EmailService {
     });
   }
 
+  async sendTrialEndingEmail(to: string, firstName?: string, upgradeUrl?: string): Promise<void> {
+    const url = upgradeUrl?.trim() || this.config.get<string>('app.upgradeUrl') || 'https://go.edkairos.com';
+    const displayName = firstName?.trim() || 'there';
+    await this.sendEmail({
+      to,
+      subject: 'Your EdKairos trial ends in 3 days',
+      html: `
+        <p>Hi ${this.escapeHtml(displayName)},</p>
+        <p>Your EdKairos trial ends in 3 days. To keep uninterrupted access to the AI Tutor, daily Practice, and Skills-Up lessons, subscribe here:</p>
+        <p><a href="${this.escapeHtml(url)}">Keep my EdKairos access</a></p>
+        <p>Already subscribed? You're all set — no action needed.</p>
+      `,
+      text: `Hi ${displayName}, your EdKairos trial ends in 3 days. Keep uninterrupted access (AI Tutor, Practice, Skills-Up) by subscribing: ${url}\n\nAlready subscribed? You're all set.`,
+    });
+  }
+
   async sendWeeklyReport(to: string, subject: string, html: string, text: string): Promise<void> {
     await this.sendEmail({ to, subject, html, text });
   }

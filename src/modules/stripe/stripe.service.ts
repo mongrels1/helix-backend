@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EmailService } from '@modules/email/email.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const StripeLib = require('stripe');
 
@@ -11,14 +12,17 @@ export class StripeService {
   private readonly stripe: Stripe | null;
   private readonly couponId: string;
   private readonly webhookSecret: string;
+  private readonly upgradeUrl: string;
 
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly email: EmailService,
   ) {
     const key = (this.config.get<string>('stripe.secretKey') ?? '').trim();
     this.couponId = (this.config.get<string>('stripe.referralCouponId') ?? '').trim();
     this.webhookSecret = (this.config.get<string>('stripe.webhookSecret') ?? '').trim();
+    this.upgradeUrl = (this.config.get<string>('app.upgradeUrl') ?? 'https://go.edkairos.com').trim();
     this.stripe = key ? (new StripeLib(key) as Stripe) : null;
     if (!this.stripe) this.logger.warn('StripeService disabled: STRIPE_SECRET_KEY not set');
   }
@@ -69,6 +73,8 @@ export class StripeService {
       case 'customer.subscription.resumed':
       case 'customer.subscription.deleted':
         return this.syncSubscription(event.data.object as Stripe.Subscription);
+      case 'customer.subscription.trial_will_end':
+        return this.handleTrialWillEnd(event.data.object as Stripe.Subscription);
       default:
         return { handled: false, action: event.type };
     }
@@ -131,22 +137,66 @@ export class StripeService {
     return { handled: true, action: `${sub.status}->${planStatus}${found ? '' : ':no_user'}`, email };
   }
 
-  private async customerEmail(
+  private async getCustomer(
     customer: string | Stripe.Customer | Stripe.DeletedCustomer,
-  ): Promise<string | null> {
+  ): Promise<Stripe.Customer | null> {
     if (typeof customer !== 'string') {
       if ('deleted' in customer && customer.deleted) return null;
-      return (customer as Stripe.Customer).email ?? null;
+      return customer as Stripe.Customer;
     }
     if (!this.stripe) return null;
     try {
       const c = await this.stripe.customers.retrieve(customer);
       if ((c as Stripe.DeletedCustomer).deleted) return null;
-      return (c as Stripe.Customer).email ?? null;
+      return c as Stripe.Customer;
     } catch (err) {
       this.logger.error(`Could not retrieve Stripe customer ${customer}: ${String(err)}`);
       return null;
     }
+  }
+
+  private async customerEmail(
+    customer: string | Stripe.Customer | Stripe.DeletedCustomer,
+  ): Promise<string | null> {
+    const c = await this.getCustomer(customer);
+    return c?.email ?? null;
+  }
+
+  /**
+   * Trial ending (~3 days out). Sends a "subscribe to keep access" reminder ONLY
+   * when the trial cannot auto-convert (no payment method on the subscription or
+   * customer). Stripe warns this can fire even after payment is collected, so we
+   * skip anyone no longer trialing or already carrying a payment method.
+   */
+  private async handleTrialWillEnd(
+    sub: Stripe.Subscription,
+  ): Promise<{ handled: boolean; action?: string; email?: string }> {
+    if (sub.status !== 'trialing') {
+      return { handled: true, action: `trial_will_end:skip_${sub.status}` };
+    }
+    const customer = await this.getCustomer(sub.customer);
+    const email = customer?.email ?? null;
+    if (!email) return { handled: true, action: 'trial_will_end:no_email' };
+
+    const subPm = (sub as unknown as { default_payment_method?: unknown }).default_payment_method;
+    const custPm = customer?.invoice_settings?.default_payment_method ?? null;
+    const custSrc = (customer as unknown as { default_source?: unknown }).default_source ?? null;
+    if (subPm != null || custPm != null || custSrc != null) {
+      // Payment method on file -> auto-converts to paid; no "subscribe" nudge.
+      return { handled: true, action: 'trial_will_end:auto_converts', email };
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { email: { equals: email.trim(), mode: 'insensitive' }, deletedAt: null },
+      select: { profile: { select: { firstName: true } } },
+    });
+    const upgradeUrl = `${this.upgradeUrl}?email=${encodeURIComponent(email)}`;
+    try {
+      await this.email.sendTrialEndingEmail(email, user?.profile?.firstName, upgradeUrl);
+    } catch (err) {
+      this.logger.error(`Trial-ending reminder failed for ${email}: ${String(err)}`);
+    }
+    return { handled: true, action: 'trial_will_end:reminded', email };
   }
 
   private async applyEntitlement(

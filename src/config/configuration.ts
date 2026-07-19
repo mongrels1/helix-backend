@@ -22,6 +22,7 @@ export default () => ({
   app: {
     frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
     referralLinkBase: process.env.REFERRAL_LINK_BASE ?? 'https://go.edkairos.com/free-diagnostic',
+    upgradeUrl: process.env.UPGRADE_URL ?? 'https://go.edkairos.com',
   },
   ghl: {
     webhookSecret: process.env.GHL_WEBHOOK_SECRET ?? '',
