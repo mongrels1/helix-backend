@@ -65,6 +65,8 @@ export class StripeService {
     switch (event.type) {
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
+      case 'customer.subscription.paused':
+      case 'customer.subscription.resumed':
       case 'customer.subscription.deleted':
         return this.syncSubscription(event.data.object as Stripe.Subscription);
       default:
