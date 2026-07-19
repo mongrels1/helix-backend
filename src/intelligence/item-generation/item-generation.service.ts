@@ -14,6 +14,7 @@ import { applicableMisconceptions } from './misconception-library';
 import { g6SeedForStandard } from './g6-seed';
 import { g7SeedForStandard } from './g7-seed';
 import { buildIntegrityReport, type BankRow } from './integrity';
+import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning } from './reliability-gate';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
 
@@ -325,6 +326,8 @@ export class ItemGenerationService {
       stem: it.stem,
       options: (it.options ?? []).map((o) => o.text),
       correctIndex: (it.options ?? []).findIndex((o) => o.correct),
+      solution: it.solution ?? '',
+      figure: it.figure ? JSON.stringify(it.figure).slice(0, 400) : null,
     }));
     const system =
       'You are a STRICT K-8 math item checker. For each item, independently solve the problem from ' +
@@ -340,6 +343,10 @@ export class ItemGenerationService {
       'student wrote -1/3, but the marked error "ran over rise / inverted the slope" actually yields ' +
       "-3/2 (not -1/3), so the named mistake does NOT produce the student's answer → ok=false. Also " +
       'reject any error-analysis item where the student was actually correct. ' +
+      'SOLUTION + FIGURE: also mark ok=false if the "solution" rambles or contains self-correction ' +
+      '("let me recalculate", "wait", "but the answer is") instead of a clean step-by-step worked solution, ' +
+      'or its final result does not equal the option at correctIndex; OR if a "figure" is present but its ' +
+      'numbers do not match the problem, or the stem refers to a figure that is missing. ' +
       'Only mark ok=true when you are confident the marked answer is correct, AND (for error-analysis) the ' +
       "named mistake reproduces the student's stated wrong answer, AND the item is unambiguous and " +
       'well-formed. Return JSON ONLY: an array of {"i": <index>, "ok": <true|false>, "reason": <short>}. ' +
@@ -435,16 +442,26 @@ export class ItemGenerationService {
       const correctOpt = options.find((o) => o.correct);
       const rawAnswer = it.answer === undefined || it.answer === null ? '' : String(it.answer).trim();
       const answer = rawAnswer || (correctOpt ? correctOpt.text : '');
+      const stemText = String(conv.stem ?? '');
+      const solutionText = String(it.solution ?? '');
+      const figure = this.sanitizeFigure(stemText, (it.figure as object) ?? conv.figure ?? undefined);
+      // Correct-by-rejection at the source: never persist a leaked-reasoning
+      // ("Shakespeare") solution, a figure whose numbers don't match the problem,
+      // or a stem that references a figure it doesn't have. Shared guards, same
+      // ones the tutor and inventory sweep use.
+      if (solutionLeaksReasoning(solutionText)) { invalid++; continue; }
+      if (figure && !figureIsSane(figure, `${stemText} ${options.map((o) => o.text).join(' ')}`).ok) { invalid++; continue; }
+      if (!figure && stemReferencesFigure(stemText)) { invalid++; continue; }
       rows.push({
         batchId,
         baseSourceId: base.sourceId ?? base.stem.slice(0, 40),
         status: 'draft',
         versionType: String(it.versionType ?? 'item'),
-        stem: String(conv.stem ?? ''),
-        figure: this.sanitizeFigure(String(conv.stem ?? ''), (it.figure as object) ?? conv.figure ?? undefined),
+        stem: stemText,
+        figure,
         options: options as unknown as object,
         answer,
-        solution: String(it.solution ?? ''),
+        solution: solutionText,
         standard: String(base.standard || it.standard || ''),
         ga: it.ga || base.ga || resolved.ga || undefined,
         gaCluster: it.gaCluster || base.gaCluster || resolved.gaCluster || undefined,

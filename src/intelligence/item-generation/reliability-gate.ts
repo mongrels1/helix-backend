@@ -41,8 +41,8 @@ function hasDecimal(it: GeneratedItem): boolean {
 }
 
 /** the stem points at a figure/diagram/graph the item must actually carry */
-function referencesFigure(it: GeneratedItem): boolean {
-  const s = it.stem.toLowerCase();
+export function stemReferencesFigure(stem: string): boolean {
+  const s = stem.toLowerCase();
   return (
     /\b(figure|diagram)\b/.test(s) ||
     /shown (below|above|here|in the)/.test(s) ||
@@ -50,6 +50,18 @@ function referencesFigure(it: GeneratedItem): boolean {
     /which (triangle|shape|figure|angle|rectangle|graph|number line)\b/.test(s) ||
     /lines? of symmetry/.test(s)
   );
+}
+function referencesFigure(it: GeneratedItem): boolean {
+  return stemReferencesFigure(it.stem);
+}
+
+/** A "solution" that leaks chain-of-thought / self-correction is not a clean
+ *  worked solution — it rambles and can even contradict the answer key. Shared
+ *  so the generator, the gate, and the inventory sweep all reject it the same way. */
+const SOLUTION_LEAK_RE =
+  /(let me (re)?(calculate|check|verify|try|do)|recalculat|\bwait[,. ]|\bactually[,. ]|\bhmm\b|but the answer is|scratch that|on second thought|i made (a|an) (mistake|error)|let'?s try again|correction:)/i;
+export function solutionLeaksReasoning(solution: string | null | undefined): boolean {
+  return SOLUTION_LEAK_RE.test(String(solution ?? ''));
 }
 
 /* ---------- shared figure-sanity check (reused by the item gate AND the AI tutor) ----------
@@ -207,6 +219,7 @@ export function gateItem(it: GeneratedItem): Check[] {
   checks.push({ id: 'options_have_text', ok: it.options.every((o) => !!o.text && o.text.trim().length > 0) });
   checks.push({ id: 'has_answer', ok: it.answer !== undefined && it.answer !== '' });
   checks.push({ id: 'has_solution', ok: !!it.solution && it.solution.length > 0 });
+  checks.push({ id: 'solution_clean', ok: !solutionLeaksReasoning(it.solution), detail: 'leaked reasoning / self-correction' });
   checks.push({ id: 'has_signal', ok: !!it.microDiagnosticSignal });
   // A figure-referencing item must actually carry a figure. sanitizeFigure drops
   // mismatched pictures, which can leave a visual item figure-less; fail it rather
