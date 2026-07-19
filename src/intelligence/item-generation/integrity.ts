@@ -20,6 +20,7 @@
  * shapes and different integrity rules.
  */
 import { CROSSWALK } from './mgse-ga-crosswalk';
+import { figureIsSane } from './reliability-gate';
 
 export const ALL_STATUSES = ['draft', 'validated', 'field_test', 'operational', 'rejected'] as const;
 export const SERVEABLE_STATUSES = ['draft', 'validated', 'field_test', 'operational'] as const;
@@ -40,6 +41,7 @@ export interface BankRow {
   solution?: string | null;
   dok?: number | null;
   difficulty?: string | null;
+  figure?: unknown;
 }
 
 /** Tolerant shape of an in-code calibrated diagnostic item. */
@@ -205,10 +207,17 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   const badCorrect: string[] = [], badCount: string[] = [], emptyText: string[] = [];
   const noStem: string[] = [], noAnswer: string[] = [], noSolution: string[] = [];
   const untagged: string[] = [], notMgse: string[] = [], noCluster: string[] = [];
+  const badFigure: string[] = [];
   const stemBuckets = new Map<string, string[]>();
 
   for (const r of serveable) {
     const opts = parseOptions(r.options);
+    // Same shared figure guard the generator + tutor use: flag existing items
+    // whose figure is malformed or mismatched so they can be rejected.
+    if (r.figure) {
+      const sane = figureIsSane(r.figure, `${r.stem ?? ''} ${opts.map((o) => o.text).join(' ')}`);
+      if (!sane.ok) badFigure.push(r.id);
+    }
     if (opts.filter((o) => o.correct).length !== 1) badCorrect.push(r.id);
     if (opts.length !== 4) badCount.push(r.id);
     if (opts.some((o) => !o.text.trim())) emptyText.push(r.id);
@@ -235,6 +244,7 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   if (notMgse.length) defects.push(group('standard_not_mgse', 'warning', 'Serveable items whose standard is not MGSE-format — targeted practice cannot route these', notMgse));
   if (noCluster.length) defects.push(group('missing_ga_cluster', 'warning', 'Serveable items missing a GA cluster', noCluster));
   if (dupIds.length) defects.push(group('duplicate_stems', 'warning', `Duplicate stems across ${dupGroups} group(s) — extra copies beyond the first`, dupIds));
+  if (badFigure.length) defects.push(group('figure_unsound', 'warning', 'Serveable items with a malformed or mismatched figure (bad coordinates, or numbers absent from the item text)', badFigure));
 
   const blockers = defects.filter((d) => d.severity === 'blocker').length;
   const warnings = defects.filter((d) => d.severity === 'warning').length;

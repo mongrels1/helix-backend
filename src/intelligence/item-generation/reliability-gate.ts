@@ -52,6 +52,66 @@ function referencesFigure(it: GeneratedItem): boolean {
   );
 }
 
+/* ---------- shared figure-sanity check (reused by the item gate AND the AI tutor) ----------
+   A figure is unsound when it is unparseable, has degenerate coordinate data, or
+   introduces its own data numbers that appear NOWHERE in the surrounding text —
+   the classic "wrong picture pasted on the problem" (e.g. a 10x6 area model on a
+   $20 / 25%-off question). Kept here, beside the other generation guards, so the
+   generator and the tutor validate figures the SAME way instead of each growing
+   its own copy. */
+const STRUCTURAL_FIG_KEYS = new Set(['min', 'max', 'ticks', 'step']);
+
+function figureDataNumbers(spec: unknown): number[] {
+  const nums: number[] = [];
+  const walk = (v: unknown, key?: string): void => {
+    if (key && STRUCTURAL_FIG_KEYS.has(key)) return;
+    if (typeof v === 'number') { if (Number.isFinite(v)) nums.push(v); return; }
+    if (Array.isArray(v)) { v.forEach((x) => walk(x)); return; }
+    if (v && typeof v === 'object') {
+      for (const [k, val] of Object.entries(v)) {
+        if (k === 'type' || k === 'altText') continue;
+        walk(val, k);
+      }
+    }
+  };
+  walk(spec);
+  return nums;
+}
+
+export function figureIsSane(
+  spec: unknown,
+  contextText: string,
+): { ok: boolean; reason?: string } {
+  let fig: unknown = spec;
+  if (typeof spec === 'string') {
+    try { fig = JSON.parse(spec); } catch { return { ok: false, reason: 'unparseable figure' }; }
+  }
+  if (!fig || typeof fig !== 'object') return { ok: true };
+  const f = fig as Record<string, unknown>;
+
+  // Degenerate coordinate data: 3+ points that don't spread on either axis.
+  const pts = Array.isArray(f.points) ? (f.points as Array<Record<string, unknown>>) : null;
+  if (pts && pts.length >= 3) {
+    const xs = pts.map((p) => Number(p?.x)).filter((n) => Number.isFinite(n));
+    const ys = pts.map((p) => Number(p?.y)).filter((n) => Number.isFinite(n));
+    const spread = (a: number[]) => (a.length ? Math.max(...a) - Math.min(...a) : 0);
+    if (xs.length >= 3 && ys.length >= 3 && (spread(xs) === 0 || spread(ys) === 0)) {
+      return { ok: false, reason: 'coordinate points collapse on an axis' };
+    }
+  }
+
+  // Number mismatch: figure introduces >=2 distinct data numbers, none of which
+  // appear in the text -> almost always the wrong figure for this problem.
+  const distinct = [...new Set(figureDataNumbers(fig))];
+  if (distinct.length >= 2) {
+    const textNums = new Set((contextText.match(/\d+\.?\d*/g) ?? []).map((s) => String(Number(s))));
+    const overlap = distinct.filter((n) => textNums.has(String(n))).length;
+    if (overlap === 0) return { ok: false, reason: 'figure numbers absent from surrounding text' };
+  }
+
+  return { ok: true };
+}
+
 /* ---------- double-key detection (deterministic; catches the recurring cases) ---------- */
 function numsIn(s: string): number[] {
   return (s.match(/\d+\.?\d*/g) ?? []).map(Number);
@@ -153,6 +213,12 @@ export function gateItem(it: GeneratedItem): Check[] {
   // than ship a "see the figure below" item with nothing to see.
   const refsFig = referencesFigure(it);
   checks.push({ id: 'figure_present_when_referenced', ok: !refsFig || !!it.figure, detail: refsFig ? (it.figure ? 'present' : 'MISSING') : 'n/a' });
+  // Same figure-sanity check the tutor reuses: drop degenerate/mismatched figures
+  // (bad coordinates, or numbers that appear nowhere in the item's text).
+  if (it.figure) {
+    const sane = figureIsSane(it.figure, itemText(it));
+    checks.push({ id: 'figure_sane', ok: sane.ok, detail: sane.reason ?? 'ok' });
+  }
   const cl = clusterOf(it.standard);
   if (cl) checks.push({ id: 'standard_in_catalog', ok: GA_CLUSTERS.has(cl), detail: GA_CLUSTERS.has(cl) ? cl : `unknown GA standard ${cl}` });
   for (const c of doubleKeyChecks(it)) checks.push(c);

@@ -14,6 +14,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { ConversationMessage } from '../ai-router/ai-router.types';
+import { figureIsSane } from '../item-generation/reliability-gate';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AITutorRepository,
@@ -214,7 +215,10 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
         maxTokens: 400,
         temperature: 0.6,
       });
-      return this.enforceReadability(ai.text || fallback, gradeLevel);
+      return this.enforceReadability(
+        this.sanitizeReplyFigure(ai.text || fallback),
+        gradeLevel,
+      );
     } catch {
       return fallback;
     }
@@ -233,10 +237,29 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
         maxTokens: 400,
         temperature: 0.6,
       });
-      return this.enforceReadability(ai.text, gradeLevel);
+      return this.enforceReadability(
+        this.sanitizeReplyFigure(ai.text),
+        gradeLevel,
+      );
     } catch {
       return "Let's keep going - try this next small step and tell me what you get.";
     }
+  }
+
+  /**
+   * Strip a mismatched or malformed figure from a tutor reply using the SAME
+   * check the item generator uses (reliability-gate.figureIsSane) — a wrong
+   * picture (e.g. a 10x6 area model on a $20 / 25%-off lesson) is worse than
+   * none. Shared validator, not a parallel guard; sound figures and geogebra
+   * blocks are left untouched.
+   */
+  private sanitizeReplyFigure(text: string): string {
+    if (!text || !text.includes('```figure')) return text;
+    const match = text.match(/```figure\s*([\s\S]*?)```/);
+    if (!match) return text;
+    const prose = text.replace(match[0], ' ');
+    if (figureIsSane(match[1].trim(), prose).ok) return text;
+    return text.replace(match[0], '').replace(/\n{3,}/g, '\n\n').trim();
   }
 
   /**

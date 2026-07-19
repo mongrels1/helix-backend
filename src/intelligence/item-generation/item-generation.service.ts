@@ -732,6 +732,7 @@ export class ItemGenerationService {
         solution: true,
         dok: true,
         difficulty: true,
+        figure: true,
       },
     })) as unknown as BankRow[];
     return buildIntegrityReport(rows, DIAGNOSTIC_ITEM_BANK);
