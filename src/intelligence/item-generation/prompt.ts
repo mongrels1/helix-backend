@@ -81,6 +81,8 @@ export interface UserPromptParams {
   versions: number;
   figureType: string | null;     // from figureForStandard()
   misconceptionIds: string[];    // from applicableMisconceptions(standard)
+  /** Specific problems from a previous attempt to fix on regeneration. */
+  fixNotes?: string[];
 }
 
 export function buildUserPrompt(p: UserPromptParams): string {
@@ -101,5 +103,8 @@ export function buildUserPrompt(p: UserPromptParams): string {
     p.misconceptionIds.length
       ? `Prefer these misconception ids for distractors: ${p.misconceptionIds.join(', ')}. Each distractor's "misconceptionTag" must name a real error.`
       : `Tag each distractor's "misconceptionTag" with a short descriptive id of the real error it represents (e.g. "SLOPE.RUN_OVER_RISE").`,
+    p.fixNotes && p.fixNotes.length
+      ? `FIX THESE PROBLEMS from the previous attempt and do NOT repeat them: ${p.fixNotes.join('; ')}. Every "solution" must be a clean step-by-step worked solution with NO self-correction or "let me recalculate", and its final line must equal the correct option. Every "figure" must use ONLY numbers that appear in the item, and if the stem mentions a figure you MUST include a matching one.`
+      : '',
   ].filter(Boolean).join('\n');
 }

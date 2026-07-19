@@ -265,23 +265,16 @@ export class ItemGenerationService {
         ...applicableMisconceptions(route.ga),
         ...applicableMisconceptions(route.gaCluster),
       ].map((m) => m.id);
-      const user = buildUserPrompt({
-        base,
-        versions,
-        figureType: route.figure,
-        misconceptionIds: [...new Set(misIds)],
-      });
       try {
-        const res = await this.ai.chat({
-          systemPrompt: SYSTEM_PROMPT,
-          prompt: user,
-          preferredProvider: 'claude',
-          timeoutMs: 60_000,
-          // A full 10-version slate with answers, solutions, and figures is large;
-          // 4000 truncated the JSON mid-array. 8000 gives the slate room to finish.
-          maxTokens: 8000,
-        });
-        const items = this.parseModelJson(res.text) as GeneratedItem[];
+        // Validate-and-regenerate: produce `versions` items that pass the shared
+        // quality gates, re-prompting for the shortfall with fix-notes instead of
+        // shipping duds.
+        const items = await this.generateSlate(
+          base,
+          versions,
+          route.figure,
+          [...new Set(misIds)],
+        );
         // Correctness self-check: independently re-solve each item and drop any
         // that is wrong, ambiguous, or malformed BEFORE it can be saved/served.
         const { kept, dropped } = await this.verifyItems(items);
@@ -308,6 +301,82 @@ export class ItemGenerationService {
       where: { id: jobId },
       data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, discarded: discarded + purged, error: firstError || null },
     });
+  }
+
+  /**
+   * Generate a slate of `versions` items for one base with a bounded
+   * validate-and-regenerate loop: each attempt is checked by the shared quality
+   * guards (clean solution, sound/present figure, well-formed options); good
+   * items are kept, and the specific failures are fed back as fix-notes to
+   * re-prompt ONLY for the shortfall. After MAX_ROUNDS we return whatever passed
+   * rather than shipping duds — this is what makes the generator produce correct
+   * items instead of just fewer.
+   */
+  private async generateSlate(
+    base: BaseItem,
+    versions: number,
+    figureType: string | null,
+    misconceptionIds: string[],
+  ): Promise<GeneratedItem[]> {
+    const MAX_ROUNDS = 3;
+    const good: GeneratedItem[] = [];
+    let fixNotes: string[] = [];
+    for (let round = 0; round < MAX_ROUNDS && good.length < versions; round++) {
+      const need = versions - good.length;
+      const user = buildUserPrompt({ base, versions: need, figureType, misconceptionIds, fixNotes });
+      let items: GeneratedItem[];
+      try {
+        const res = await this.ai.chat({
+          systemPrompt: SYSTEM_PROMPT,
+          prompt: user,
+          preferredProvider: 'claude',
+          timeoutMs: 60_000,
+          maxTokens: 8000,
+        });
+        items = this.parseModelJson(res.text) as GeneratedItem[];
+      } catch (err) {
+        if (round === 0) throw err; // first-round failure bubbles to the batch handler
+        break; // a later retry hiccup: keep what already passed
+      }
+      const nextNotes = new Set<string>();
+      for (const it of items) {
+        if (good.length >= versions) break;
+        const fails = this.itemQualityFails(it);
+        if (!fails.length) good.push(it);
+        else fails.forEach((f) => nextNotes.add(f));
+      }
+      fixNotes = [...nextNotes].slice(0, 8);
+      this.logger.log(
+        `slate round ${round + 1}: ${good.length}/${versions} good` +
+          (fixNotes.length ? `, fixing: ${fixNotes.join(' | ')}` : ''),
+      );
+    }
+    return good.slice(0, versions);
+  }
+
+  /**
+   * Deterministic, non-repairable quality gates that drive regeneration (the
+   * repairable issues — e.g. an untagged distractor — are fixed later in persist,
+   * so they don't trigger a re-prompt). Reuses the shared guards so the loop, the
+   * write path, and the inventory sweep all agree on what "bad" means.
+   */
+  private itemQualityFails(it: GeneratedItem): string[] {
+    const fails: string[] = [];
+    const opts = it.options ?? [];
+    if (opts.length !== 4 || opts.filter((o) => o.correct).length !== 1 || opts.some((o) => !o.text?.trim())) {
+      fails.push('options: need exactly 4, one correct, none blank');
+    }
+    if (solutionLeaksReasoning(it.solution)) {
+      fails.push('solution: rambling/self-correction — write a clean step-by-step worked solution');
+    }
+    const text = `${it.stem} ${opts.map((o) => o.text).join(' ')}`;
+    if (it.figure && !figureIsSane(it.figure, text).ok) {
+      fails.push('figure: numbers must match the item');
+    }
+    if (!it.figure && stemReferencesFigure(String(it.stem ?? ''))) {
+      fails.push('figure: stem references a figure but none is provided');
+    }
+    return fails;
   }
 
   /**
