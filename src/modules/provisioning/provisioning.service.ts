@@ -107,8 +107,8 @@ export class ProvisioningService {
       created = true;
     }
 
-    await this.prisma.user
-      .update({
+    try {
+      await this.prisma.user.update({
         where: { id: userId },
         data: {
           // Record a plan label even if GHL didn't send a product, so the
@@ -119,8 +119,14 @@ export class ProvisioningService {
           // Seat limit tracks the resolved plan (null = single-student default).
           maxStudents: config.maxStudents,
         },
-      })
-      .catch((err) => this.logger.warn(`Could not set entitlement for ${email}: ${String(err)}`));
+      });
+    } catch (err) {
+      // Do NOT swallow: a silent failure here leaves a PAID account unentitled
+      // (locked out of AI Tutor/Practice) while GHL sees success. Surface it so
+      // the webhook returns 5xx and GHL retries, instead of stranding the buyer.
+      this.logger.error(`Failed to set entitlement for ${email}: ${String(err)}`);
+      throw err;
+    }
 
     // Only NEW accounts get an activation email + set-password link. Renewals on
     // an existing account just extend access silently.

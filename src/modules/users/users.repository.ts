@@ -5,6 +5,16 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserEntity } from './entities/user.entity';
 
+/**
+ * Canonical email form so one person maps to exactly ONE account regardless of
+ * the casing/whitespace they (or an upstream purchase webhook) send. Writes are
+ * stored canonical; reads match case-insensitively so pre-existing mixed-case
+ * rows are still found without a data migration.
+ */
+export function normalizeEmail(email: string): string {
+  return (email ?? '').trim().toLowerCase();
+}
+
 const userSelect = {
   id: true,
   email: true,
@@ -56,14 +66,17 @@ export class UsersRepository {
 
   async findByEmail(email: string): Promise<User | null> {
     return this.prisma.user.findFirst({
-      where: { email, deletedAt: null },
+      where: {
+        email: { equals: normalizeEmail(email), mode: 'insensitive' },
+        deletedAt: null,
+      },
     });
   }
 
   async create(data: CreateUserDto, passwordHash: string): Promise<UserEntity> {
     return this.prisma.user.create({
       data: {
-        email: data.email,
+        email: normalizeEmail(data.email),
         passwordHash,
         role: data.role,
         profile: {
