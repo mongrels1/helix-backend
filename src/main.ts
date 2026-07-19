@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import { json, urlencoded } from 'express';
+import { json, urlencoded, raw } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from '@common/filters/http-exception.filter';
 
@@ -27,6 +27,9 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   // Vision figure-extraction posts base64 page images, so raise the JSON limit
   // well above express's 100kb default (a rendered PDF page can be a few hundred KB).
+  // Stripe webhooks need the RAW, unparsed body for signature verification, so
+  // capture it for this one route BEFORE the JSON body parser runs below.
+  app.use('/api/v1/stripe/webhook', raw({ type: '*/*' }));
   app.use(json({ limit: '30mb' }));
   app.use(urlencoded({ extended: true, limit: '30mb' }));
   app.enableCors({

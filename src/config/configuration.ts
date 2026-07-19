@@ -2,6 +2,7 @@ export default () => ({
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY ?? '',
     referralCouponId: process.env.STRIPE_REFERRAL_COUPON_ID ?? '',
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
   },
   port: parseInt(process.env.PORT ?? '3000', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
