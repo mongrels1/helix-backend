@@ -26,6 +26,10 @@ For each version:
   representational item — never reduce a visual question to a words-only problem. Put the visual DATA in the
   "figure" field (a JSON spec) and keep the stem a plain sentence that refers to it (e.g. "the graph",
   "the table"). NEVER draw a table, grid, ASCII art, or Markdown in the stem — no "|" characters, no "---".
+- STEM READING LEVEL (accessibility): keep the stem's LANGUAGE at or below the tested grade's reading level so
+  reading load never hides the math (EdKairos methodology 2.5). Use short, single-clause sentences and plain,
+  common words; introduce only the math vocabulary the standard itself requires. The MATH is the challenge, not
+  the reading. Do NOT add flavor text, backstory, or extra sentences that are not needed to solve the item.
 - Provide EXACTLY 4 options. EXACTLY ONE has "correct": true and an EMPTY "misconceptionTag" — that is the
   right answer; never leave it unmarked. The OTHER THREE have "correct": false, a non-empty
   "misconceptionTag", and a one-sentence "misconception" ("Student(s) may have ...").

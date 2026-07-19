@@ -75,10 +75,11 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     // message, so it shows on load and the topic carries through the context.
     const focus = topic?.trim();
     if (focus) {
+      const gradeLevel = await this.resolveStudentGrade(studentId);
       await this.repository.appendMessage(
         session.id,
         TutorMessageRole.TUTOR,
-        await this.generateOpener(focus),
+        await this.generateOpener(focus, gradeLevel),
       );
     }
 
@@ -124,10 +125,12 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       this.toConversationMessage(message),
     );
     const contextNote = await this.getAssignmentContext(session.assignmentId);
+    const gradeLevel = await this.resolveStudentGrade(session.studentId);
     const aiText = await this.getTutorReply(
       studentMessage,
       conversationHistory,
       contextNote,
+      gradeLevel,
     );
 
     return this.repository.appendMessage(
@@ -199,16 +202,19 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       : '';
   }
 
-  private async generateOpener(focus: string): Promise<string> {
-    const fallback = `Let's learn ${focus} together! I'll show you how it works one step at a time. Here's a simple example to start, then you'll try one.`;
+  private async generateOpener(
+    focus: string,
+    gradeLevel?: number,
+  ): Promise<string> {
+    const fallback = `Let's learn ${focus} together! I will show you one step at a time. Here is an easy example. Then you try one.`;
     try {
       const ai = await this.aiRouterService.chat({
-        prompt: `Begin tutoring the skill "${focus}" right now. Teach the core idea in one or two simple sentences, then show ONE quick worked example with real numbers, then give the student one easy "you try" problem on this skill. Lead it - do NOT ask what they already know.`,
-        systemPrompt: this.SOCRATIC_SYSTEM_PROMPT,
+        prompt: `Begin tutoring the skill "${focus}" right now. Teach the core idea in ONE simple sentence, then show ONE quick worked example with real numbers, then give the student one easy "you try" problem on this skill. Lead it - do NOT ask what they already know.`,
+        systemPrompt: this.buildSystemPrompt(gradeLevel),
         maxTokens: 400,
         temperature: 0.6,
       });
-      return ai.text || fallback;
+      return this.enforceReadability(ai.text || fallback, gradeLevel);
     } catch {
       return fallback;
     }
@@ -217,18 +223,140 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     studentMessage: string,
     conversationHistory: ConversationMessage[],
     contextNote: string,
+    gradeLevel?: number,
   ): Promise<string> {
     try {
       const ai = await this.aiRouterService.chat({
         prompt: studentMessage,
         messages: conversationHistory,
-        systemPrompt: `${this.SOCRATIC_SYSTEM_PROMPT}\n\n${contextNote}`.trim(),
+        systemPrompt: this.buildSystemPrompt(gradeLevel, contextNote),
         maxTokens: 400,
         temperature: 0.6,
       });
-      return ai.text;
+      return this.enforceReadability(ai.text, gradeLevel);
     } catch {
       return "Let's keep going - try this next small step and tell me what you get.";
+    }
+  }
+
+  /**
+   * Grade-aware reading-level directive prepended to the tutor system prompt.
+   * Reading load is a first-class validity/usability threat for young or
+   * struggling readers: text that exceeds their decoding fluency silently
+   * turns a MATH interaction into a READING one (EdKairos methodology §2.5,
+   * §3.7). Defaults to a low (grade 2-3) reading level when grade is unknown —
+   * writing simpler never hurts a stronger reader, but writing above a weak
+   * reader's level does real harm.
+   */
+  private readingLevelDirective(gradeLevel?: number): string {
+    const g =
+      typeof gradeLevel === 'number' && Number.isFinite(gradeLevel)
+        ? gradeLevel
+        : undefined;
+    let band: string;
+    let maxWords: number;
+    if (g === undefined) {
+      band = 'a grade 2-3';
+      maxWords = 10;
+    } else if (g <= 1) {
+      band = 'a kindergarten-to-grade-1';
+      maxWords = 7;
+    } else if (g <= 3) {
+      band = 'a grade 2';
+      maxWords = 9;
+    } else if (g <= 5) {
+      band = 'a grade 3';
+      maxWords = 11;
+    } else {
+      band = 'a grade 4';
+      maxWords = 13;
+    }
+    return [
+      `READ-ALOUD-FRIENDLY LANGUAGE (this is your most important rule). This student may not read well yet, and your words may be read aloud to them. Write EVERYTHING at ${band} reading level.`,
+      `- One idea per sentence. Keep sentences short — aim for ${maxWords} words or fewer. Never write a long or many-part sentence.`,
+      `- Use plain, everyday words. The FIRST time you use any math word (like "tenths", "digit", "column", "denominator"), give a tiny plain meaning right after it — e.g. "the tenths spot (the first spot after the dot)".`,
+      `- Do ONE small step, then STOP and ask one short question to check they got it, before the next step. Never put two steps in one turn.`,
+      `- Keep the whole reply very short. Fewer words is always better. If you are unsure how simple to make it, make it simpler.`,
+      `- Prefer SHOWING with the figure over explaining in words: a picture the child can see beats a sentence they must read.`,
+    ].join('\n');
+  }
+
+  /** Full system prompt = grade-aware reading-level directive + the core
+   * teaching/figure prompt + any per-session context note. */
+  private buildSystemPrompt(gradeLevel?: number, contextNote = ''): string {
+    return [
+      this.readingLevelDirective(gradeLevel),
+      this.SOCRATIC_SYSTEM_PROMPT,
+      contextNote,
+    ]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  /** Best-effort grade signal: the grade recorded on the student's most recent
+   * diagnostic session (`DiagnosticSession.grade` is a free-form string like
+   * "4", "Grade 4", or "K"). Returns undefined when unknown, so callers fall
+   * back to a safe low reading level. */
+  private async resolveStudentGrade(
+    studentId: string,
+  ): Promise<number | undefined> {
+    try {
+      const d = await this.prisma.diagnosticSession.findFirst({
+        where: { userId: studentId, grade: { not: null } },
+        orderBy: { completedAt: 'desc' },
+        select: { grade: true },
+      });
+      return this.parseGrade(d?.grade);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private parseGrade(raw?: string | null): number | undefined {
+    if (!raw) return undefined;
+    const s = raw.trim().toLowerCase();
+    if (s.startsWith('k') || s.includes('kinder')) return 0;
+    const m = s.match(/\d{1,2}/);
+    if (!m) return undefined;
+    const n = parseInt(m[0], 10);
+    return Number.isFinite(n) && n >= 0 && n <= 12 ? n : undefined;
+  }
+
+  /**
+   * Soft ceiling on reading load. If a PROSE-ONLY reply (no figure/code block)
+   * runs long or contains an over-long sentence for the grade, ask the model
+   * once to rewrite it shorter and simpler. Replies that already carry a
+   * figure are left untouched — they are visual, not a wall of text, and we
+   * never want to risk dropping the figure block. Cost is bounded: at most one
+   * extra call, and only on an actual breach.
+   */
+  private async enforceReadability(
+    text: string,
+    gradeLevel?: number,
+  ): Promise<string> {
+    if (!text || text.includes('```')) return text;
+    const g = typeof gradeLevel === 'number' ? gradeLevel : 3;
+    const maxSentenceWords = g <= 1 ? 10 : g <= 3 ? 12 : g <= 5 ? 15 : 18;
+    const maxTotalWords = g <= 1 ? 45 : g <= 3 ? 60 : g <= 5 ? 80 : 95;
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const totalWords = text.trim().split(/\s+/).filter(Boolean).length;
+    const longest = sentences.reduce(
+      (m, s) => Math.max(m, s.trim().split(/\s+/).filter(Boolean).length),
+      0,
+    );
+    if (totalWords <= maxTotalWords && longest <= maxSentenceWords) return text;
+    try {
+      const ai = await this.aiRouterService.chat({
+        prompt: `Rewrite the tutor message below so a young, struggling reader can read it. Keep the SAME math, steps, numbers, warmth, and final question. Rules: one idea per sentence; every sentence ${maxSentenceWords} words or fewer; keep it under ${maxTotalWords} words total; plain everyday words. Return ONLY the rewritten message, nothing else.\n\nMessage:\n${text}`,
+        systemPrompt:
+          'You simplify a math tutor message for a young or struggling reader without changing its meaning, math, steps, or next question. Output only the rewritten message.',
+        maxTokens: 300,
+        temperature: 0.3,
+      });
+      return ai.text?.trim() || text;
+    } catch {
+      return text;
     }
   }
 
