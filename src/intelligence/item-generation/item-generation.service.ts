@@ -13,9 +13,8 @@ import { nodesForStandard } from './skill-graph';
 import { applicableMisconceptions } from './misconception-library';
 import { g6SeedForStandard } from './g6-seed';
 import { g7SeedForStandard } from './g7-seed';
-import { buildIntegrityReport, type BankRow } from './integrity';
+import { buildIntegrityReport, type BankRow, type DiagnosticRow } from './integrity';
 import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
-import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
 
 const PROMOTE_MIN_RESPONSES = 200;
@@ -875,7 +874,16 @@ export class ItemGenerationService {
         figure: true,
       },
     })) as unknown as BankRow[];
-    return buildIntegrityReport(rows, DIAGNOSTIC_ITEM_BANK);
+    // Diagnostic bank = the LIVE DiagnosticItem table (what the scored adaptive
+    // diagnostic actually serves via publishedBank), NOT the in-code seed. This
+    // is the same source the Diagnostic Bank page reads, so the two views agree.
+    const diagnostic = (await this.prisma.diagnosticItem.findMany({
+      select: {
+        id: true, grade: true, strand: true, kc: true, standard: true, dok: true,
+        b: true, stem: true, options: true, correct: true, status: true, figure: true,
+      },
+    })) as unknown as DiagnosticRow[];
+    return buildIntegrityReport(rows, diagnostic);
   }
 
   /**

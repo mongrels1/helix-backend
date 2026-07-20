@@ -10,9 +10,10 @@
  *      unscored, served to students via practice. Lifecycle: draft -> validated
  *      -> field_test -> operational (+ rejected). Uncalibrated.
  *
- *   2. Calibrated diagnostic bank — DIAGNOSTIC_ITEM_BANK, the in-code scored
- *      "ruler" used by the adaptive diagnostic. Curated + calibrated (Rasch b).
- *      Lives in source, NOT the database.
+ *   2. Calibrated diagnostic bank — the DiagnosticItem table (Postgres), the
+ *      scored "ruler" the adaptive diagnostic serves (published items). Built via
+ *      the Diagnostic Bank Build/Review/Publish flow; "calibrated" = validated +
+ *      published. The in-code DIAGNOSTIC_ITEM_BANK is only a client fallback.
  *
  * Each bank gets its own coverage (grade / standard|strand), structural checks,
  * duplicate detection, and a go / no-go verdict. A combined total sits on top.
@@ -44,16 +45,20 @@ export interface BankRow {
   figure?: unknown;
 }
 
-/** Tolerant shape of an in-code calibrated diagnostic item. */
+/** Tolerant shape of a DiagnosticItem row (the live scored bank in Postgres). */
 export interface DiagnosticRow {
   id: string;
   grade?: number | null;
   strand?: string | null;
   kc?: string | null;
+  standard?: string | null;
+  dok?: number | null;
   b?: number | null;
   stem?: string | null;
   options?: unknown;
   correct?: number | null;
+  status?: string | null;
+  figure?: unknown;
 }
 
 export type Severity = 'blocker' | 'warning' | 'info';
@@ -283,31 +288,48 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   };
 }
 
-// ---- calibrated diagnostic bank (in-code) ----------------------------------
+// ---- calibrated diagnostic bank (DiagnosticItem table, the live scored bank) --
+
+// The scored adaptive diagnostic serves PUBLISHED items. "Calibrated" (serveable)
+// counts validated + published — the review-approved set — matching the
+// Diagnostic Bank page's viability bars. Draft/rejected are excluded.
+const DIAG_SERVEABLE = new Set<string>(['validated', 'published']);
+const DIAG_STATUSES = ['draft', 'validated', 'published', 'rejected'] as const;
 
 function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
-  // coverage by strand
+  const isServe = (it: DiagnosticRow) => DIAG_SERVEABLE.has(String(it.status ?? ''));
+  const serveableItems = items.filter(isServe);
+
+  const byStatus: Record<string, number> = {};
+  for (const s of DIAG_STATUSES) byStatus[s] = 0;
+  for (const it of items) {
+    const s = String(it.status ?? 'draft');
+    byStatus[s] = (byStatus[s] ?? 0) + 1;
+  }
+
+  // coverage by strand + by grade (serveable = validated + published)
   const covMap = new Map<string, CoverageRow>();
   const gradeMap = new Map<number | null, GradeRow>();
   for (const it of items) {
+    const serve = isServe(it);
     const strand = String(it.strand ?? 'UNKNOWN').trim() || 'UNKNOWN';
     let c = covMap.get(strand);
     if (!c) { c = { key: strand, grade: null, total: 0, serveable: 0, byStatus: null }; covMap.set(strand, c); }
-    c.total += 1; c.serveable += 1;
+    c.total += 1; if (serve) c.serveable += 1;
 
     const g = typeof it.grade === 'number' ? it.grade : null;
     const gr = gradeMap.get(g) ?? { grade: g, total: 0, serveable: 0 };
-    gr.total += 1; gr.serveable += 1; gradeMap.set(g, gr);
+    gr.total += 1; if (serve) gr.serveable += 1; gradeMap.set(g, gr);
   }
   const coverage = [...covMap.values()].sort((a, b) => a.key.localeCompare(b.key));
 
-  // structural checks
+  // structural + field checks (serveable only — those calibrate the diagnostic)
   const noStem: string[] = [], badCorrect: string[] = [], fewOptions: string[] = [], emptyText: string[] = [];
-  const noStrand: string[] = [], noKc: string[] = [], noB: string[] = [], dupId: string[] = [];
+  const noStrand: string[] = [], noKc: string[] = [], noB: string[] = [], noDok: string[] = [], noStandard: string[] = [], dupId: string[] = [];
   const stemBuckets = new Map<string, string[]>();
   const idsSeen = new Set<string>();
 
-  for (const it of items) {
+  for (const it of serveableItems) {
     const opts = Array.isArray(it.options) ? it.options.map((o) => String(o ?? '')) : [];
     if (!String(it.stem ?? '').trim()) noStem.push(it.id);
     if (opts.length < 2) fewOptions.push(it.id);
@@ -317,6 +339,8 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
     if (!String(it.strand ?? '').trim()) noStrand.push(it.id);
     if (!String(it.kc ?? '').trim()) noKc.push(it.id);
     if (typeof it.b !== 'number') noB.push(it.id);
+    if (typeof it.dok !== 'number') noDok.push(it.id);
+    if (!String(it.standard ?? '').trim()) noStandard.push(it.id);
     if (idsSeen.has(it.id)) dupId.push(it.id); else idsSeen.add(it.id);
     const key = normStem(it.stem);
     if (key) { const b = stemBuckets.get(key) ?? []; b.push(it.id); stemBuckets.set(key, b); }
@@ -333,30 +357,32 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
   if (noStrand.length) defects.push(group('has_strand', 'warning', 'Items with no strand', noStrand));
   if (noKc.length) defects.push(group('has_kc', 'warning', 'Items with no knowledge component', noKc));
   if (noB.length) defects.push(group('has_difficulty', 'warning', 'Items with no calibrated difficulty (b) — adaptivity degrades', noB));
+  if (noDok.length) defects.push(group('has_dok', 'warning', 'Calibrated items missing a DOK level — cannot verify the DOK 1–4 spread', noDok));
+  if (noStandard.length) defects.push(group('has_standard', 'warning', 'Calibrated items missing a standard — cannot verify per-standard alignment', noStandard));
   if (dupStems.length) defects.push(group('duplicate_stems', 'warning', `Duplicate stems across ${dupGroups} group(s)`, dupStems));
 
   // Statistical-viability bar: each grade should reach a minimum number of
-  // calibrated items. Surfaced as warnings (visible, not sales-blocking) so the
-  // growth gap toward a reliable adaptive bank is explicit.
+  // calibrated (validated + published) items — same count the Diagnostic Bank
+  // page shows. Warnings (visible, not sales-blocking) make the growth gap clear.
   const VIABILITY_MIN = 100;
   for (const g of sortGrades([...gradeMap.values()])) {
-    if (g.grade !== null && g.total < VIABILITY_MIN) {
+    if (g.grade !== null && g.serveable < VIABILITY_MIN) {
       defects.push({
         id: `viability_grade_${g.grade}`,
         severity: 'warning',
-        message: `Grade ${g.grade}: ${g.total}/${VIABILITY_MIN} calibrated items — ${VIABILITY_MIN - g.total} short of the statistical-viability minimum`,
-        count: VIABILITY_MIN - g.total,
+        message: `Grade ${g.grade}: ${g.serveable}/${VIABILITY_MIN} calibrated items — ${VIABILITY_MIN - g.serveable} short of the statistical-viability minimum`,
+        count: VIABILITY_MIN - g.serveable,
         sampleIds: [],
       });
     }
   }
-  // DOK 1–4 spread and per-standard alignment can't be graded until diagnostic
-  // items carry those fields (added with the DB staging-bank build).
+  // DOK 1–4 spread across the calibrated set — now a real, gradable check.
+  const dok = [1, 2, 3, 4].map((lvl) => serveableItems.filter((it) => it.dok === lvl).length);
   defects.push({
-    id: 'dok_standard_fields',
+    id: 'dok_spread',
     severity: 'info',
-    message: 'Diagnostic items do not yet carry DOK or standard fields — needed to verify DOK 1–4 spread and per-standard alignment',
-    count: items.length,
+    message: `DOK spread (calibrated): DOK1 ${dok[0]}, DOK2 ${dok[1]}, DOK3 ${dok[2]}, DOK4 ${dok[3]}`,
+    count: serveableItems.length,
     sampleIds: [],
   });
 
@@ -365,20 +391,20 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
   const ready = blockers === 0;
   const summary = ready
     ? warnings === 0
-      ? `Clean: ${items.length} calibrated item(s), no defects.`
+      ? `Clean: ${serveableItems.length} calibrated item(s), no defects.`
       : `No blocking defects. ${warnings} warning type(s) to review.`
-    : `${blockers} blocking defect type(s) in the scored bank — fix in diagnostic-item-bank.ts before sales.`;
+    : `${blockers} blocking defect type(s) in the scored bank — reject or fix them in the Diagnostic Bank before sales.`;
 
   return {
     key: 'diagnostic',
     label: 'Calibrated diagnostic bank',
     scored: true,
-    note: 'Curated, calibrated items in code (diagnostic-item-bank.ts) powering the scored adaptive diagnostic. Not in the database. With this many items the diagnostic can repeat across sessions — growing it needs the calibration path.',
+    note: 'Calibrated items in the DiagnosticItem table powering the scored adaptive diagnostic — the same source the Diagnostic Bank page reads. The live diagnostic serves PUBLISHED items; "calibrated" counts validated + published (the review-approved set). Draft and rejected items are excluded from serveable counts.',
     coverageLabel: 'Strand',
     hasStatus: false,
     total: items.length,
-    serveable: items.length,
-    byStatus: null,
+    serveable: serveableItems.length,
+    byStatus,
     byGrade: sortGrades([...gradeMap.values()]),
     coverage,
     tags: null,
