@@ -121,9 +121,21 @@ export class ClassroomsRepository {
   }
 
   async getEnrollments(classroomId: string): Promise<Enrollment[]> {
+    // Include the student + profile so the roster can show real names/emails.
+    // Without this the roster received bare enrollment rows and every student
+    // rendered as a nameless "Student" with "No email".
     return this.prisma.enrollment.findMany({
       where: { classroomId, classroom: { deletedAt: null } },
       orderBy: { enrolledAt: 'desc' },
+      include: {
+        student: {
+          select: {
+            id: true,
+            email: true,
+            profile: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
     });
   }
 
