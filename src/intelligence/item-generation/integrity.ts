@@ -20,7 +20,7 @@
  * shapes and different integrity rules.
  */
 import { CROSSWALK } from './mgse-ga-crosswalk';
-import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning } from './reliability-gate';
+import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
 
 export const ALL_STATUSES = ['draft', 'validated', 'field_test', 'operational', 'rejected'] as const;
 export const SERVEABLE_STATUSES = ['draft', 'validated', 'field_test', 'operational'] as const;
@@ -207,7 +207,7 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   const badCorrect: string[] = [], badCount: string[] = [], emptyText: string[] = [];
   const noStem: string[] = [], noAnswer: string[] = [], noSolution: string[] = [];
   const untagged: string[] = [], notMgse: string[] = [], noCluster: string[] = [];
-  const badFigure: string[] = [], missingFig: string[] = [], leakedSolution: string[] = [];
+  const badFigure: string[] = [], missingFig: string[] = [], leakedSolution: string[] = [], notSelfContained: string[] = [];
   const stemBuckets = new Map<string, string[]>();
 
   for (const r of serveable) {
@@ -221,6 +221,7 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
     }
     if (!r.figure && stemReferencesFigure(String(r.stem ?? ''))) missingFig.push(r.id);
     if (solutionLeaksReasoning(r.solution)) leakedSolution.push(r.id);
+    if (stemNotSelfContained(r.stem)) notSelfContained.push(r.id);
     if (opts.filter((o) => o.correct).length !== 1) badCorrect.push(r.id);
     if (opts.length !== 4) badCount.push(r.id);
     if (opts.some((o) => !o.text.trim())) emptyText.push(r.id);
@@ -250,6 +251,7 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   if (badFigure.length) defects.push(group('figure_unsound', 'warning', 'Serveable items with a malformed or mismatched figure (bad coordinates, or numbers absent from the item text)', badFigure));
   if (missingFig.length) defects.push(group('figure_missing_referenced', 'warning', 'Serveable items whose stem references a figure that is not attached', missingFig));
   if (leakedSolution.length) defects.push(group('solution_leaked', 'warning', 'Serveable items whose worked solution rambles or leaks reasoning (not a clean solution)', leakedSolution));
+  if (notSelfContained.length) defects.push(group('stem_not_self_contained', 'warning', 'Serveable items whose stem refers to earlier context the student cannot see (e.g. "look at the spinner again")', notSelfContained));
 
   const blockers = defects.filter((d) => d.severity === 'blocker').length;
   const warnings = defects.filter((d) => d.severity === 'warning').length;

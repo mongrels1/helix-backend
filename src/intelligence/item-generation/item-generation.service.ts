@@ -14,7 +14,7 @@ import { applicableMisconceptions } from './misconception-library';
 import { g6SeedForStandard } from './g6-seed';
 import { g7SeedForStandard } from './g7-seed';
 import { buildIntegrityReport, type BankRow } from './integrity';
-import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning } from './reliability-gate';
+import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
 
@@ -375,6 +375,9 @@ export class ItemGenerationService {
     }
     if (!it.figure && stemReferencesFigure(String(it.stem ?? ''))) {
       fails.push('figure: stem references a figure but none is provided');
+    }
+    if (stemNotSelfContained(it.stem)) {
+      fails.push('stem: not self-contained — never refer to "again"/a previous item; make it stand alone');
     }
     return fails;
   }

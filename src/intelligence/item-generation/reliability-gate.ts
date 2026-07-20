@@ -44,12 +44,22 @@ function hasDecimal(it: GeneratedItem): boolean {
 export function stemReferencesFigure(stem: string): boolean {
   const s = stem.toLowerCase();
   return (
-    /\b(figure|diagram)\b/.test(s) ||
+    /\b(figure|diagram|spinner|histogram)\b/.test(s) ||
     /shown (below|above|here|in the)/.test(s) ||
-    /\bthe (graph|table|number line|coordinate grid|coordinate plane|angle)\b/.test(s) ||
-    /which (triangle|shape|figure|angle|rectangle|graph|number line)\b/.test(s) ||
+    /\bthe (graph|table|number line|coordinate grid|coordinate plane|angle|spinner|chart|bar graph|dot plot|histogram|scatter ?plot|picture|figure|shape|prism|cylinder|cone|sphere|circle|fraction bar|area model|tape diagram|grid|net|solid)\b/.test(s) ||
+    /which (triangle|shape|figure|angle|rectangle|graph|number line|spinner|chart)\b/.test(s) ||
     /lines? of symmetry/.test(s)
   );
+}
+
+/** A self-contained item never refers back to earlier context the student can't
+ *  see ("look at the spinner AGAIN", "as before", "the previous problem"). Such
+ *  stems leaked from a multi-part authoring context and confuse a stand-alone
+ *  practice/diagnostic item. */
+const NOT_SELF_CONTAINED_RE =
+  /\b(look at the [\w ]+ again|as (before|shown earlier|we (found|saw))|the previous (problem|question|figure|spinner|graph|item)|from (the last|before)|in the (last|previous) (problem|question)|earlier we|same (spinner|figure|graph) as)\b/i;
+export function stemNotSelfContained(stem: string | null | undefined): boolean {
+  return NOT_SELF_CONTAINED_RE.test(String(stem ?? ''));
 }
 function referencesFigure(it: GeneratedItem): boolean {
   return stemReferencesFigure(it.stem);
