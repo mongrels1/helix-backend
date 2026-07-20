@@ -92,6 +92,18 @@ export class ItemGenerationController {
   }
 
   /**
+   * Re-run the full reliability gate over every serveable draft and reject the
+   * ones that fail (leaked-reasoning solutions, unsound/missing figures,
+   * non-self-contained stems, malformed options). Self-heals pre-guard items so
+   * they stop reaching students. Returns how many were rejected, by reason.
+   */
+  @Post('purge')
+  async purge() {
+    const data = await this.svc.purgeInvalidDrafts();
+    return { success: true as const, data };
+  }
+
+  /**
    * Firewalled dual-write: stage a finished batch's practice drafts into the
    * diagnostic bank as `draft` rows for human validate -> publish. They never
    * score a placement until published and calibrated.

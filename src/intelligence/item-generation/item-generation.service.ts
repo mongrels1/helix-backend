@@ -299,7 +299,7 @@ export class ItemGenerationService {
     const purged = await this.purgeInvalidDrafts();
     await this.prisma.batchJob.update({
       where: { id: jobId },
-      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, discarded: discarded + purged, error: firstError || null },
+      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, discarded: discarded + purged.rejected, error: firstError || null },
     });
   }
 
@@ -621,28 +621,65 @@ export class ItemGenerationService {
   }
 
   /**
-   * Auto-reject any serveable practice items that are structurally invalid (not
-   * exactly 4 options, or not exactly one correct). Self-heals the bank so old
-   * bad items stop reaching students. Runs at the end of every generation.
+   * Auto-reject serveable practice items that fail the SAME reliability gate new
+   * items must pass: structural (exactly 4 options, exactly one correct, none
+   * blank), leaked-reasoning ("shakespeare") solutions, unsound or
+   * missing-but-referenced figures, and non-self-contained stems. Reuses the
+   * shared guards so the generator, the write path, the regenerate loop, and this
+   * sweep all agree on what "bad" means. Self-heals the bank — including drafts
+   * created BEFORE those guards existed — so they stop reaching students. Runs at
+   * the end of every generation and on-demand via the admin "purge" endpoint.
    */
-  private async purgeInvalidDrafts(): Promise<number> {
+  async purgeInvalidDrafts(): Promise<{ rejected: number; reasons: Record<string, number> }> {
     const drafts = await this.prisma.draftItem.findMany({
       where: { status: { in: ['draft', 'validated', 'field_test'] } },
-      select: { id: true, options: true },
+      select: { id: true, stem: true, options: true, solution: true, figure: true },
     });
+    const reasons: Record<string, number> = {};
     const badIds: string[] = [];
     for (const d of drafts) {
-      let opts: Array<{ correct?: boolean; text?: string }> = [];
-      const raw = d.options as unknown;
-      if (Array.isArray(raw)) opts = raw as typeof opts;
-      else if (typeof raw === 'string') { try { opts = JSON.parse(raw); } catch { opts = []; } }
-      const correct = opts.filter((o) => o?.correct === true).length;
-      if (opts.length !== 4 || correct !== 1) badIds.push(d.id);
+      const reason = this.draftGateFailure(d);
+      if (reason) {
+        badIds.push(d.id);
+        reasons[reason] = (reasons[reason] ?? 0) + 1;
+      }
     }
     if (badIds.length) {
       await this.prisma.draftItem.updateMany({ where: { id: { in: badIds } }, data: { status: 'rejected' } });
     }
-    return badIds.length;
+    this.logger.log(
+      `purge: rejected ${badIds.length}/${drafts.length} drafts` +
+        (badIds.length ? ` (${Object.entries(reasons).map(([k, v]) => `${k}:${v}`).join(', ')})` : ''),
+    );
+    return { rejected: badIds.length, reasons };
+  }
+
+  /**
+   * The first failing gate reason for a PERSISTED draft row, or null if it is
+   * clean. Mirrors `itemQualityFails` but reads the stored shape (options/figure
+   * as JSON). Kept in lock-step with that function so a live-generated item and a
+   * stored item are judged identically.
+   */
+  private draftGateFailure(d: {
+    stem: unknown;
+    options: unknown;
+    solution: unknown;
+    figure: unknown;
+  }): string | null {
+    let opts: Array<{ correct?: boolean; text?: string }> = [];
+    const raw = d.options as unknown;
+    if (Array.isArray(raw)) opts = raw as typeof opts;
+    else if (typeof raw === 'string') { try { opts = JSON.parse(raw); } catch { opts = []; } }
+    const correct = opts.filter((o) => o?.correct === true).length;
+    if (opts.length !== 4 || correct !== 1 || opts.some((o) => !String(o?.text ?? '').trim())) return 'options';
+    const stem = String(d.stem ?? '');
+    const solution = d.solution == null ? '' : String(d.solution);
+    if (solutionLeaksReasoning(solution)) return 'solution_leaked';
+    const text = `${stem} ${opts.map((o) => o?.text ?? '').join(' ')}`;
+    if (d.figure && !figureIsSane(d.figure, text).ok) return 'figure_unsound';
+    if (!d.figure && stemReferencesFigure(stem)) return 'figure_missing_referenced';
+    if (stemNotSelfContained(stem)) return 'stem_not_self_contained';
+    return null;
   }
 
   /**
