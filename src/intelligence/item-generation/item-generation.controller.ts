@@ -98,8 +98,8 @@ export class ItemGenerationController {
    * they stop reaching students. Returns how many were rejected, by reason.
    */
   @Post('purge')
-  async purge() {
-    const data = await this.svc.purgeInvalidDrafts();
+  async purge(@Body() body: { dryRun?: boolean }) {
+    const data = await this.svc.purgeInvalidDrafts(body?.dryRun === true);
     return { success: true as const, data };
   }
 

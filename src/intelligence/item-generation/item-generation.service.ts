@@ -299,7 +299,7 @@ export class ItemGenerationService {
     const purged = await this.purgeInvalidDrafts();
     await this.prisma.batchJob.update({
       where: { id: jobId },
-      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, discarded: discarded + purged.rejected, error: firstError || null },
+      data: { status: 'done', passed: summary.passed, failed: summary.failed, duplicates, discarded: discarded + purged.count, error: firstError || null },
     });
   }
 
@@ -630,28 +630,42 @@ export class ItemGenerationService {
    * created BEFORE those guards existed — so they stop reaching students. Runs at
    * the end of every generation and on-demand via the admin "purge" endpoint.
    */
-  async purgeInvalidDrafts(): Promise<{ rejected: number; reasons: Record<string, number> }> {
+  async purgeInvalidDrafts(
+    dryRun = false,
+  ): Promise<{
+    dryRun: boolean;
+    count: number;
+    reasons: Record<string, number>;
+    items: Array<{ id: string; reason: string; standard: string | null; stem: string }>;
+  }> {
     const drafts = await this.prisma.draftItem.findMany({
       where: { status: { in: ['draft', 'validated', 'field_test'] } },
-      select: { id: true, stem: true, options: true, solution: true, figure: true },
+      select: { id: true, stem: true, options: true, solution: true, figure: true, standard: true },
     });
     const reasons: Record<string, number> = {};
+    const items: Array<{ id: string; reason: string; standard: string | null; stem: string }> = [];
     const badIds: string[] = [];
     for (const d of drafts) {
       const reason = this.draftGateFailure(d);
       if (reason) {
         badIds.push(d.id);
         reasons[reason] = (reasons[reason] ?? 0) + 1;
+        items.push({
+          id: d.id,
+          reason,
+          standard: (d.standard as string | null) ?? null,
+          stem: String(d.stem ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
+        });
       }
     }
-    if (badIds.length) {
+    if (!dryRun && badIds.length) {
       await this.prisma.draftItem.updateMany({ where: { id: { in: badIds } }, data: { status: 'rejected' } });
     }
     this.logger.log(
-      `purge: rejected ${badIds.length}/${drafts.length} drafts` +
+      `purge${dryRun ? ' (dry-run)' : ''}: ${dryRun ? 'would reject' : 'rejected'} ${badIds.length}/${drafts.length} drafts` +
         (badIds.length ? ` (${Object.entries(reasons).map(([k, v]) => `${k}:${v}`).join(', ')})` : ''),
     );
-    return { rejected: badIds.length, reasons };
+    return { dryRun, count: badIds.length, reasons, items };
   }
 
   /**
