@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Assignment, Rubric } from '@prisma/client';
+import { Assignment, Prisma, Role, Rubric } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { CreateRubricDto } from './dto/create-rubric.dto';
@@ -15,11 +15,24 @@ export class AssignmentsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(
-    classroomId: string,
+    classroomId: string | undefined,
     page: number,
     limit: number,
+    requestingUser?: { userId: string; role: Role },
   ): Promise<[AssignmentEntity[], number]> {
-    const where = { classroomId, deletedAt: null };
+    const where: Prisma.AssignmentWhereInput = { deletedAt: null };
+    // Optional explicit classroom filter (e.g. a teacher viewing one class).
+    if (classroomId) where.classroomId = classroomId;
+    // Scope by caller so the list is never unbounded: a STUDENT sees only
+    // assignments for classrooms they're enrolled in; a TEACHER only their own
+    // classrooms'. Without this, an omitted classroomId returned EVERY
+    // assignment in the system to every user (the cross-class leak). Admins
+    // (ORG_ADMIN / SUPER_ADMIN) are intentionally unscoped.
+    if (requestingUser?.role === Role.STUDENT) {
+      where.classroom = { enrollments: { some: { studentId: requestingUser.userId } } };
+    } else if (requestingUser?.role === Role.TEACHER) {
+      where.classroom = { teacherId: requestingUser.userId };
+    }
     const skip = (page - 1) * limit;
     const [assignments, total] = await this.prisma.$transaction([
       this.prisma.assignment.findMany({

@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Rubric } from '@prisma/client';
+import { Role, Rubric } from '@prisma/client';
 import { ClassroomsRepository } from '@modules/classrooms/classrooms.repository';
 import { CoursesRepository } from '@modules/courses/courses.repository';
 import { AssignmentsRepository } from './assignments.repository';
@@ -21,9 +21,10 @@ export class AssignmentsService {
   ) {}
 
   async findAll(
-    classroomId: string,
+    classroomId: string | undefined,
     page = 1,
     limit = 20,
+    requestingUser?: { userId: string; role: Role },
   ): Promise<{
     data: AssignmentEntity[];
     meta: { page: number; limit: number; total: number };
@@ -34,6 +35,7 @@ export class AssignmentsService {
       classroomId,
       normalizedPage,
       normalizedLimit,
+      requestingUser,
     );
     return {
       data: assignments,

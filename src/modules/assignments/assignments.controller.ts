@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { Role, Rubric } from '@prisma/client';
 import { Roles } from '@common/decorators/roles.decorator';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { AssignmentsService } from './assignments.service';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { CreateRubricDto } from './dto/create-rubric.dto';
@@ -36,6 +37,7 @@ export class AssignmentsController {
     @Query('classroomId') classroomId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @CurrentUser() user: { userId: string; role: Role },
   ): Promise<{
     success: true;
     data: AssignmentEntity[];
@@ -45,6 +47,7 @@ export class AssignmentsController {
       classroomId,
       page,
       limit,
+      user,
     );
     return { success: true, ...result };
   }
