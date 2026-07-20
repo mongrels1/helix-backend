@@ -109,7 +109,7 @@ export class AdminExperienceService {
 
     return {
       users: users.map((user) => {
-        const inFunnel = Boolean(user.plan) || Boolean(user.planStatus);
+        const isPaid = (user.planStatus ?? '').toLowerCase() === 'active';
         const hasActivity =
           user._count.enrollments > 0 ||
           user._count.submissions > 0 ||
@@ -127,7 +127,7 @@ export class AdminExperienceService {
           plan: user.plan,
           planStatus: user.planStatus,
           status: user.suspendedAt ? 'paused' : 'active',
-          canDelete: !inFunnel && !hasActivity,
+          canDelete: !isPaid && !hasActivity,
         };
       }),
       meta: { page: normalizedPage, limit: normalizedLimit, total },

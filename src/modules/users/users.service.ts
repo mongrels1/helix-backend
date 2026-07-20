@@ -72,16 +72,16 @@ export class UsersService {
   async remove(id: string): Promise<void> {
     const user = await this.findById(id);
     const activity = await this.usersRepository.countActivity(id);
-    const inFunnel = Boolean(user.plan) || Boolean(user.planStatus);
+    const isPaid = (user.planStatus ?? '').toLowerCase() === 'active';
     const hasActivity =
       activity.enrollments > 0 ||
       activity.submissions > 0 ||
       activity.taughtClassrooms > 0 ||
       activity.instructorContent > 0;
 
-    if (inFunnel || hasActivity) {
+    if (isPaid || hasActivity) {
       throw new BadRequestException(
-        'This account has enrollments, submissions, taught classrooms, or a billing plan and cannot be permanently deleted. Pause it instead.',
+        'This account has enrollments, submissions, taught classrooms, or an active paid subscription and cannot be permanently deleted. Pause it instead.',
       );
     }
 
