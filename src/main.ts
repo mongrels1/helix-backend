@@ -40,7 +40,7 @@ async function bootstrap(): Promise<void> {
         /^https:\/\/helix-marketing-[a-z0-9-]+\.vercel\.app$/i.test(origin);
       callback(null, isAllowed);
     },
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   });
