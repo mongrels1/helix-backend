@@ -107,14 +107,23 @@ export class AdminExperienceService {
       this.prisma.user.count({ where }),
     ]);
 
+    const ids = users.map((u) => u.id);
+    const [enr, sub, cls, ic] = await Promise.all([
+      this.prisma.enrollment.findMany({ where: { studentId: { in: ids } }, select: { studentId: true } }),
+      this.prisma.submission.findMany({ where: { studentId: { in: ids } }, select: { studentId: true } }),
+      this.prisma.classroom.findMany({ where: { teacherId: { in: ids } }, select: { teacherId: true } }),
+      this.prisma.instructorContent.findMany({ where: { teacherId: { in: ids } }, select: { teacherId: true } }),
+    ]);
+    const activeIds = new Set<string>();
+    for (const r of enr) activeIds.add(r.studentId);
+    for (const r of sub) activeIds.add(r.studentId);
+    for (const r of cls) activeIds.add(r.teacherId);
+    for (const r of ic) if (r.teacherId) activeIds.add(r.teacherId);
+
     return {
       users: users.map((user) => {
         const isPaid = (user.planStatus ?? '').toLowerCase() === 'active';
-        const hasActivity =
-          user._count.enrollments > 0 ||
-          user._count.submissions > 0 ||
-          user._count.taughtClassrooms > 0 ||
-          user._count.instructorContent > 0;
+        const hasActivity = activeIds.has(user.id);
         return {
           id: user.id,
           email: user.email,
