@@ -10,6 +10,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { Roles } from '@common/decorators/roles.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserEntity } from './entities/user.entity';
@@ -57,7 +59,26 @@ export class UsersController {
     return { success: true, data: user };
   }
 
+  @Patch(':id/suspend')
+  @Roles(Role.SUPER_ADMIN, Role.ORG_ADMIN)
+  async suspend(
+    @Param('id') id: string,
+  ): Promise<{ success: true; data: UserEntity }> {
+    const user = await this.usersService.suspend(id);
+    return { success: true, data: user };
+  }
+
+  @Patch(':id/restore')
+  @Roles(Role.SUPER_ADMIN, Role.ORG_ADMIN)
+  async restore(
+    @Param('id') id: string,
+  ): Promise<{ success: true; data: UserEntity }> {
+    const user = await this.usersService.restore(id);
+    return { success: true, data: user };
+  }
+
   @Delete(':id')
+  @Roles(Role.SUPER_ADMIN, Role.ORG_ADMIN)
   async remove(@Param('id') id: string): Promise<{ success: true; data: null }> {
     await this.usersService.remove(id);
     return { success: true, data: null };

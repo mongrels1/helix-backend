@@ -115,6 +115,7 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
+  suspendedAt  DateTime?
   refreshTokens RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   diagnosticSessions DiagnosticSession[] @relation("UserDiagnostics")

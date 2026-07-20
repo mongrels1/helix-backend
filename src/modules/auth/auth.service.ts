@@ -75,6 +75,12 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    if (userRecord.suspendedAt) {
+      throw new UnauthorizedException(
+        'Your account is paused. Please contact support.',
+      );
+    }
+
     const user = await this.usersRepository.findById(userRecord.id);
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
@@ -95,6 +101,12 @@ export class AuthService {
     const user = await this.usersRepository.findById(refreshToken.userId);
     if (!user) {
       throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (user.suspendedAt) {
+      throw new UnauthorizedException(
+        'Your account is paused. Please contact support.',
+      );
     }
 
     return { accessToken: this.signAccessToken(user) };

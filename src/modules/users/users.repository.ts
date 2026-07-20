@@ -26,6 +26,7 @@ const userSelect = {
   createdAt: true,
   updatedAt: true,
   deletedAt: true,
+  suspendedAt: true,
   profile: {
     select: {
       firstName: true,
@@ -124,5 +125,82 @@ export class UsersRepository {
       where: { id, deletedAt: null },
       data: { deletedAt: new Date() },
     });
+  }
+
+  /** Pause: block sign-in and revoke existing refresh tokens so the session ends now. */
+  async suspend(id: string): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.user.updateMany({
+        where: { id, deletedAt: null },
+        data: { suspendedAt: new Date() },
+      }),
+      this.prisma.refreshToken.deleteMany({ where: { userId: id } }),
+    ]);
+  }
+
+  /** Restart a paused account. */
+  async restore(id: string): Promise<void> {
+    await this.prisma.user.updateMany({
+      where: { id, deletedAt: null },
+      data: { suspendedAt: null },
+    });
+  }
+
+  /**
+   * Footprint used to decide whether an account is safe to permanently delete.
+   * Real-customer data lives in these relations; the service blocks deletion
+   * when any are non-zero.
+   */
+  async countActivity(id: string): Promise<{
+    enrollments: number;
+    submissions: number;
+    taughtClassrooms: number;
+    instructorContent: number;
+  }> {
+    const [enrollments, submissions, taughtClassrooms, instructorContent] =
+      await Promise.all([
+        this.prisma.enrollment.count({ where: { studentId: id } }),
+        this.prisma.submission.count({ where: { studentId: id } }),
+        this.prisma.classroom.count({ where: { teacherId: id } }),
+        this.prisma.instructorContent.count({ where: { teacherId: id } }),
+      ]);
+    return { enrollments, submissions, taughtClassrooms, instructorContent };
+  }
+
+  /**
+   * Permanently remove a user plus their self-generated child rows in one
+   * transaction, FK-safe (deepest children first). Heavy relations
+   * (enrollments/submissions/classrooms/content) are intentionally NOT deleted
+   * here: the service guard blocks deletion whenever any exist, so if one is
+   * present the final delete throws and the whole transaction rolls back.
+   */
+  async hardDelete(id: string): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.tutorMessage.deleteMany({ where: { session: { studentId: id } } }),
+      this.prisma.tutorSession.deleteMany({ where: { studentId: id } }),
+      this.prisma.masteryHistory.deleteMany({ where: { masteryScore: { studentId: id } } }),
+      this.prisma.masteryScore.deleteMany({ where: { studentId: id } }),
+      this.prisma.pacingRecommendation.deleteMany({ where: { studentId: id } }),
+      this.prisma.diagnosticSession.deleteMany({ where: { userId: id } }),
+      this.prisma.attendanceRecord.deleteMany({
+        where: { OR: [{ studentId: id }, { recordedById: id }] },
+      }),
+      this.prisma.gradeHistory.deleteMany({ where: { changedById: id } }),
+      this.prisma.message.deleteMany({ where: { senderId: id } }),
+      this.prisma.threadParticipant.deleteMany({ where: { userId: id } }),
+      this.prisma.notification.deleteMany({ where: { userId: id } }),
+      this.prisma.notificationPreference.deleteMany({ where: { userId: id } }),
+      this.prisma.fileRecord.deleteMany({ where: { ownerId: id } }),
+      this.prisma.parentStudentLink.deleteMany({
+        where: { OR: [{ parentId: id }, { studentId: id }] },
+      }),
+      this.prisma.referral.deleteMany({ where: { referrerId: id } }),
+      this.prisma.referralCode.deleteMany({ where: { userId: id } }),
+      this.prisma.membership.deleteMany({ where: { userId: id } }),
+      this.prisma.refreshToken.deleteMany({ where: { userId: id } }),
+      this.prisma.passwordResetToken.deleteMany({ where: { userId: id } }),
+      this.prisma.profile.deleteMany({ where: { userId: id } }),
+      this.prisma.user.delete({ where: { id } }),
+    ]);
   }
 }

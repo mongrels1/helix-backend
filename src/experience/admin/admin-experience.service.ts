@@ -75,6 +75,7 @@ export class AdminExperienceService {
     const normalizedLimit = Math.min(Math.max(limit, 1), 100);
     const trimmedSearch = search?.trim();
     const where: Prisma.UserWhereInput = {
+      deletedAt: null,
       ...(role ? { role } : {}),
       ...(trimmedSearch
         ? {
@@ -107,15 +108,28 @@ export class AdminExperienceService {
     ]);
 
     return {
-      users: users.map((user) => ({
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        firstName: user.profile?.firstName ?? null,
-        lastName: user.profile?.lastName ?? null,
-        createdAt: user.createdAt,
-        deletedAt: user.deletedAt,
-      })),
+      users: users.map((user) => {
+        const inFunnel = Boolean(user.plan) || Boolean(user.planStatus);
+        const hasActivity =
+          user._count.enrollments > 0 ||
+          user._count.submissions > 0 ||
+          user._count.taughtClassrooms > 0 ||
+          user._count.instructorContent > 0;
+        return {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          firstName: user.profile?.firstName ?? null,
+          lastName: user.profile?.lastName ?? null,
+          createdAt: user.createdAt,
+          deletedAt: user.deletedAt,
+          suspendedAt: user.suspendedAt,
+          plan: user.plan,
+          planStatus: user.planStatus,
+          status: user.suspendedAt ? 'paused' : 'active',
+          canDelete: !inFunnel && !hasActivity,
+        };
+      }),
       meta: { page: normalizedPage, limit: normalizedLimit, total },
     };
   }

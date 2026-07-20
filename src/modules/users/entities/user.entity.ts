@@ -11,6 +11,7 @@ export class UserEntity {
   createdAt!: Date;
   updatedAt!: Date;
   deletedAt!: Date | null;
+  suspendedAt!: Date | null;
   profile!: {
     firstName: string;
     lastName: string;

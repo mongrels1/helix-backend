@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -53,8 +57,34 @@ export class UsersService {
     return this.usersRepository.update(id, dto);
   }
 
-  async remove(id: string): Promise<void> {
+  async suspend(id: string): Promise<UserEntity> {
     await this.findById(id);
-    await this.usersRepository.softDelete(id);
+    await this.usersRepository.suspend(id);
+    return this.findById(id);
+  }
+
+  async restore(id: string): Promise<UserEntity> {
+    await this.findById(id);
+    await this.usersRepository.restore(id);
+    return this.findById(id);
+  }
+
+  async remove(id: string): Promise<void> {
+    const user = await this.findById(id);
+    const activity = await this.usersRepository.countActivity(id);
+    const inFunnel = Boolean(user.plan) || Boolean(user.planStatus);
+    const hasActivity =
+      activity.enrollments > 0 ||
+      activity.submissions > 0 ||
+      activity.taughtClassrooms > 0 ||
+      activity.instructorContent > 0;
+
+    if (inFunnel || hasActivity) {
+      throw new BadRequestException(
+        'This account has enrollments, submissions, taught classrooms, or a billing plan and cannot be permanently deleted. Pause it instead.',
+      );
+    }
+
+    await this.usersRepository.hardDelete(id);
   }
 }
