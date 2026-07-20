@@ -88,14 +88,15 @@ Hard requirements:
 - Every guided and independent problem must have a correct short answer and a full step-by-step solution showing the working.
 - Each quiz question must be a real problem about this skill with 4 options, exactly one correct (answer = its index), and a one-sentence explanation.
 - Visual figures [figure-specs:v2]: when a picture helps a student SEE the math, add a "figure" field to that problem. Emit JSON only (never ASCII art) and include a short "altText". CHOOSE the figure that teaches THIS skill:
-  - Ratios, rates, unit rates, proportions, scaling, "per", counting on, comparing amounts on a scale -> "number_line". For a rate, use TWO jump sets so both quantities advance together (e.g. hours and miles).
+  - Ratios, rates, unit rates, proportions, equivalent ratios, scaling, "per" -> "ratio_table". Show BOTH quantities as paired rows using THIS problem's actual numbers (at least three rows, and include the unit-rate row) so the student can read the pairing straight off the table. NEVER use a number_line for these — a single line can only show ONE of the two quantities, so the second quantity (e.g. the cost, the miles) would be missing from the picture.
+  - Plotting, comparing or ordering single numbers or integers on ONE scale -> "number_line".
   - Fractions, parts of a whole, equivalent fractions, percent of a whole -> "fraction_bar".
   - Multiplication, division as equal sharing, area, arrays, the distributive property -> "rect" (area/array model).
   - Reading or comparing CATEGORICAL data only -> "bar_graph". Never use a bar_graph to show a single rate, ratio, or unit rate.
   - Probability -> "spinner".
   - Coordinate graphs, straight lines, functions, or geometry that the shapes above cannot show -> "geogebra".
   Shapes (copy the structure, change the numbers/labels):
-  {"type":"number_line","min":0,"max":60,"ticks":10,"marks":[{"at":20,"label":"20 mi"},{"at":40,"label":"40 mi"}],"jumps":[{"from":0,"to":20,"label":"1 hr"},{"from":20,"to":40,"label":"+1 hr"}]}
+  {"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":6,"label":"6"}]} (a single number plotted on one scale)
   {"type":"fraction_bar","whole":4,"shaded":3,"label":"three fourths"}
   {"type":"rect","w":6,"h":4,"unit":"cm","mode":"area"} (use "mode":"perimeter" for perimeter problems and "mode":"area" for multiplication or area)
   {"type":"bar_graph","bars":[{"label":"Mon","value":5}],"unit":"books"}
@@ -108,7 +109,7 @@ Hard requirements:
   {"type":"place_value_chart","value":3642,"highlight":["Tens"]} (place value, expanded/standard/word form, rounding, comparing multi-digit whole numbers)
   {"type":"decimal_grid","value":0.37,"label":"0.37"} (decimals: tenths and hundredths)
   {"type":"function_table","rule":"x 2 + 1","rows":[{"in":1,"out":3},{"in":2,"out":5}]} (input-output patterns, function rules, in/out tables)
-  {"type":"ratio_table","headers":["Cups","Cookies"],"rows":[{"a":3,"b":12},{"a":6,"b":24}]} (ratios, unit rates, equivalent ratios, proportional tables)
+  {"type":"ratio_table","headers":["Cups","Cookies"],"rows":[{"a":1,"b":4},{"a":3,"b":12},{"a":6,"b":24}],"altText":"ratio table: 1 cup makes 4 cookies, 3 cups make 12, 6 cups make 24"} (ratios, rates, unit rates, equivalent ratios, proportional tables — include the unit-rate row where a=1)
   GEOMETRY/3-D: for the Pythagorean theorem, right triangles, hypotenuse or legs, circles, 3-D solids, volume, or surface area, the simple shapes cannot show these so you MUST emit a geogebra figure with appName "geometry". Right-triangle example (legs 4 and 3): {"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle with legs 4 and 3"} Use ONLY point definitions (like A=(0,0)) and Polygon/Segment/Circle. Do NOT use Text, labels, or any other command - they cause errors.
   {"type":"geogebra","appName":"graphing","commands":["f(x)=2x+1"]}
   Prefer a "figure" over a words-only "imageDescription"; omit "figure" when no visual genuinely helps.
@@ -191,8 +192,8 @@ One JSON object with exactly these keys:
   ]
 }
 
-Visual figures [figure-specs:v2-mini]: add a "figure" to lessonContent (illustrating the worked example) AND to any quiz question where a picture helps the student SEE the math. Emit JSON only (never ASCII art) with a short "altText". Choose by skill: ratios/rates/unit rates/proportions/scaling/"per" -> "number_line" (use TWO jump sets so both quantities advance together); fractions/parts of a whole/equivalent fractions -> "fraction_bar"; multiplication/division as sharing/area/arrays -> "rect"; comparing categorical data only -> "bar_graph" (never for a single rate); probability -> "spinner". Shapes (copy the structure, change numbers/labels):
-{"type":"number_line","min":0,"max":60,"ticks":10,"marks":[{"at":20,"label":"20 mi"},{"at":40,"label":"40 mi"}],"jumps":[{"from":0,"to":20,"label":"1 hr"},{"from":20,"to":40,"label":"+1 hr"}]}
+Visual figures [figure-specs:v2-mini]: add a "figure" to lessonContent (illustrating the worked example) AND to any quiz question where a picture helps the student SEE the math. Emit JSON only (never ASCII art) with a short "altText". Choose by skill: ratios/rates/unit rates/proportions/scaling/"per" -> "ratio_table" (show BOTH quantities as paired rows with THIS problem's numbers — at least three rows, and include the unit-rate row where a=1; NEVER a number_line for these, since one line can only show one of the two quantities); single numbers plotted/compared/ordered on ONE scale -> "number_line"; fractions/parts of a whole/equivalent fractions -> "fraction_bar"; multiplication/division as sharing/area/arrays -> "rect"; comparing categorical data only -> "bar_graph" (never for a single rate); probability -> "spinner". Shapes (copy the structure, change numbers/labels):
+{"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":6,"label":"6"}]}
 {"type":"fraction_bar","whole":4,"shaded":3,"label":"three fourths"}
 {"type":"rect","w":6,"h":4,"unit":"cm","mode":"area"} (use "mode":"perimeter" for perimeter problems and "mode":"area" for multiplication or area)
 {"type":"bar_graph","bars":[{"label":"Mon","value":5}],"unit":"books"}
@@ -205,7 +206,7 @@ Visual figures [figure-specs:v2-mini]: add a "figure" to lessonContent (illustra
   {"type":"place_value_chart","value":3642,"highlight":["Tens"]} (place value, expanded/standard/word form, rounding, comparing multi-digit whole numbers)
   {"type":"decimal_grid","value":0.37,"label":"0.37"} (decimals: tenths and hundredths)
   {"type":"function_table","rule":"x 2 + 1","rows":[{"in":1,"out":3},{"in":2,"out":5}]} (input-output patterns, function rules, in/out tables)
-  {"type":"ratio_table","headers":["Cups","Cookies"],"rows":[{"a":3,"b":12},{"a":6,"b":24}]} (ratios, unit rates, equivalent ratios, proportional tables)
+  {"type":"ratio_table","headers":["Cups","Cookies"],"rows":[{"a":1,"b":4},{"a":3,"b":12},{"a":6,"b":24}],"altText":"ratio table: 1 cup makes 4 cookies, 3 cups make 12, 6 cups make 24"} (ratios, rates, unit rates, equivalent ratios, proportional tables — include the unit-rate row where a=1)
   GEOMETRY/3-D: for the Pythagorean theorem, right triangles, hypotenuse or legs, circles, 3-D solids, volume, or surface area, the simple shapes cannot show these so you MUST emit a geogebra figure with appName "geometry". Right-triangle example (legs 4 and 3): {"type":"geogebra","appName":"geometry","commands":["A=(0,0)","B=(4,0)","C=(0,3)","Polygon(A,B,C)"],"altText":"right triangle with legs 4 and 3"}
 Omit "figure" when no visual genuinely helps.
 Make exactly 3 multiple-choice questions, each with 4 options, all focused only on ${kc}. Keep answers short enough for exact matching.`;
