@@ -140,6 +140,12 @@ model Profile {
   firstName String
   lastName  String
   avatarUrl String?
+  // Declared grade — the account's foundational anchor. Set at enrollment by the
+  // student/parent; the diagnostic uses it as the scored grade FLOOR, and it is
+  // the reference for "above vs below grade" in the report. Nullable so existing
+  // accounts and GHL-provisioned accounts (which carry no grade) are never broken;
+  // captured in-app via profile edit or the diagnostic grade-consent flow.
+  grade     String?
   user      User    @relation(fields: [userId], references: [id])
 }
 

@@ -63,19 +63,21 @@ export class UsersController {
     const isAdmin =
       caller?.role === Role.SUPER_ADMIN || caller?.role === Role.ORG_ADMIN;
 
-    // Non-admins may edit ONLY their own name — never role/plan/email or another
-    // account. This closes the privilege-escalation hole where any signed-in user
-    // could PATCH their own record to { role: 'SUPER_ADMIN' }.
+    // Non-admins may edit ONLY their own name and declared grade — never
+    // role/plan/email or another account. This closes the privilege-escalation
+    // hole where any signed-in user could PATCH their own record to
+    // { role: 'SUPER_ADMIN' }. Grade is a self-serviceable profile attribute
+    // (set at enrollment, or via the diagnostic grade-consent flow).
     if (!isAdmin) {
       if (!caller || caller.userId !== id) {
         throw new ForbiddenException('You can only update your own profile.');
       }
-      const allowed = new Set(['firstName', 'lastName']);
+      const allowed = new Set(['firstName', 'lastName', 'grade']);
       const attempted = Object.keys(updateUserDto).filter(
         (key) => !allowed.has(key),
       );
       if (attempted.length > 0) {
-        throw new ForbiddenException('You can only update your name.');
+        throw new ForbiddenException('You can only update your own profile.');
       }
     }
 

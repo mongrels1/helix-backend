@@ -32,6 +32,7 @@ const userSelect = {
       firstName: true,
       lastName: true,
       avatarUrl: true,
+      grade: true,
     },
   },
 };
@@ -84,6 +85,7 @@ export class UsersRepository {
           create: {
             firstName: data.firstName,
             lastName: data.lastName,
+            ...(data.grade !== undefined ? { grade: data.grade } : {}),
           },
         },
       },
@@ -92,20 +94,21 @@ export class UsersRepository {
   }
 
   async update(id: string, data: UpdateUserDto): Promise<UserEntity> {
-    const { firstName, lastName, password, ...userData } = data;
+    const { firstName, lastName, grade, password, ...userData } = data;
 
     await this.prisma.$transaction([
       this.prisma.user.updateMany({
         where: { id, deletedAt: null },
         data: userData,
       }),
-      ...(firstName !== undefined || lastName !== undefined
+      ...(firstName !== undefined || lastName !== undefined || grade !== undefined
         ? [
             this.prisma.profile.updateMany({
               where: { userId: id, user: { deletedAt: null } },
               data: {
                 ...(firstName !== undefined ? { firstName } : {}),
                 ...(lastName !== undefined ? { lastName } : {}),
+                ...(grade !== undefined ? { grade } : {}),
               },
             }),
           ]

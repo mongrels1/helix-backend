@@ -16,5 +16,6 @@ export class UserEntity {
     firstName: string;
     lastName: string;
     avatarUrl: string | null;
+    grade: string | null;
   } | null;
 }

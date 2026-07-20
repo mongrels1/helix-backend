@@ -18,4 +18,11 @@ export class CreateUserDto {
 
   @IsString()
   lastName!: string;
+
+  // Declared grade for the learner's profile. Optional so it can be omitted at
+  // provisioning (GHL sends no grade) and set later via profile edit / the
+  // diagnostic grade-consent flow. Lives on Profile, not User.
+  @IsString()
+  @IsOptional()
+  grade?: string;
 }
