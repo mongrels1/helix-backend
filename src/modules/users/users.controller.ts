@@ -3,6 +3,7 @@ import {
   Controller,
   DefaultValuePipe,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -12,10 +13,13 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Roles } from '@common/decorators/roles.decorator';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserEntity } from './entities/user.entity';
 import { UsersService } from './users.service';
+
+type AuthenticatedUser = { userId: string; role: Role };
 
 @Controller('api/v1/users')
 export class UsersController {
@@ -54,7 +58,37 @@ export class UsersController {
   async update(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
+    @CurrentUser() caller: AuthenticatedUser,
   ): Promise<{ success: true; data: UserEntity }> {
+    const isAdmin =
+      caller?.role === Role.SUPER_ADMIN || caller?.role === Role.ORG_ADMIN;
+
+    // Non-admins may edit ONLY their own name — never role/plan/email or another
+    // account. This closes the privilege-escalation hole where any signed-in user
+    // could PATCH their own record to { role: 'SUPER_ADMIN' }.
+    if (!isAdmin) {
+      if (!caller || caller.userId !== id) {
+        throw new ForbiddenException('You can only update your own profile.');
+      }
+      const allowed = new Set(['firstName', 'lastName']);
+      const attempted = Object.keys(updateUserDto).filter(
+        (key) => !allowed.has(key),
+      );
+      if (attempted.length > 0) {
+        throw new ForbiddenException('You can only update your name.');
+      }
+    }
+
+    // Only a Super Admin may grant the Super Admin role (an Org Admin cannot mint one).
+    if (
+      updateUserDto.role === Role.SUPER_ADMIN &&
+      caller?.role !== Role.SUPER_ADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only a Super Admin can grant the Super Admin role.',
+      );
+    }
+
     const user = await this.usersService.update(id, updateUserDto);
     return { success: true, data: user };
   }
