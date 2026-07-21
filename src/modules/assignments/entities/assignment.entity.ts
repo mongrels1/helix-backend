@@ -2,6 +2,9 @@ export class AssignmentEntity {
   id!: string;
   title!: string;
   description!: string | null;
+  linkUrl!: string | null;
+  standard!: string | null;
+  tasks!: string[];
   dueAt!: Date | null;
   maxScore!: number;
   skillTags!: string[];

@@ -18,6 +18,19 @@ export class CreateAssignmentDto {
   @IsOptional()
   description?: string;
 
+  @IsString()
+  @IsOptional()
+  linkUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  standard?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  tasks?: string[];
+
   @IsDateString()
   @IsOptional()
   dueAt?: string;

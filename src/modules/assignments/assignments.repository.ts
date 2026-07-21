@@ -65,6 +65,9 @@ export class AssignmentsRepository {
       data: {
         title: dto.title,
         description: dto.description,
+        linkUrl: dto.linkUrl,
+        standard: dto.standard,
+        tasks: dto.tasks,
         dueAt: dto.dueAt ? new Date(dto.dueAt) : undefined,
         maxScore: dto.maxScore,
         skillTags: dto.skillTags,
@@ -81,6 +84,9 @@ export class AssignmentsRepository {
       data: {
         title: dto.title,
         description: dto.description,
+        linkUrl: dto.linkUrl,
+        standard: dto.standard,
+        tasks: dto.tasks,
         dueAt: dto.dueAt ? new Date(dto.dueAt) : undefined,
         maxScore: dto.maxScore,
         skillTags: dto.skillTags,

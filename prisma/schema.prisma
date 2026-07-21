@@ -274,6 +274,9 @@ model Assignment {
   id          String    @id @default(uuid())
   title       String
   description String?
+  linkUrl     String?
+  standard    String?
+  tasks       String[]  @default([])
   dueAt       DateTime?
   maxScore    Float     @default(100)
   skillTags   String[]  @default([])
