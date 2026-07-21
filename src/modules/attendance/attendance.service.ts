@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -65,6 +66,9 @@ export class AttendanceService {
     classroomId: string,
     date: string,
   ): Promise<AttendanceRecord[]> {
+    if (!classroomId) {
+      throw new BadRequestException('classroomId is required');
+    }
     return this.attendanceRepository.findByClassroomAndDate(
       classroomId,
       this.toDateOnly(date),
@@ -100,6 +104,10 @@ export class AttendanceService {
   }
 
   private toDateOnly(value: string): Date {
-    return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+    const parsed = new Date(`${(value ?? '').slice(0, 10)}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('Invalid date');
+    }
+    return parsed;
   }
 }
