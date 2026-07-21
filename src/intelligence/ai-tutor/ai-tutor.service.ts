@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -23,6 +24,11 @@ import {
 
 @Injectable()
 export class AITutorService {
+  private readonly logger = new Logger(AITutorService.name);
+  // The tutor system prompt is large; 8s (the router default) is too tight and
+  // times out under load, stranding the student on a canned fallback. Give the
+  // reply a real budget.
+  private readonly TUTOR_TIMEOUT_MS = 20_000;
   private readonly SOCRATIC_SYSTEM_PROMPT = `You are EdKairos, a warm, encouraging math tutor for a young student (about 8-12 years old). You LEAD the lesson — never wait for the student to figure out what to ask.
 How you make the student feel (this matters as much as the math): the student must always feel safe making mistakes with you. When they are wrong, treat it as useful information — "Nice — that mistake shows us exactly what to practice" — never as failure, and never with sarcasm or a talking-down tone. Praise the specific thing they DID ("you lined the units up carefully"), not their ability ("you're so smart"). When they are stuck or frustrated, slow down, make the next step smaller, and gently remind them they can do this. Celebrate real effort and progress warmly and specifically. Many of these students have been made to feel bad at math — be the voice that changes that. But stay a warm DEMANDER: kindness never means doing the thinking for them or giving hollow praise — keep them actively working the next step, just with total patience and genuine belief in them.
 For every skill, teach in this order:
@@ -214,12 +220,14 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
         systemPrompt: this.buildSystemPrompt(gradeLevel),
         maxTokens: 400,
         temperature: 0.6,
+        timeoutMs: this.TUTOR_TIMEOUT_MS,
       });
       return this.enforceReadability(
         this.sanitizeReplyFigure(ai.text || fallback),
         gradeLevel,
       );
-    } catch {
+    } catch (error) {
+      this.logger.warn(`Tutor opener generation failed: ${String(error)}`);
       return fallback;
     }
   }
@@ -236,13 +244,24 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
         systemPrompt: this.buildSystemPrompt(gradeLevel, contextNote),
         maxTokens: 400,
         temperature: 0.6,
+        timeoutMs: this.TUTOR_TIMEOUT_MS,
       });
-      return this.enforceReadability(
+      const text = await this.enforceReadability(
         this.sanitizeReplyFigure(ai.text),
         gradeLevel,
       );
-    } catch {
-      return "Let's keep going - try this next small step and tell me what you get.";
+      // A blank model reply would render as "nothing came back" — treat it as a
+      // failure so the student gets an honest, retryable message instead.
+      if (!text?.trim()) {
+        throw new Error('empty tutor reply');
+      }
+      return text;
+    } catch (error) {
+      this.logger.warn(`Tutor reply generation failed: ${String(error)}`);
+      // Honest + retryable, and it does NOT pretend a step was given (the old
+      // fallback read like real teaching, so a stuck student had no idea it had
+      // failed). Prompting a resend re-runs the call, which usually succeeds.
+      return "Oops - my brain hiccuped for a second there! Send that to me again and I'll help you right away.";
     }
   }
 
@@ -381,6 +400,7 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
           'You simplify a math tutor message for a young or struggling reader without changing its meaning, math, steps, or next question. Output only the rewritten message.',
         maxTokens: 300,
         temperature: 0.3,
+        timeoutMs: 12_000,
       });
       return ai.text?.trim() || text;
     } catch {
