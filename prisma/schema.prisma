@@ -440,6 +440,24 @@ model AttendanceRecord {
   @@unique([classroomId, studentId, date])
 }
 
+// Passive engagement/presence: one row per student per day, accumulating the
+// active seconds they spent on learning pages (heartbeat-driven). Drives the
+// auto-attendance suggestion; decoupled from AttendanceRecord (no FK) so it is
+// purely a signal the teacher confirms/overrides.
+model PresenceDay {
+  id            String   @id @default(uuid())
+  studentId     String
+  date          DateTime @db.Date
+  firstSeenAt   DateTime
+  lastSeenAt    DateTime
+  activeSeconds Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([studentId, date])
+  @@index([date])
+}
+
 model Thread {
   id           String              @id @default(uuid())
   subject      String?

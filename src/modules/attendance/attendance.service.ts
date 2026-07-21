@@ -4,10 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AttendanceRecord, AttendanceStatus, Role } from '@prisma/client';
+import { AttendanceRecord, AttendanceStatus, PresenceDay, Role } from '@prisma/client';
 import { EventsService } from '../../events/events.service';
 import { ClassroomsRepository } from '../classrooms/classrooms.repository';
-import { AttendanceRepository } from './attendance.repository';
+import { AttendanceRepository, EngagementRow } from './attendance.repository';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 
 @Injectable()
@@ -101,6 +101,24 @@ export class AttendanceService {
       data: records,
       meta: { page: normalizedPage, limit: normalizedLimit, total },
     };
+  }
+
+  // A student heartbeat: credit active time to today's presence row.
+  async recordHeartbeat(studentId: string, dateStr?: string): Promise<PresenceDay> {
+    const now = new Date();
+    const date = this.toDateOnly(dateStr && dateStr.length >= 10 ? dateStr : now.toISOString());
+    return this.attendanceRepository.upsertPresence(studentId, date, now);
+  }
+
+  // Per-student engagement (active seconds + arrival) for a classroom on a day.
+  async getEngagement(classroomId: string, date: string): Promise<EngagementRow[]> {
+    if (!classroomId) {
+      throw new BadRequestException('classroomId is required');
+    }
+    return this.attendanceRepository.engagementForClassroom(
+      classroomId,
+      this.toDateOnly(date),
+    );
   }
 
   private toDateOnly(value: string): Date {
