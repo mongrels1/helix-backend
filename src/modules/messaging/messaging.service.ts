@@ -3,10 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Message, Thread } from '@prisma/client';
+import { Message, Role, Thread } from '@prisma/client';
 import { CreateThreadDto } from './dto/create-thread.dto';
 import { SendMessageDto } from './dto/send-message.dto';
-import { MessagingRepository } from './messaging.repository';
+import { MessagingRepository, RecipientResult } from './messaging.repository';
 
 @Injectable()
 export class MessagingService {
@@ -100,5 +100,19 @@ export class MessagingService {
 
   async isParticipant(threadId: string, userId: string): Promise<boolean> {
     return this.messagingRepository.isParticipant(threadId, userId);
+  }
+
+  async searchRecipients(
+    user: { userId: string; role: Role },
+    query: string,
+  ): Promise<RecipientResult[]> {
+    if (user.role === Role.TEACHER) {
+      return this.messagingRepository.searchTeacherRecipients(user.userId, query);
+    }
+    if (user.role === Role.ORG_ADMIN || user.role === Role.SUPER_ADMIN) {
+      return this.messagingRepository.searchAllRecipients(query, user.userId);
+    }
+    // Students/parents don't get a directory search yet.
+    return [];
   }
 }

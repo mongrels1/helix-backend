@@ -8,13 +8,15 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { Message, Thread } from '@prisma/client';
+import { Message, Role, Thread } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { CreateThreadDto } from './dto/create-thread.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MessagingService } from './messaging.service';
+import { RecipientResult } from './messaging.repository';
 
 type AuthenticatedUser = { userId: string };
+type AuthenticatedUserWithRole = { userId: string; role: Role };
 
 @Controller('api/v1')
 export class MessagingController {
@@ -30,6 +32,15 @@ export class MessagingController {
       currentUser.userId,
     );
     return { success: true, data: thread };
+  }
+
+  @Get('messaging/recipients')
+  async searchRecipients(
+    @CurrentUser() currentUser: AuthenticatedUserWithRole,
+    @Query('q') q = '',
+  ): Promise<{ success: true; data: RecipientResult[] }> {
+    const data = await this.messagingService.searchRecipients(currentUser, q);
+    return { success: true, data };
   }
 
   @Get('threads')
