@@ -737,3 +737,14 @@ model WeeklyReportRun {
 
   @@index([createdAt])
 }
+
+model KSportsFact {
+  id         String   @id @default(cuid())
+  studentId  String
+  module     String
+  factKey    String
+  masteredAt DateTime @default(now())
+
+  @@unique([studentId, module, factKey])
+  @@index([studentId])
+}
