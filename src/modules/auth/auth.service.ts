@@ -10,7 +10,7 @@ import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes, randomUUID } from 'crypto';
 import { EmailService } from '@modules/email/email.service';
-import { UsersRepository } from '@modules/users/users.repository';
+import { UsersRepository, normalizeEmail } from '@modules/users/users.repository';
 import { UserEntity } from '@modules/users/entities/user.entity';
 import { CreateUserDto } from '@modules/users/dto/create-user.dto';
 import { AuthRepository } from './auth.repository';
@@ -19,6 +19,10 @@ import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 
 const SALT_ROUNDS = 12;
+
+// How long an emailed verification link stays valid. After this the pending row
+// expires and the person must sign up again (which re-issues a fresh link).
+const PENDING_TTL_HOURS = 24;
 
 // Roles a person may create for themselves via PUBLIC self-signup. Privileged
 // roles (TEACHER, ORG_ADMIN, SUPER_ADMIN) must never be self-assigned — teachers
@@ -31,6 +35,12 @@ type AuthTokens = {
   user: UserEntity;
 };
 
+// Self-signup no longer mints an account inline; it parks the details in a
+// PendingSignup and emails a verification link. The account is created only when
+// that link is verified (see verifyEmail). This is the discriminator the client
+// reads to show the "check your inbox" screen instead of logging the user in.
+type RegisterResult = { status: 'verification_sent'; email: string };
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -41,7 +51,16 @@ export class AuthService {
     private readonly emailService: EmailService,
   ) {}
 
-  async register(dto: RegisterDto): Promise<AuthTokens> {
+  /**
+   * Verify-before-create. Self-signup NO LONGER creates a User. It validates the
+   * anti-bot layers, then parks the (already-hashed) credentials in a PendingSignup
+   * and emails a verification link. The real account is minted only when the link is
+   * verified (verifyEmail). A bot that never opens the inbox therefore never becomes
+   * an account — the user list stops filling with spam at the source. Returns a
+   * "verification_sent" result (never tokens) so the client shows a check-email
+   * screen instead of logging anyone in.
+   */
+  async register(dto: RegisterDto): Promise<RegisterResult> {
     // Anti-bot layer 1 — honeypot: a hidden field a real user never fills.
     if (dto.website && dto.website.trim()) {
       throw new BadRequestException('Registration could not be completed.');
@@ -49,7 +68,9 @@ export class AuthService {
     // Anti-bot layer 2 — Cloudflare Turnstile (inert until TURNSTILE_SECRET is set).
     await this.verifyCaptcha(dto.captchaToken);
 
-    const existing = await this.usersRepository.findByEmail(dto.email);
+    const email = normalizeEmail(dto.email);
+
+    const existing = await this.usersRepository.findByEmail(email);
     if (existing) {
       throw new ConflictException('Email already registered');
     }
@@ -59,10 +80,66 @@ export class AuthService {
     // requested role (incl. a crafted TEACHER/ORG_ADMIN/SUPER_ADMIN) is forced to
     // STUDENT. Teachers/admins are created through the org/admin paths, not here.
     const safeRole = dto.role && SELF_SERVE_ROLES.has(dto.role) ? dto.role : Role.STUDENT;
-    const user = await this.usersRepository.create(
-      { ...dto, role: safeRole } as CreateUserDto,
+
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + PENDING_TTL_HOURS * 60 * 60 * 1000);
+
+    // Upsert: a repeat signup for the same unverified email refreshes the row and
+    // issues a new link rather than erroring — so an impatient real user just gets
+    // another email, and the newest link is the valid one.
+    await this.authRepository.upsertPendingSignup({
+      email,
       passwordHash,
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      role: safeRole,
+      token,
+      expiresAt,
+    });
+
+    const frontendUrl =
+      this.configService.get<string>('app.frontendUrl') ?? 'http://localhost:3000';
+    const verifyUrl = `${frontendUrl.replace(/\/$/, '')}/verify-email?token=${token}`;
+    await this.emailService.sendVerificationEmail(email, verifyUrl, dto.firstName);
+
+    return { status: 'verification_sent', email };
+  }
+
+  /**
+   * Second half of verify-before-create: the emailed link lands here. Validates the
+   * token (exists, not expired), mints the real User from the parked details (reusing
+   * the already-hashed password), deletes the pending row (single-use), and logs the
+   * new account in by returning tokens. Fails closed on an invalid/expired token.
+   */
+  async verifyEmail(token: string): Promise<AuthTokens> {
+    const pending = await this.authRepository.findPendingByToken(token);
+    if (!pending || pending.expiresAt <= new Date()) {
+      throw new BadRequestException(
+        'This verification link is invalid or has expired. Please sign up again.',
+      );
+    }
+
+    // Guard the race where the same email got verified via an earlier link (or was
+    // otherwise created) between this link being issued and clicked.
+    const existing = await this.usersRepository.findByEmail(pending.email);
+    if (existing) {
+      await this.authRepository.deletePendingById(pending.id);
+      throw new ConflictException('This email is already verified. Please sign in.');
+    }
+
+    // Mint the real account. usersRepository.create takes the pre-hashed password as
+    // its second arg and ignores dto.password, so we pass the parked hash directly.
+    const user = await this.usersRepository.create(
+      {
+        email: pending.email,
+        firstName: pending.firstName,
+        lastName: pending.lastName,
+        role: pending.role,
+      } as CreateUserDto,
+      pending.passwordHash,
     );
+    await this.authRepository.deletePendingById(pending.id);
+
     const tokens = await this.generateTokens(user);
     await this.emailService.sendWelcomeEmail(user.email, user.profile?.firstName);
 

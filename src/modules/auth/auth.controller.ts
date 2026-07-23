@@ -10,6 +10,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 
 type CurrentUserPayload = {
   userId: string;
@@ -25,16 +26,33 @@ export class AuthController {
     private readonly entitlement: EntitlementService,
   ) {}
 
+  // Verify-before-create: this NO LONGER returns tokens or creates an account. It
+  // parks the signup and emails a verification link; the account is minted at
+  // /verify-email. Returns a "verification_sent" result so the client shows a
+  // check-your-inbox screen instead of logging anyone in.
   @Public()
   @UseGuards(SignupRateLimitGuard)
   @Post('register')
+  @HttpCode(200)
   async register(@Body() registerDto: RegisterDto): Promise<{
+    success: true;
+    data: { status: 'verification_sent'; email: string };
+  }> {
+    const data = await this.authService.register(registerDto);
+    return { success: true, data };
+  }
+
+  // Second half of verify-before-create: the emailed link posts its token here.
+  // On success the real account exists and the caller is logged in (tokens + user),
+  // matching the login/register-of-old response shape the client already handles.
+  @Public()
+  @Post('verify-email')
+  @HttpCode(200)
+  async verifyEmail(@Body() verifyEmailDto: VerifyEmailDto): Promise<{
     success: true;
     data: { accessToken: string; refreshToken: string; user: UserEntity & { entitled: boolean } };
   }> {
-    const data = await this.authService.register(registerDto);
-    // Attach the server-computed access flag so clients don't need a follow-up
-    // /me call to know whether paid features are unlocked (matches the /me shape).
+    const data = await this.authService.verifyEmail(verifyEmailDto.token);
     const entitled = await this.entitlement.isEntitled(data.user.id);
     return { success: true, data: { ...data, user: { ...data.user, entitled } } };
   }

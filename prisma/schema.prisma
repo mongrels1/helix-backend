@@ -191,6 +191,23 @@ model PasswordResetToken {
   user      User      @relation(fields: [userId], references: [id])
 }
 
+/// A signup that has NOT yet confirmed its email. No User/Profile row exists yet —
+/// the real account is only minted when the emailed token is verified. This is how
+/// bots that never open the inbox are prevented from ever becoming accounts. Rows
+/// are single-use (deleted on verify) and self-expiring (expiresAt); a re-signup
+/// with the same email upserts this row and re-sends the link. Not linked to User.
+model PendingSignup {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         Role     @default(STUDENT)
+  token        String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+}
+
 model Classroom {
   id             String       @id @default(uuid())
   name           String

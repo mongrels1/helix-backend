@@ -34,6 +34,22 @@ export class EmailService {
     });
   }
 
+  async sendVerificationEmail(to: string, verifyUrl: string, firstName?: string): Promise<void> {
+    const displayName = firstName?.trim() || 'there';
+    await this.sendEmail({
+      to,
+      subject: 'Verify your email to finish signing up',
+      html: `
+        <p>Hi ${this.escapeHtml(displayName)},</p>
+        <p>Thanks for signing up for EdKairos. Confirm your email address to activate your account and start learning:</p>
+        <p><a href="${verifyUrl}">Verify my email &amp; get started</a></p>
+        <p>This link expires in 24 hours. If the button doesn't work, paste this into your browser:<br>${this.escapeHtml(verifyUrl)}</p>
+        <p>If you didn't create an EdKairos account, you can safely ignore this email — no account will be created.</p>
+      `,
+      text: `Hi ${displayName}, thanks for signing up for EdKairos. Verify your email to activate your account: ${verifyUrl}\n\nThis link expires in 24 hours. If you didn't create an account, ignore this email — nothing will be created.`,
+    });
+  }
+
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
     await this.sendEmail({
       to,
