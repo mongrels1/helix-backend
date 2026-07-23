@@ -87,4 +87,38 @@ export class UsersService {
 
     await this.usersRepository.hardDelete(id);
   }
+
+  /** Read-only: how many suspected-bot accounts match, plus a sample to eyeball. */
+  async scanSpam(olderThanHours = 24): Promise<{
+    count: number;
+    olderThanHours: number;
+    sample: Array<{ id: string; email: string; name: string; createdAt: Date }>;
+  }> {
+    const hours = Math.max(1, Math.floor(olderThanHours) || 24);
+    const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const ids = await this.usersRepository.findSpamCandidateIds(cutoff);
+    const raw = await this.usersRepository.sampleSpamCandidates(cutoff, 25);
+    const sample = raw.map((r) => ({
+      id: r.id,
+      email: r.email,
+      name: `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim(),
+      createdAt: r.createdAt,
+    }));
+    return { count: ids.length, olderThanHours: hours, sample };
+  }
+
+  /** Soft-delete the suspected-bot accounts. Aborts if the live count no longer
+   *  matches what the caller saw at scan time (data changed in between). */
+  async purgeSpam(olderThanHours = 24, expectedCount?: number): Promise<{ softDeleted: number; count: number }> {
+    const hours = Math.max(1, Math.floor(olderThanHours) || 24);
+    const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const ids = await this.usersRepository.findSpamCandidateIds(cutoff);
+    if (expectedCount !== undefined && ids.length !== expectedCount) {
+      throw new BadRequestException(
+        `Matched count changed since the scan (was ${expectedCount}, now ${ids.length}). Re-scan and try again.`,
+      );
+    }
+    const softDeleted = await this.usersRepository.softDeleteMany(ids);
+    return { softDeleted, count: ids.length };
+  }
 }

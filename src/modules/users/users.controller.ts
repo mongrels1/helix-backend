@@ -16,6 +16,7 @@ import { Roles } from '@common/decorators/roles.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { SpamPurgeDto } from './dto/spam-purge.dto';
 import { UserEntity } from './entities/user.entity';
 import { UsersService } from './users.service';
 
@@ -24,6 +25,26 @@ type AuthenticatedUser = { userId: string; role: Role };
 @Controller('api/v1/users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  // ---- Spam cleanup (super admin) ----
+  @Post('spam/scan')
+  @Roles(Role.SUPER_ADMIN)
+  async spamScan(@Body() dto: SpamPurgeDto): Promise<{
+    success: true;
+    data: { count: number; olderThanHours: number; sample: Array<{ id: string; email: string; name: string; createdAt: Date }> };
+  }> {
+    const data = await this.usersService.scanSpam(dto.olderThanHours);
+    return { success: true, data };
+  }
+
+  @Post('spam/purge')
+  @Roles(Role.SUPER_ADMIN)
+  async spamPurge(
+    @Body() dto: SpamPurgeDto,
+  ): Promise<{ success: true; data: { softDeleted: number; count: number } }> {
+    const data = await this.usersService.purgeSpam(dto.olderThanHours, dto.expectedCount);
+    return { success: true, data };
+  }
 
   @Get()
   async findAll(

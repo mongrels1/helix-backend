@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { User } from '@prisma/client';
+import { Prisma, Role, User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -128,6 +128,69 @@ export class UsersRepository {
       where: { id, deletedAt: null },
       data: { deletedAt: new Date() },
     });
+  }
+
+  /**
+   * Suspected-bot filter: a self-signup STUDENT with NO plan, NO footprint of real
+   * use (no submissions, enrollments, diagnostics, mastery, tutor sessions, org
+   * membership), created before `cutoff`. Conservative by design — a real student
+   * who did anything, or paid, or joined an org is never matched. Used only for the
+   * admin scan/purge, which shows the sample and requires confirmation first.
+   */
+  private spamWhere(cutoff: Date): Prisma.UserWhereInput {
+    return {
+      role: Role.STUDENT,
+      deletedAt: null,
+      plan: null,
+      createdAt: { lt: cutoff },
+      submissions: { none: {} },
+      enrollments: { none: {} },
+      diagnosticSessions: { none: {} },
+      masteryScores: { none: {} },
+      tutorSessions: { none: {} },
+      memberships: { none: {} },
+    };
+  }
+
+  async findSpamCandidateIds(cutoff: Date): Promise<string[]> {
+    const rows = await this.prisma.user.findMany({
+      where: this.spamWhere(cutoff),
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+
+  async sampleSpamCandidates(
+    cutoff: Date,
+    take: number,
+  ): Promise<Array<{ id: string; email: string; createdAt: Date; firstName: string | null; lastName: string | null }>> {
+    const rows = await this.prisma.user.findMany({
+      where: this.spamWhere(cutoff),
+      select: { id: true, email: true, createdAt: true, profile: { select: { firstName: true, lastName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      createdAt: r.createdAt,
+      firstName: r.profile?.firstName ?? null,
+      lastName: r.profile?.lastName ?? null,
+    }));
+  }
+
+  /** Soft-delete the given users in chunks (reversible — rows are kept). */
+  async softDeleteMany(ids: string[]): Promise<number> {
+    let deleted = 0;
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const res = await this.prisma.user.updateMany({
+        where: { id: { in: chunk }, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      deleted += res.count;
+    }
+    return deleted;
   }
 
   /** Pause: block sign-in and revoke existing refresh tokens so the session ends now. */
