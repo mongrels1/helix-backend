@@ -21,7 +21,8 @@
  * shapes and different integrity rules.
  */
 import { CROSSWALK } from './mgse-ga-crosswalk';
-import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
+import { figureIsSane, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
+import { judgeItem } from './item-judge';
 
 export const ALL_STATUSES = ['draft', 'validated', 'field_test', 'operational', 'rejected'] as const;
 export const SERVEABLE_STATUSES = ['draft', 'validated', 'field_test', 'operational'] as const;
@@ -213,18 +214,24 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   const noStem: string[] = [], noAnswer: string[] = [], noSolution: string[] = [];
   const untagged: string[] = [], notMgse: string[] = [], noCluster: string[] = [];
   const badFigure: string[] = [], missingFig: string[] = [], leakedSolution: string[] = [], notSelfContained: string[] = [];
+  const misKeyed: string[] = [], noCorrectOpt: string[] = [], figIncomplete: string[] = [];
   const stemBuckets = new Map<string, string[]>();
 
   for (const r of serveable) {
     const opts = parseOptions(r.options);
-    // Same shared guards the generator + tutor use: flag existing items whose
-    // figure is malformed/mismatched, that reference a figure they don't carry,
-    // or whose "solution" leaks reasoning — so they can be rejected in review.
+    // Single judge (item-judge.ts) — the SAME verdict the write paths use, so the
+    // report can never disagree with what actually gets blocked. We read its
+    // correctness + figure blockers here; the structural counts below stay as the
+    // report's own coverage tallies.
+    const jb = new Set(judgeItem({ stem: r.stem, options: r.options, answer: r.answer, figure: r.figure, standard: r.standard }, 'practice').blockers.map((b) => b.id));
+    if (jb.has('mis_keyed')) misKeyed.push(r.id);
+    if (jb.has('no_correct_option')) noCorrectOpt.push(r.id);
+    if (jb.has('figure_incomplete')) figIncomplete.push(r.id);
+    if (jb.has('figure_missing') || jb.has('figure_missing_referenced')) missingFig.push(r.id);
     if (r.figure) {
       const sane = figureIsSane(r.figure, `${r.stem ?? ''} ${opts.map((o) => o.text).join(' ')}`);
       if (!sane.ok) badFigure.push(r.id);
     }
-    if (!r.figure && stemReferencesFigure(String(r.stem ?? ''))) missingFig.push(r.id);
     if (solutionLeaksReasoning(r.solution)) leakedSolution.push(r.id);
     if (stemNotSelfContained(r.stem)) notSelfContained.push(r.id);
     if (opts.filter((o) => o.correct).length !== 1) badCorrect.push(r.id);
@@ -243,6 +250,9 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   for (const ids of stemBuckets.values()) if (ids.length > 1) { dupGroups += 1; dupIds.push(...ids.slice(1)); }
 
   const defects: DefectGroup[] = [];
+  if (misKeyed.length) defects.push(group('mis_keyed', 'blocker', 'Serveable items whose keyed answer is NOT the independently computed correct answer (re-solved)', misKeyed));
+  if (noCorrectOpt.length) defects.push(group('no_correct_option', 'blocker', 'Serveable items where the computed answer matches none of the options', noCorrectOpt));
+  if (figIncomplete.length) defects.push(group('figure_incomplete', 'blocker', 'Serveable items whose figure is present but does not match the shape the stem describes (e.g. one circle drawn for two, a flat shape for a 3-D solid)', figIncomplete));
   if (badCorrect.length) defects.push(group('one_correct_option', 'blocker', 'Items without exactly one correct option', badCorrect));
   if (badCount.length) defects.push(group('four_options', 'blocker', 'Items that do not have exactly four options', badCount));
   if (emptyText.length) defects.push(group('option_text', 'blocker', 'Items with a blank option', emptyText));
@@ -254,7 +264,7 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   if (noCluster.length) defects.push(group('missing_ga_cluster', 'warning', 'Serveable items missing a GA cluster', noCluster));
   if (dupIds.length) defects.push(group('duplicate_stems', 'warning', `Duplicate stems across ${dupGroups} group(s) — extra copies beyond the first`, dupIds));
   if (badFigure.length) defects.push(group('figure_unsound', 'warning', 'Serveable items with a malformed or mismatched figure (bad coordinates, or numbers absent from the item text)', badFigure));
-  if (missingFig.length) defects.push(group('figure_missing_referenced', 'warning', 'Serveable items whose stem references a figure that is not attached', missingFig));
+  if (missingFig.length) defects.push(group('figure_missing_referenced', 'blocker', 'Serveable items whose stem references a figure that is not attached', missingFig));
   if (leakedSolution.length) defects.push(group('solution_leaked', 'warning', 'Serveable items whose worked solution rambles or leaks reasoning (not a clean solution)', leakedSolution));
   if (notSelfContained.length) defects.push(group('stem_not_self_contained', 'warning', 'Serveable items whose stem refers to earlier context the student cannot see (e.g. "look at the spinner again")', notSelfContained));
 
@@ -326,11 +336,19 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
   // structural + field checks (serveable only — those calibrate the diagnostic)
   const noStem: string[] = [], badCorrect: string[] = [], fewOptions: string[] = [], emptyText: string[] = [];
   const noStrand: string[] = [], noKc: string[] = [], noB: string[] = [], noDok: string[] = [], noStandard: string[] = [], dupId: string[] = [];
+  const misKeyed: string[] = [], noCorrectOpt: string[] = [], figIncomplete: string[] = [], figMissing: string[] = [];
   const stemBuckets = new Map<string, string[]>();
   const idsSeen = new Set<string>();
 
   for (const it of serveableItems) {
     const opts = Array.isArray(it.options) ? it.options.map((o) => String(o ?? '')) : [];
+    // Single judge on the SCORED bank (the moat) — identical verdict to the
+    // scored write path (factCheck -> item-judge), so the report matches reality.
+    const jb = new Set(judgeItem({ stem: it.stem, options: it.options, correct: it.correct, figure: it.figure, standard: it.standard }, 'scored').blockers.map((b) => b.id));
+    if (jb.has('mis_keyed')) misKeyed.push(it.id);
+    if (jb.has('no_correct_option')) noCorrectOpt.push(it.id);
+    if (jb.has('figure_incomplete')) figIncomplete.push(it.id);
+    if (jb.has('figure_missing') || jb.has('figure_missing_referenced')) figMissing.push(it.id);
     if (!String(it.stem ?? '').trim()) noStem.push(it.id);
     if (opts.length < 2) fewOptions.push(it.id);
     if (opts.some((o) => !o.trim())) emptyText.push(it.id);
@@ -349,6 +367,10 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
   for (const ids of stemBuckets.values()) if (ids.length > 1) { dupGroups += 1; dupStems.push(...ids.slice(1)); }
 
   const defects: DefectGroup[] = [];
+  if (misKeyed.length) defects.push(group('mis_keyed', 'blocker', 'Calibrated items whose keyed answer is NOT the independently computed correct answer (re-solved)', misKeyed));
+  if (noCorrectOpt.length) defects.push(group('no_correct_option', 'blocker', 'Calibrated items where the computed answer matches none of the options', noCorrectOpt));
+  if (figIncomplete.length) defects.push(group('figure_incomplete', 'blocker', 'Calibrated items whose figure does not match the shape the stem describes (e.g. one circle for two, a flat shape for a 3-D solid)', figIncomplete));
+  if (figMissing.length) defects.push(group('figure_missing_referenced', 'blocker', 'Calibrated items whose stem describes a figure that is not attached', figMissing));
   if (noStem.length) defects.push(group('has_stem', 'blocker', 'Items with no question stem', noStem));
   if (fewOptions.length) defects.push(group('min_options', 'blocker', 'Items with fewer than two options', fewOptions));
   if (badCorrect.length) defects.push(group('correct_index', 'blocker', 'Items whose correct index is out of range', badCorrect));

@@ -110,6 +110,7 @@ export function figureIsSane(
   }
   if (!fig || typeof fig !== 'object') return { ok: true };
   const f = fig as Record<string, unknown>;
+  const t = String(f.type ?? '');
 
   // Degenerate coordinate data: 3+ points that don't spread on either axis.
   const pts = Array.isArray(f.points) ? (f.points as Array<Record<string, unknown>>) : null;
@@ -125,7 +126,11 @@ export function figureIsSane(
   // Number mismatch: figure introduces >=2 distinct data numbers, none of which
   // appear in the text -> almost always the wrong figure for this problem.
   const distinct = [...new Set(figureDataNumbers(fig))];
-  if (distinct.length >= 2) {
+  // Data-carrying charts legitimately hold numbers that never appear in the stem
+  // (the values live in the figure — a bar graph, dot plot, histogram, scatter,
+  // table). Only enforce number-overlap for figures whose numbers SHOULD restate
+  // the problem (geometry, number lines, solids), so valid data items aren't dropped.
+  if (distinct.length >= 2 && !CHART_FIGS.has(t) && t !== 'scatter_plot') {
     const textNums = new Set((contextText.match(/\d+\.?\d*/g) ?? []).map((s) => String(Number(s))));
     const overlap = distinct.filter((n) => textNums.has(String(n))).length;
     if (overlap === 0) return { ok: false, reason: 'figure numbers absent from surrounding text' };

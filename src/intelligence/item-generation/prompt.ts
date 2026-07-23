@@ -54,9 +54,19 @@ FIGURE SPEC: use ONE EdKairos figure object (JSON only; never ASCII art, never G
 Markdown table). For a two-column data table use exactly:
   {"type":"ratio_table","headers":["Wins","Losses"],"rows":[{"a":3,"b":2},{"a":6,"b":4}],"altText":"wins to losses"}
 Available figure types: number_line, bar_graph, coordinate_grid, function_table, ratio_table, histogram,
-dot_plot, triangle, angle, geometry2d, {"type":"scatter_plot","points":[{"x":1,"y":2}],"line":{"m":1,"b":1}} (bivariate
-data / line of best fit), and {"type":"right_triangle","a":6,"b":8,"labelC":"x"} (right triangles /
-Pythagorean — a,b are leg lengths, labels are what to show). For VOLUME / 3-D solids use the MATCHING solid
+dot_plot, triangle, angle, geometry2d, {"type":"scatter_plot","points":[{"x":1,"y":2},{"x":3,"y":5}],"line":{"m":1,"b":1}} (bivariate
+data / line of best fit — points needs AT LEAST 2), and {"type":"right_triangle","a":6,"b":8,"labelC":"x"} (right triangles /
+Pythagorean — a,b are leg lengths, labels are what to show).
+EXACT FIELD SHAPES (copy these keys VERBATIM — a wrong or missing key makes the figure render as a blank box):
+  number_line: {"type":"number_line","min":0,"max":10,"ticks":1,"marks":[{"at":4,"label":"4"}]}
+  bar_graph: {"type":"bar_graph","bars":[{"label":"Mon","value":3},{"label":"Tue","value":5}]}
+  coordinate_grid: {"type":"coordinate_grid","min":-5,"max":5,"points":[{"x":2,"y":3,"label":"A"}]}
+  function_table: {"type":"function_table","rule":"x2+1","rows":[{"in":1,"out":3},{"in":2,"out":5}]}
+  histogram: {"type":"histogram","bins":[{"label":"0-9","count":4},{"label":"10-19","count":7}]}
+  dot_plot: {"type":"dot_plot","min":0,"max":10,"values":[3,3,5,7]}
+  triangle: {"type":"triangle","base":6,"height":4,"mode":"area"}
+  angle: {"type":"angle","degrees":40,"label":"40°"}
+For VOLUME / 3-D solids use the MATCHING solid
 and label radius + height: {"type":"cylinder","r":3,"h":10,"rLabel":"3 cm","hLabel":"10 cm"},
 {"type":"cone","r":4,"h":9,"rLabel":"4 cm","hLabel":"9 cm"}, or {"type":"sphere","r":5,"rLabel":"5 cm"} —
 the figure MUST match the solid named in the base (a cone gets a cone, never a triangle or cylinder). Use

@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { DIAGNOSTIC_ITEM_BANK } from '../remediation/diagnostic-item-bank';
 import { resolveStandard } from '../item-generation/mgse-ga-crosswalk';
+import { judgeItem } from '../item-generation/item-judge';
+import { validateFigure, isRenderableFigure } from '../figures/figure-contract';
 import { modelsFor } from './item-models/models';
 import { makeRng } from './item-models/rng';
 
@@ -165,6 +167,15 @@ export class DiagnosticBankService {
     await this.prisma.diagnosticItem.findUniqueOrThrow({ where: { id } }).catch(() => {
       throw new NotFoundException('Diagnostic item not found');
     });
+    // Never store a figure the renderer can't draw: a mis-shaped spec would show as
+    // a blank box in the live diagnostic with no error. Validate against the ONE
+    // canonical contract (the same check the renderer uses) before persisting.
+    if (figure != null) {
+      const v = validateFigure(figure);
+      if (!v.ok) {
+        throw new BadRequestException({ error: { code: 'invalid_figure', message: `Figure will not render: ${v.error}.` } });
+      }
+    }
     return this.prisma.diagnosticItem.update({
       where: { id },
       data: { figure: figure == null ? Prisma.JsonNull : (figure as Prisma.InputJsonValue) },
@@ -255,6 +266,8 @@ export class DiagnosticBankService {
       // ("the graph shown below", "ordered pair for point K") when none could be synthesized —
       // it would be an unanswerable blank. Skip + report so those can instead come in through
       // the vision figure-extraction pass.
+      // Single-judge gate (re-solve + figure-shape + structure). factCheck now
+      // delegates to item-judge, so import is judged the same as everything else.
       if (!this.factCheck(stem, options, correct, figure)) { skipped++; continue; }
       rows.push({
         grade: gs.grade, strand: gs.strand, kc: 'Imported item',
@@ -298,12 +311,26 @@ export class DiagnosticBankService {
   /** Bulk-validate every current draft (optionally one grade) so a restored or
    *  imported batch counts toward viability without clicking each card. Only
    *  touches drafts; validated/published/rejected are untouched. */
-  async validateAllDrafts(grade?: number): Promise<{ validated: number }> {
-    const res = await this.prisma.diagnosticItem.updateMany({
-      where: { status: 'draft', ...(typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {}) },
-      data: { status: 'validated' },
+  async validateAllDrafts(grade?: number): Promise<{ validated: number; blocked: number }> {
+    const scope = typeof grade === 'number' && !Number.isNaN(grade) ? { grade } : {};
+    // Bulk-validate no longer flips blindly. Each draft is re-solved first; only
+    // items that pass the deterministic re-key + figure-shape gate are validated.
+    // Broken items stay `draft` (reversible, never auto-rejected) so a one-click
+    // "Validate All" can no longer promote a mis-keyed item into the scored count.
+    const drafts = await this.prisma.diagnosticItem.findMany({
+      where: { status: 'draft', ...scope },
+      select: { id: true, stem: true, options: true, correct: true, figure: true, standard: true },
     });
-    return { validated: res.count };
+    const pass: string[] = [];
+    let blocked = 0;
+    for (const d of drafts) {
+      if (judgeItem({ stem: d.stem, options: d.options, correct: d.correct, figure: d.figure, standard: d.standard }, 'scored').ok) pass.push(d.id);
+      else blocked++;
+    }
+    if (pass.length) {
+      await this.prisma.diagnosticItem.updateMany({ where: { id: { in: pass } }, data: { status: 'validated' } });
+    }
+    return { validated: pass.length, blocked };
   }
 
   /** PERMANENTLY delete rejected items (optionally one grade). This is the ONLY
@@ -358,7 +385,7 @@ export class DiagnosticBankService {
       'OPTIONAL "figure" (a JSON figure spec) }. INCLUDE a "figure" whenever the standard involves a ' +
       'graph, table, coordinate plane, number line, dot plot, histogram, scatter/bivariate data, or a ' +
       'right triangle (types: number_line, bar_graph, coordinate_grid, dot_plot, histogram, ratio_table, ' +
-      '{"type":"scatter_plot","points":[{"x":1,"y":2}],"line":{"m":1,"b":1}} for bivariate data / line of ' +
+      '{"type":"scatter_plot","points":[{"x":1,"y":2},{"x":3,"y":5}],"line":{"m":1,"b":1}} for bivariate data / line of ' +
       'best fit, and {"type":"right_triangle","a":6,"b":8,"labelC":"10"} ONLY for right-triangle/Pythagorean ' +
       'items — a and b are the two LEGS, labelC is the HYPOTENUSE (longest side: a rope/ladder/wire/ramp is ' +
       'always the hypotenuse, never a leg); put each real value or the unknown on the side it actually is. ' +
@@ -392,7 +419,8 @@ export class DiagnosticBankService {
         if (!stem || options.length < 2 || !(correct >= 0 && correct < options.length)) return null;
         const dok = Math.min(4, Math.max(1, Number(it.dok) || 2));
         const b = Math.min(3, Math.max(-3, typeof it.b === 'number' ? it.b : Number(it.b) || 0));
-        const figure = this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined);
+        let figure = this.sanitizeFigure(stem, (it.figure && typeof it.figure === 'object') ? (it.figure as object) : undefined);
+        if (figure && !isRenderableFigure(figure)) figure = undefined; // never ship an unrenderable (blank) figure
         if (!this.factCheck(stem, options, correct, figure)) return null;
         return {
           grade, strand, kc: String(it.kc ?? '').trim() || `${strand} skill`,
@@ -637,15 +665,11 @@ export class DiagnosticBankService {
 
   /** Only accept figure types we have deterministic renderers for. */
   private isAllowedFigure(fig: object): boolean {
-    const t = (fig as { type?: unknown }).type;
-    const allowed = new Set([
-      'number_line', 'bar_graph', 'coordinate_grid', 'function_table', 'ratio_table',
-      'dot_plot', 'histogram', 'scatter_plot', 'right_triangle', 'triangle', 'rect', 'angle',
-      'cylinder', 'cone', 'sphere', 'circle', 'transformation',
-      'rect_prism', 'tri_prism', 'angle_pair',
-      'decimal_grid', 'fraction_bar', 'place_value_chart',
-    ]);
-    return typeof t === 'string' && allowed.has(t);
+    // Single source of truth: accept only a figure the renderer can actually draw,
+    // validated field-by-field against the canonical contract. This replaces a
+    // hand-maintained allow-list that had drifted (it omitted geometry2d /
+    // ladder_wall / spinner and never checked the figure's field shape at all).
+    return isRenderableFigure(fig);
   }
 
   /** Vision sometimes turns answer choices or a word problem into a meaningless
@@ -828,41 +852,24 @@ export class DiagnosticBankService {
   }
 
   /**
-   * Deterministic fact-check gate. Returns false to DROP an item that is provably
-   * broken — no model opinion involved:
-   *  1. The stem refers to a figure ("shown below", "the diagram", "the graph
-   *     below") but no figure is attached → the item is unanswerable.
-   *  2. A 2-point coordinate-distance item whose marked answer doesn't equal the
-   *     computed distance between the plotted points.
+   * Scored-bank write gate — now a thin adapter to the ONE judge (item-judge.ts).
+   * Every scored write path (import, generate-for-grade, generate-from-seeds)
+   * calls this, so they all get the identical verdict: structural checks, the
+   * deterministic answer re-solve, and the figure-shape check. Returns false to
+   * DROP an item the single judge blocks. The old bespoke figure/coordinate
+   * checks now live inside the judge, so there is one implementation, not four.
    */
   private factCheck(stem: string, options: string[], correct: number, figure: object | undefined): boolean {
-    const s = stem.toLowerCase();
-    const refsFigure =
-      /(shown|pictured|graphed|plotted|drawn|given)\s+(below|above)|the (figure|diagram|graph|grid|number line)\b|in the (figure|diagram|graph)|below[.?]?\s*$|following (figure|diagram|graph)|ordered pair\b|location of point\b|which point (is )?(located|at)\b|on the coordinate (grid|plane)\b|the coordinate (grid|plane)\b/.test(s);
-    if (refsFigure && !figure) return false;
-
-    const numOf = (str: string): number | null => {
-      const m = /-?\d+(?:\.\d+)?/.exec(str ?? '');
-      return m ? parseFloat(m[0]) : null;
-    };
-    const fig = figure as { type?: string; points?: { x: number; y: number }[] } | undefined;
-    if (fig?.type === 'coordinate_grid' && Array.isArray(fig.points) && fig.points.length === 2) {
-      const asksDistance = /distance|length of the (segment|line|diagonal)|how far|between the (two )?(points|endpoints)/.test(s);
-      if (asksDistance) {
-        const [p, q] = fig.points;
-        if ([p?.x, p?.y, q?.x, q?.y].every((v) => typeof v === 'number')) {
-          const expected = Math.hypot(p.x - q.x, p.y - q.y);
-          const got = numOf(options[correct]);
-          if (got === null || Math.abs(got - expected) > 0.1) return false;
-        }
-      }
-    }
-    return true;
+    return judgeItem({ stem, options, correct, figure }, 'scored').ok;
   }
 
   /** Independently re-solve each generated diagnostic item; return the indexes the
    *  judge confirms are correct + unambiguous. Fails OPEN (keeps all) on error so a
    *  transient hiccup never wipes a batch. */
+  // AI pre-filter (fallback). Still runs at generation to catch NON-computable
+  // problems, but it is no longer the last word: every item it keeps is then
+  // judged deterministically by factCheck -> item-judge, which cannot fail open,
+  // so a judge timeout here can never promote a computably-wrong item.
   private async verifyDiagnostic(
     items: Array<{ stem?: unknown; options?: unknown; correct?: unknown; figure?: unknown }>,
   ): Promise<Set<number>> {

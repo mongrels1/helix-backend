@@ -193,7 +193,7 @@ const volumeCylinder: ItemModel = {
 const volumeCone: ItemModel = {
   id: 'volume-cone', standard: GA_G, grade: 8, strand: 'G',
   generate(rng) {
-    const r = rng.pick([3, 6, 9]); // r² divisible by 3 → integer coefficient
+    const r = rng.pick([6, 9, 12]); // r divisible by 3 → integer coef; r>3 avoids r²h/3 == r·h collision
     const h = rng.int(2, 9);
     const coef = (r * r * h) / 3;
     const correct = `${coef}π cubic cm`;
@@ -215,7 +215,7 @@ const volumeCone: ItemModel = {
 const volumeSphere: ItemModel = {
   id: 'volume-sphere', standard: GA_G, grade: 8, strand: 'G',
   generate(rng) {
-    const r = rng.pick([3, 6, 9]); // r³ divisible by 3 → integer coefficient
+    const r = rng.pick([6, 9, 12]); // r divisible by 3 → integer coef; r>3 avoids 4r³/3 == 4r² collision
     const coef = (4 * r * r * r) / 3;
     const correct = `${coef}π cubic cm`;
     const options = buildOptions(rng, correct, [
@@ -319,6 +319,9 @@ const symmetryCount: ItemModel = {
       [Math.max(0, s.lines - 1), 'Missed a line of symmetry'],
       [s.lines + 2, 'Overcounted the lines of symmetry'],
       [s.lines === 0 ? 1 : 0, s.lines === 0 ? 'Assumed every shape has at least one line' : 'Assumed the shape has none'],
+      // Fourth fallback so a 0-symmetry shape (parallelogram) still yields 3 distinct
+      // distractors; without it {1,2} collapse to two and the item never generated.
+      [s.lines + 3, 'Badly overcounted the lines of symmetry'],
     ];
     const ds: { text: string; misconception: string }[] = [];
     for (const [n, mc] of cand) {

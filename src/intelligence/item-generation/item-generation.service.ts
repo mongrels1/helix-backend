@@ -15,6 +15,8 @@ import { g6SeedForStandard } from './g6-seed';
 import { g7SeedForStandard } from './g7-seed';
 import { buildIntegrityReport, type BankRow, type DiagnosticRow } from './integrity';
 import { figureIsSane, stemReferencesFigure, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
+import { judgeItem } from './item-judge';
+import { isRenderableFigure } from '../figures/figure-contract';
 import type { BaseItem, GenerateRequest, GeneratedItem } from './types';
 
 const PROMOTE_MIN_RESPONSES = 200;
@@ -391,6 +393,21 @@ export class ItemGenerationService {
    */
   private async verifyItems(items: GeneratedItem[]): Promise<{ kept: GeneratedItem[]; dropped: number }> {
     if (!Array.isArray(items) || !items.length) return { kept: [], dropped: 0 };
+    // The LLM proposes; the single deterministic judge (item-judge.ts) has the
+    // veto. Every item the AI keeps is re-solved and figure-checked here, so a
+    // computably-wrong item is dropped even if the AI fails open on a timeout.
+    const llm = await this.verifyItemsLlm(items);
+    const kept = llm.kept.filter((it) =>
+      judgeItem(
+        { stem: it.stem, options: it.options, answer: it.answer == null ? undefined : String(it.answer), solution: it.solution, standard: it.standard, figure: it.figure ?? undefined },
+        'practice',
+      ).ok,
+    );
+    return { kept, dropped: items.length - kept.length };
+  }
+
+  private async verifyItemsLlm(items: GeneratedItem[]): Promise<{ kept: GeneratedItem[]; dropped: number }> {
+    if (!Array.isArray(items) || !items.length) return { kept: [], dropped: 0 };
     const payload = items.map((it, i) => ({
       i,
       versionType: it.versionType,
@@ -515,7 +532,12 @@ export class ItemGenerationService {
       const answer = rawAnswer || (correctOpt ? correctOpt.text : '');
       const stemText = String(conv.stem ?? '');
       const solutionText = String(it.solution ?? '');
-      const figure = this.sanitizeFigure(stemText, (it.figure as object) ?? conv.figure ?? undefined);
+      let figure = this.sanitizeFigure(stemText, (it.figure as object) ?? conv.figure ?? undefined);
+      // Never persist an unrenderable figure: a mis-shaped spec (wrong field names /
+      // unknown type) would silently show as a blank box. Strip it here so the item
+      // is kept as the self-contained text item it is (and dropped just below only if
+      // the stem actually references a figure). One canonical contract, shared.
+      if (figure && !isRenderableFigure(figure)) figure = undefined;
       // Correct-by-rejection at the source: never persist a leaked-reasoning
       // ("Shakespeare") solution, a figure whose numbers don't match the problem,
       // or a stem that references a figure it doesn't have. Shared guards, same
