@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
@@ -41,6 +42,13 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthTokens> {
+    // Anti-bot layer 1 — honeypot: a hidden field a real user never fills.
+    if (dto.website && dto.website.trim()) {
+      throw new BadRequestException('Registration could not be completed.');
+    }
+    // Anti-bot layer 2 — Cloudflare Turnstile (inert until TURNSTILE_SECRET is set).
+    await this.verifyCaptcha(dto.captchaToken);
+
     const existing = await this.usersRepository.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('Email already registered');
@@ -155,6 +163,32 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  /**
+   * Verify a Cloudflare Turnstile token. Fails OPEN when TURNSTILE_SECRET is not
+   * configured (so signup keeps working before keys are added) and on a rare
+   * network error reaching Cloudflare (honeypot + rate limit + email verification
+   * still gate the request). Rejects only on an explicit verification failure.
+   */
+  private async verifyCaptcha(token?: string): Promise<void> {
+    const secret = process.env.TURNSTILE_SECRET?.trim();
+    if (!secret) return; // not configured yet — skip
+    if (!token) throw new BadRequestException('Please complete the captcha.');
+    try {
+      const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ secret, response: token }),
+      });
+      const data = (await res.json()) as { success?: boolean };
+      if (data?.success !== true) {
+        throw new BadRequestException('Captcha verification failed. Please try again.');
+      }
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      return; // couldn't reach Turnstile — allow; other layers still gate signup
+    }
   }
 
   private async generateTokens(

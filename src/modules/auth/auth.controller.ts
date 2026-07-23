@@ -1,5 +1,6 @@
-import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { Public } from '@common/decorators/public.decorator';
+import { SignupRateLimitGuard } from '@common/guards/signup-rate-limit.guard';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { UserEntity } from '@modules/users/entities/user.entity';
 import { EntitlementService } from '@modules/entitlement/entitlement.service';
@@ -25,6 +26,7 @@ export class AuthController {
   ) {}
 
   @Public()
+  @UseGuards(SignupRateLimitGuard)
   @Post('register')
   async register(@Body() registerDto: RegisterDto): Promise<{
     success: true;
