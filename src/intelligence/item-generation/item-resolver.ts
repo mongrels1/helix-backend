@@ -278,6 +278,27 @@ export function resolveItem(item: ResolvableItem): ResolveResult {
   }
   const approx = /approximate|about|estimate|closest|nearest|round/.test(stem);
 
+  // Figure-aware re-solve first (tables / plotted ordered pairs) — the family
+  // resolvers below are stem-only and cannot see the figure.
+  const figTruth = resolveFromFigure(item);
+  if (figTruth && (figTruth.mag || figTruth.text != null)) {
+    let matchIdx: number[];
+    if (figTruth.text != null) {
+      const want = figTruth.text.replace(/\s+/g, '').toLowerCase();
+      matchIdx = opts.map((o, i) => (o.text.replace(/\s+/g, '').toLowerCase() === want ? i : -1)).filter((i) => i >= 0);
+    } else {
+      const truthMag = figTruth.mag!;
+      matchIdx = opts.map((o, i) => ({ i, m: parseMagnitude(o.text) })).filter((x) => x.m && magMatch(x.m, truthMag, approx)).map((x) => x.i);
+    }
+    if (matchIdx.length > 0) {
+      const keyedMatches = matchIdx.includes(keyedIndex);
+      return keyedMatches
+        ? { verdict: matchIdx.length > 1 ? 'ambiguous' : 'confirmed', family: figTruth.family, trueIndex: matchIdx[0], keyedIndex }
+        : { verdict: 'mis_keyed', family: figTruth.family, trueIndex: matchIdx[0], keyedIndex, note: figTruth.note ?? 'keyed option does not match the figure' };
+    }
+    return { verdict: 'no_correct_option', family: figTruth.family, trueIndex: null, keyedIndex, note: figTruth.note };
+  }
+
   for (const fam of FAMILIES) {
     let truth: Truth | null;
     try { truth = fam(stem, opts); } catch { truth = null; }
@@ -389,6 +410,119 @@ export function figureCompleteness(stemRaw: string | null | undefined, figure: u
     return { verdict: 'incomplete', reason: `stem describes a composite figure but the figure is a single ${type}` };
   }
   return { verdict: 'ok' };
+}
+
+// ---- figure VALIDITY: three production-observed validity failures ----------
+// Not caught by figureCompleteness (shape) or figureIsSane (numbers-in-text):
+//  (1) a figure that REVEALS the asked-for value — a point labeled with its own
+//      coordinates on a "name the coordinates / ordered pair" item;
+//  (2) off-grade coordinates — grade <=5 is first-quadrant, whole-number only;
+//  (3) options that NAME plotted points (Point W/X/Y/Z) that aren't on the figure.
+// Each destroys diagnostic validity, so these hard-block in the judge.
+const gradeOfStandard = (std: string | null | undefined): number | null => {
+  const m = String(std ?? '').match(/(?:MGSE)?\s*(\d+)\s*\./i);
+  return m ? Number(m[1]) : null;
+};
+const looksLikeCoordLabel = (lab: unknown): boolean =>
+  /\(\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*\)/.test(String(lab == null ? '' : lab));
+
+export function figureValidityGate(
+  stemRaw: string | null | undefined,
+  options: string[],
+  figure: unknown,
+  standard: string | null | undefined,
+): { ok: boolean; reason?: string } {
+  let f: unknown = figure;
+  if (typeof f === 'string') { try { f = JSON.parse(f); } catch { return { ok: true }; } }
+  if (!f || typeof f !== 'object') return { ok: true };
+  const fig = f as Record<string, unknown>;
+  const type = typeof fig.type === 'string' ? fig.type : '';
+  const s = String(stemRaw ?? '').toLowerCase();
+  const grade = gradeOfStandard(standard);
+  const pts = Array.isArray(fig.points) ? (fig.points as Array<Record<string, unknown>>) : [];
+
+  // (1) answer-revealing coordinate labels
+  const asksCoords = /\bordered pair\b|coordinates?\s+of|which point[^.?]*located at|location of (?:the )?point|name(?:s)? the (?:location|point|ordered pair)|what (?:ordered pair|point)/.test(s);
+  if (type === 'coordinate_grid' && asksCoords && pts.some((p) => looksLikeCoordLabel(p?.label))) {
+    return { ok: false, reason: 'figure labels a point with its coordinates on a name-the-coordinates item (reveals the answer)' };
+  }
+
+  // (2) grade-band coordinate sanity (grade <=5 -> first quadrant, whole numbers)
+  if ((type === 'coordinate_grid' || type === 'transformation') && grade !== null && grade <= 5) {
+    const pre = Array.isArray(fig.preimage) ? (fig.preimage as Array<Record<string, unknown>>) : [];
+    const img = Array.isArray(fig.image) ? (fig.image as Array<Record<string, unknown>>) : [];
+    const bad = [...pts, ...pre, ...img].some(
+      (p) => p && (Number(p.x) < 0 || Number(p.y) < 0 || !Number.isInteger(Number(p.x)) || !Number.isInteger(Number(p.y))),
+    );
+    if (bad) return { ok: false, reason: `grade ${grade} coordinate figure has negative or fractional points (must be first-quadrant whole numbers)` };
+  }
+
+  const figLabels = new Set(pts.map((p) => String(p?.label ?? '').trim().toUpperCase()).filter(Boolean));
+
+  // (3) figure<->option coherence: options that name plotted points must exist on the figure
+  const refs = options
+    .map((o) => { const m = String(o).trim().match(/^(?:point\s+)?([A-Za-z])$/i); return m ? m[1].toUpperCase() : null; })
+    .filter((r): r is string => !!r);
+  if (refs.length >= 2) {
+    if (pts.length === 0) return { ok: false, reason: 'options name points but the figure has no labeled points' };
+    const missing = refs.filter((r) => !figLabels.has(r));
+    if (missing.length) return { ok: false, reason: `options reference points ${missing.join(', ')} that are not labeled on the figure` };
+  }
+
+  // (4) stem<->figure coherence: a specific "point <L>" named in the stem must be plotted
+  if (type === 'coordinate_grid' && figLabels.size) {
+    const stemRefs = [...String(stemRaw ?? '').matchAll(/\bpoint\s+([A-Z])\b/g)].map((m) => m[1].toUpperCase());
+    const missing = [...new Set(stemRefs)].filter((r) => !figLabels.has(r));
+    if (missing.length) return { ok: false, reason: `stem references point ${missing.join(', ')} but the figure plots ${[...figLabels].join(', ') || 'no labeled point'}` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Figure-aware re-solve: the stem-only family resolvers never see the figure, but
+ * some items are only answerable FROM it — a "continue the pattern" table, or the
+ * ordered pair of a plotted point. Returns a computed truth (mag or text) or null.
+ */
+function resolveFromFigure(item: ResolvableItem): { mag?: Mag; text?: string; family: string; note?: string } | null {
+  let f: unknown = item.figure;
+  if (typeof f === 'string') { try { f = JSON.parse(f); } catch { return null; } }
+  if (!f || typeof f !== 'object') return null;
+  const fig = f as Record<string, unknown>;
+  const s = String(item.stem ?? '').toLowerCase();
+
+  // "based on the pattern in the table, ... after N ..." — proportional or linear.
+  let pairs: [number, number][] = [];
+  const rows = Array.isArray(fig.rows) ? (fig.rows as Array<Record<string, unknown>>) : [];
+  if (fig.type === 'function_table') pairs = rows.map((r) => [Number(r.in), Number(r.out)] as [number, number]);
+  else if (fig.type === 'ratio_table') pairs = rows.map((r) => [Number(r.a), Number(r.b)] as [number, number]);
+  pairs = pairs.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+  if (pairs.length >= 2) {
+    const inputs = new Set(pairs.map((p) => p[0]));
+    const m = s.match(/\b(?:after|at|when|for|reach(?:es)?|by)\s+(\d+)\b/);
+    let target: number | null = m ? Number(m[1]) : null;
+    if (target == null) { const ns = (s.match(/\d+/g) ?? []).map(Number).filter((n) => !inputs.has(n)); target = ns.length ? Math.max(...ns) : null; }
+    if (target != null) {
+      const ks = pairs.map(([a, b]) => (a !== 0 ? b / a : NaN));
+      if (ks.every((k) => Math.abs(k - ks[0]) < 1e-9) && Number.isFinite(ks[0])) return { mag: { value: ks[0] * target, piCoeff: null }, family: 'table_proportional' };
+      const slopes: number[] = []; let linear = true;
+      for (let i = 1; i < pairs.length; i++) { const da = pairs[i][0] - pairs[i - 1][0]; if (da === 0) { linear = false; break; } slopes.push((pairs[i][1] - pairs[i - 1][1]) / da); }
+      if (linear && slopes.length && slopes.every((mm) => Math.abs(mm - slopes[0]) < 1e-9)) {
+        const mm = slopes[0]; const b = pairs[0][1] - mm * pairs[0][0];
+        return { mag: { value: mm * target + b, piCoeff: null }, family: 'table_linear' };
+      }
+    }
+  }
+
+  // "what is the ordered pair for point L" — read L's plotted coordinates.
+  if (fig.type === 'coordinate_grid' && Array.isArray(fig.points)) {
+    const m = s.match(/ordered pair\b[^.?]*?\bpoint\s+([a-z])\b/);
+    if (m) {
+      const L = m[1].toUpperCase();
+      const p = (fig.points as Array<Record<string, unknown>>).find((q) => String(q?.label ?? '').trim().toUpperCase() === L);
+      if (p && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y))) return { text: `(${p.x}, ${p.y})`, family: 'ordered_pair' };
+    }
+  }
+  return null;
 }
 
 // ---- convenience: blocking reasons for the gate/sweep ---------------------

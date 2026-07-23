@@ -13,7 +13,7 @@
  * text/figure predicates are reused from reliability-gate.ts. Nothing re-solves
  * math in more than one place.
  */
-import { resolveItem, figureCompleteness, stemRequiresFigure } from './item-resolver';
+import { resolveItem, figureCompleteness, stemRequiresFigure, figureValidityGate } from './item-resolver';
 import { figureIsSane, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
 import { isRenderableFigure } from '../figures/figure-contract';
 
@@ -125,6 +125,10 @@ export function judgeItem(raw: RawItem, bank: Bank): JudgeResult {
     // show as a blank box. Surface it (write paths strip/reject these before save;
     // this flags any that already reached the DB so the sweep can find them).
     if (!isRenderableFigure(it.figure)) warn('figure_unrenderable', 'figure spec does not match any renderer type/shape — it would show as a blank box');
+    // Validity: answer-revealing labels, off-grade coordinates, and figure<->stem<->
+    // option point mismatches destroy diagnostic validity — hard-block them.
+    const fv = figureValidityGate(it.stem, it.options.map((o) => o.text), it.figure, it.standard);
+    if (!fv.ok) block('figure_invalid', fv.reason ?? 'figure is invalid for this item');
     const sane = figureIsSane(it.figure, `${it.stem} ${it.options.map((o) => o.text).join(' ')}`);
     if (!sane.ok) warn('figure_unsound', sane.reason ?? 'figure numbers do not match the item');
   }
