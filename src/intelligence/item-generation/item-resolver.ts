@@ -299,6 +299,18 @@ export function resolveItem(item: ResolvableItem): ResolveResult {
     return { verdict: 'no_correct_option', family: figTruth.family, trueIndex: null, keyedIndex, note: figTruth.note };
   }
 
+  // Ratio/proportion: flag a keyed answer that is not proportional to the given ratio.
+  const ratioCands = ratioCandidates(stem);
+  if (ratioCands) {
+    const matchIdx = opts
+      .map((o, i) => ({ i, m: parseMagnitude(o.text) }))
+      .filter((x) => x.m && ratioCands.some((c) => magMatch(x.m!, { value: c, piCoeff: null }, approx)))
+      .map((x) => x.i);
+    if (matchIdx.length && !matchIdx.includes(keyedIndex)) {
+      return { verdict: 'mis_keyed', family: 'ratio_proportion', trueIndex: matchIdx[0], keyedIndex, note: 'keyed answer is not proportional to the given ratio' };
+    }
+  }
+
   for (const fam of FAMILIES) {
     let truth: Truth | null;
     try { truth = fam(stem, opts); } catch { truth = null; }
@@ -523,6 +535,24 @@ function resolveFromFigure(item: ResolvableItem): { mag?: Mag; text?: string; fa
     }
   }
   return null;
+}
+
+/**
+ * Ratio/proportion candidates: for "the ratio of X to Y is a:b … given N …, how
+ * many …?", the answer must be N·a/b or N·b/a. Returns the two candidate values (or
+ * null when it can't be sure). Used ONLY to FLAG a keyed option that matches neither
+ * — never to assert correctness — so the reciprocal case can't cause a false reject.
+ */
+function ratioCandidates(stem: string): number[] | null {
+  if (!/\bratio\b|\bfor every\b|\bper\b/.test(stem)) return null;
+  const rm = stem.match(/(\d+)\s*(?::|to|\/)\s*(\d+)/);
+  if (!rm) return null;
+  const a = Number(rm[1]); const b = Number(rm[2]);
+  if (!a || !b) return null;
+  const others = [...stem.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])).filter((n) => n !== a && n !== b);
+  if (others.length !== 1) return null; // need exactly one given quantity to be safe
+  const N = others[0];
+  return [...new Set([(N * a) / b, (N * b) / a])];
 }
 
 // ---- convenience: blocking reasons for the gate/sweep ---------------------
