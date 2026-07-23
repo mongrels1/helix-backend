@@ -121,6 +121,8 @@ model User {
   diagnosticSessions DiagnosticSession[] @relation("UserDiagnostics")
   referralCode  ReferralCode?
   referralsMade Referral[]    @relation("ReferralsMade")
+  studySchedules StudySchedule[] @relation("StudentStudySchedules")
+  loginEvents   LoginEvent[]  @relation("UserLoginEvents")
 }
 
 model ParentStudentLink {
@@ -146,6 +148,12 @@ model Profile {
   // accounts and GHL-provisioned accounts (which carry no grade) are never broken;
   // captured in-app via profile edit or the diagnostic grade-consent flow.
   grade     String?
+  // Contact + locale for the study-reminder system. `phone` is the SMS target
+  // (E.164 preferred); `timezone` is an IANA zone (e.g. "America/New_York") used
+  // to convert each StudySchedule's local study time into the correct UTC send
+  // moment. Both nullable so existing/GHL-provisioned accounts are never broken.
+  phone     String?
+  timezone  String?
   user      User    @relation(fields: [userId], references: [id])
 }
 
@@ -206,6 +214,37 @@ model PendingSignup {
   token        String   @unique
   expiresAt    DateTime
   createdAt    DateTime @default(now())
+}
+
+/// A student's weekly study plan: one row per selected day, holding the local
+/// study time for that day. The set of rows IS the schedule (min 3 days enforced
+/// in the service). `dayOfWeek` follows JS `Date.getDay()` (0=Sun … 6=Sat);
+/// `studyTime` is "HH:MM" 24h in the student's Profile.timezone. The reminder
+/// engine (next phase) queries by dayOfWeek and converts studyTime→UTC per tz.
+model StudySchedule {
+  id        String   @id @default(uuid())
+  studentId String
+  dayOfWeek Int
+  studyTime String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  student   User     @relation("StudentStudySchedules", fields: [studentId], references: [id])
+
+  @@unique([studentId, dayOfWeek])
+  @@index([dayOfWeek])
+}
+
+/// One row per successful sign-in. Raw engagement signal the CMS (next phase)
+/// joins against the schedule to classify each session on-time / late / missed
+/// and to compute consistency streaks. Written fire-and-forget on login so it
+/// never blocks or fails auth.
+model LoginEvent {
+  id      String   @id @default(uuid())
+  userId  String
+  loginAt DateTime @default(now())
+  user    User     @relation("UserLoginEvents", fields: [userId], references: [id])
+
+  @@index([userId, loginAt])
 }
 
 model Classroom {

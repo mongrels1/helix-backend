@@ -38,6 +38,7 @@ import { MetricsModule } from '@modules/metrics/metrics.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { OrganizationsModule } from '@modules/organizations/organizations.module';
 import { SubmissionsModule } from '@modules/submissions/submissions.module';
+import { StudyScheduleModule } from '@modules/study-schedule/study-schedule.module';
 import { UsersModule } from '@modules/users/users.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -105,6 +106,7 @@ import { KSportsModule } from '@modules/ksports/ksports.module';
     NotificationsModule,
     HealthModule,
     UsersModule,
+    StudyScheduleModule,
     OrganizationsModule,
     ClassroomsModule,
     CoursesModule,

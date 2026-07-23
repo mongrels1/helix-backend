@@ -109,4 +109,10 @@ export class AuthRepository {
     });
     return res.count;
   }
+
+  /** Record a successful sign-in for engagement analytics. Best-effort — callers
+   *  fire-and-forget so a logging hiccup never blocks or fails authentication. */
+  async createLoginEvent(userId: string): Promise<void> {
+    await this.prisma.loginEvent.create({ data: { userId } });
+  }
 }

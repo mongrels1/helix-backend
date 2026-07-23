@@ -142,6 +142,8 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user);
     await this.emailService.sendWelcomeEmail(user.email, user.profile?.firstName);
+    // First sign-in of the freshly-verified account — record it like any login.
+    void this.authRepository.createLoginEvent(user.id).catch(() => undefined);
 
     return { ...tokens, user };
   }
@@ -172,6 +174,9 @@ export class AuthService {
     }
 
     const tokens = await this.generateTokens(user);
+    // Engagement signal for the study-reminder analytics. Fire-and-forget: a
+    // logging failure must never block a valid sign-in.
+    void this.authRepository.createLoginEvent(user.id).catch(() => undefined);
     return { ...tokens, user };
   }
 
