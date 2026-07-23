@@ -49,12 +49,12 @@ export function zonedWallTimeToUtc(
 }
 
 /** Weekday (0=Sun … 6=Sat) of a calendar date, independent of any timezone. */
-function weekdayOf(year: number, month: number, day: number): number {
+export function weekdayOf(year: number, month: number, day: number): number {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
-/** The current wall-clock calendar date in zone `tz`. */
-function wallDateInTz(now: Date, tz: string): { year: number; month: number; day: number } {
+/** The wall-clock calendar date in zone `tz` at instant `now`. */
+export function wallDateInTz(now: Date, tz: string): { year: number; month: number; day: number } {
   const p = Object.fromEntries(
     new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
@@ -69,7 +69,7 @@ function wallDateInTz(now: Date, tz: string): { year: number; month: number; day
 }
 
 /** Add `n` days to a calendar date, returning a new {year,month,day}. */
-function addDays(
+export function addDays(
   year: number,
   month: number,
   day: number,
