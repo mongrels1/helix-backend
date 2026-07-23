@@ -41,6 +41,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "ioredis": "^5.6.1",
+    "libphonenumber-js": "^1.13.9",
     "nestjs-pino": "^4.6.1",
     "openai": "^5.6.0",
     "passport": "^0.7.0",

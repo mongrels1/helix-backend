@@ -16,10 +16,16 @@ export class SetScheduleDto {
   @IsNotEmpty()
   timezone!: string;
 
-  /** SMS target for reminders (optional at this phase; sending comes later). */
+  /** SMS target for reminders. Normalized to E.164 server-side. */
   @IsString()
   @IsOptional()
   phone?: string;
+
+  /** ISO-3166 alpha-2 country the phone belongs to (e.g. "US", "GB", "IN"), from
+   *  the UI country picker — used to interpret a local number that has no `+`. */
+  @IsString()
+  @IsOptional()
+  phoneCountry?: string;
 
   /** One entry per selected day. Inner shape validated in the service. */
   @IsArray()

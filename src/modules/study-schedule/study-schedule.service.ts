@@ -48,9 +48,11 @@ export class StudyScheduleService {
     // must normalize to a real number or we reject it with a helpful message.
     let phone = dto.phone;
     if (phone !== undefined && phone.trim() !== '') {
-      const normalized = normalizePhone(phone);
+      const normalized = normalizePhone(phone, dto.phoneCountry);
       if (!normalized) {
-        throw new BadRequestException('Please enter a valid mobile number, e.g. (862) 322-9027.');
+        throw new BadRequestException(
+          'That mobile number doesn\'t look valid for the selected country. Please check it, or include your country code (e.g. +44…).',
+        );
       }
       phone = normalized;
     }
