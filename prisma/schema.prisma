@@ -123,6 +123,7 @@ model User {
   referralsMade Referral[]    @relation("ReferralsMade")
   studySchedules StudySchedule[] @relation("StudentStudySchedules")
   loginEvents   LoginEvent[]  @relation("UserLoginEvents")
+  studyReminders StudyReminder[] @relation("StudentReminders")
 }
 
 model ParentStudentLink {
@@ -229,9 +230,34 @@ model StudySchedule {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   student   User     @relation("StudentStudySchedules", fields: [studentId], references: [id])
+  reminders StudyReminder[] @relation("ScheduleReminders")
 
   @@unique([studentId, dayOfWeek])
   @@index([dayOfWeek])
+}
+
+/// One row per reminder actually dispatched (or skipped), per recipient, per
+/// session occurrence. The @@unique key is the idempotency guard: the engine
+/// creates the row BEFORE sending, so an overlapping or restarted cron run hits
+/// the unique constraint and skips instead of double-texting. `recipient` is
+/// "student" | "parent"; `scheduledFor` is the session's UTC start instant;
+/// `deliveryStatus` is "sent" | "failed" | "skipped"; `ghlRef` is whatever the
+/// GHL workflow trigger returns (optional).
+model StudyReminder {
+  id             String   @id @default(uuid())
+  studentId      String
+  scheduleId     String
+  recipient      String
+  phone          String
+  scheduledFor   DateTime
+  sentAt         DateTime @default(now())
+  deliveryStatus String
+  ghlRef         String?
+  student        User          @relation("StudentReminders", fields: [studentId], references: [id])
+  schedule       StudySchedule @relation("ScheduleReminders", fields: [scheduleId], references: [id])
+
+  @@unique([scheduleId, scheduledFor, recipient])
+  @@index([studentId, scheduledFor])
 }
 
 /// One row per successful sign-in. Raw engagement signal the CMS (next phase)
