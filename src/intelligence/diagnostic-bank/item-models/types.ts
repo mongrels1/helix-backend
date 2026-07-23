@@ -11,7 +11,10 @@ import type { Rng } from './rng';
  */
 export type Pt = { x: number; y: number };
 
-export type { Figure } from '../../figures/figure-contract';
+// Import locally so this file can use `Figure` (below), and re-export it so the
+// rest of the backend keeps importing `Figure` from here.
+import type { Figure } from '../../figures/figure-contract';
+export type { Figure };
 
 export interface DiagOption {
   text: string;
