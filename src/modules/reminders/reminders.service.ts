@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { normalizePhone } from '@common/phone';
 import { RemindersRepository, ScheduleContext } from './reminders.repository';
 import { isDue, nextOccurrenceUtc } from './reminder-time';
 
@@ -77,7 +78,9 @@ export class RemindersService {
     const out: Recipient[] = [];
     const seen = new Set<string>();
     const add = (kind: 'student' | 'parent', phone: string | null, firstName: string | null) => {
-      const norm = (phone ?? '').replace(/\s+/g, '');
+      // Normalize to E.164 here too, so any legacy/parent number saved before phone
+      // normalization existed still gets a country code before we dispatch.
+      const norm = normalizePhone(phone);
       if (!norm || seen.has(norm)) return;
       seen.add(norm);
       out.push({

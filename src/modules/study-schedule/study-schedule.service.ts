@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { normalizePhone } from '@common/phone';
 import { SetScheduleDto, ScheduleDayInput } from './dto/set-schedule.dto';
 import { StudyScheduleRepository } from './study-schedule.repository';
 
@@ -42,7 +43,19 @@ export class StudyScheduleService {
       );
     }
 
-    await this.repo.replaceSchedule(studentId, timezone, dto.phone, days);
+    // Force phone to E.164 so reminders can actually be routed — users won't type
+    // the country code. Undefined = leave unchanged; empty = clear; anything else
+    // must normalize to a real number or we reject it with a helpful message.
+    let phone = dto.phone;
+    if (phone !== undefined && phone.trim() !== '') {
+      const normalized = normalizePhone(phone);
+      if (!normalized) {
+        throw new BadRequestException('Please enter a valid mobile number, e.g. (862) 322-9027.');
+      }
+      phone = normalized;
+    }
+
+    await this.repo.replaceSchedule(studentId, timezone, phone, days);
     return this.getMine(studentId);
   }
 
