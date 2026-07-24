@@ -15,6 +15,7 @@ interface Recipient {
   recipientKey: string; // stored in StudyReminder.recipient; unique per phone
   kind: 'student' | 'parent';
   phone: string;
+  normalized: boolean; // false = couldn't be made valid E.164 (legacy/no-country number)
   firstName: string | null;
 }
 
@@ -58,6 +59,16 @@ export class RemindersService {
           // Already claimed for this (schedule, occurrence, recipient) — don't resend.
           continue;
         }
+        if (!rcpt.normalized) {
+          // A legacy number saved before country support that can't be made valid
+          // E.164. Record it visibly (shows as "invalid_phone" in the reminder log)
+          // instead of silently dropping — an admin can see it and have the student
+          // re-save their number.
+          await this.repo.markReminder(claimId, 'invalid_phone', 'phone_needs_country_code');
+          summary.failed += 1;
+          this.logger.warn(`Reminder not sent — unnormalizable phone for student ${ctx.studentId}`);
+          continue;
+        }
         const result = await this.dispatchToGhl(ctx, rcpt, occ);
         await this.repo.markReminder(claimId, result.status, result.ref);
         summary[result.status] += 1;
@@ -77,16 +88,21 @@ export class RemindersService {
   private recipientsFor(ctx: ScheduleContext): Recipient[] {
     const out: Recipient[] = [];
     const seen = new Set<string>();
-    const add = (kind: 'student' | 'parent', phone: string | null, firstName: string | null) => {
-      // Normalize to E.164 here too, so any legacy/parent number saved before phone
-      // normalization existed still gets a country code before we dispatch.
-      const norm = normalizePhone(phone);
-      if (!norm || seen.has(norm)) return;
-      seen.add(norm);
+    const add = (kind: 'student' | 'parent', rawPhone: string | null, firstName: string | null) => {
+      const raw = (rawPhone ?? '').trim();
+      if (!raw) return;
+      // Prefer the validated E.164 form; if a legacy number can't be normalized
+      // (no country), keep it anyway with normalized=false so the reminder is
+      // recorded as invalid rather than silently dropped.
+      const norm = normalizePhone(raw);
+      const phone = norm ?? raw.replace(/[^\d+]/g, '');
+      if (!phone || seen.has(phone)) return;
+      seen.add(phone);
       out.push({
-        recipientKey: kind === 'student' ? 'student' : `parent:${norm}`,
+        recipientKey: kind === 'student' ? 'student' : `parent:${phone}`,
         kind,
-        phone: norm,
+        phone,
+        normalized: norm !== null,
         firstName,
       });
     };

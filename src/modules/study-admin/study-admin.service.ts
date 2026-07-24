@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { nextOccurrenceUtc } from '../reminders/reminder-time';
 import {
   EngagementSummary,
-  ScheduleRow,
   enumerateOccurrences,
   scoreOccurrences,
   summarize,
@@ -32,6 +31,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export class StudyAdminService {
   constructor(private readonly repo: StudyAdminRepository) {}
 
+  /** Don't score sessions from before the plan existed: clamp the window start up
+   *  to the earliest schedule row's creation time. (Re-saving a plan resets this,
+   *  so adherence reflects the plan as it currently stands.) */
+  private clampFrom(schedules: Array<{ createdAt: Date }>, from: Date): Date {
+    if (schedules.length === 0) return from;
+    const earliest = Math.min(...schedules.map((s) => s.createdAt.getTime()));
+    return new Date(Math.max(from.getTime(), earliest));
+  }
+
   /** One row per student with a plan: schedule size, next session, last login, and
    *  the engagement rollup (on-time/late/missed, adherence, streak) over `days`.
    *  Sorted most-at-risk first (lowest adherence) so staff see who's slipping. */
@@ -46,9 +54,11 @@ export class StudyAdminService {
     ]);
 
     const rows: OverviewRow[] = students.map((s) => {
-      const scheduleRows: ScheduleRow[] = s.schedules;
+      const scheduleRows = s.schedules;
       const loginMs = logins.get(s.id) ?? [];
-      const occ = enumerateOccurrences(scheduleRows, s.timezone, from, now);
+      // Only score sessions on/after the plan was created, so a brand-new plan
+      // doesn't show pre-plan slots as "missed".
+      const occ = enumerateOccurrences(scheduleRows, s.timezone, this.clampFrom(scheduleRows, from), now);
       const scored = scoreOccurrences(occ, loginMs, now);
       const engagement = summarize(scored);
 
@@ -104,7 +114,7 @@ export class StudyAdminService {
     const loginsMap = await this.repo.loginsSince([studentId], from);
     const loginMs = loginsMap.get(studentId) ?? [];
     const scored = scoreOccurrences(
-      enumerateOccurrences(student.schedules, student.timezone, from, now),
+      enumerateOccurrences(student.schedules, student.timezone, this.clampFrom(student.schedules, from), now),
       loginMs,
       now,
     );

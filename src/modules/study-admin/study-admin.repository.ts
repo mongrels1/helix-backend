@@ -9,7 +9,7 @@ export interface StudentWithSchedule {
   grade: string | null;
   timezone: string | null;
   phone: string | null;
-  schedules: Array<{ scheduleId: string; dayOfWeek: number; studyTime: string }>;
+  schedules: Array<{ scheduleId: string; dayOfWeek: number; studyTime: string; createdAt: Date }>;
 }
 
 export interface ReminderLogRow {
@@ -56,7 +56,7 @@ export class StudyAdminRepository {
         id: true,
         email: true,
         profile: { select: { firstName: true, lastName: true, grade: true, timezone: true, phone: true } },
-        studySchedules: { select: { id: true, dayOfWeek: true, studyTime: true } },
+        studySchedules: { select: { id: true, dayOfWeek: true, studyTime: true, createdAt: true } },
       },
     });
     return users.map((u) => ({
@@ -71,6 +71,7 @@ export class StudyAdminRepository {
         scheduleId: s.id,
         dayOfWeek: s.dayOfWeek,
         studyTime: s.studyTime,
+        createdAt: s.createdAt,
       })),
     }));
   }
