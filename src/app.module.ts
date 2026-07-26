@@ -46,6 +46,7 @@ import { OrchestrationModule } from './orchestration/orchestration.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 import { ReportsModule } from './modules/reports/reports.module';
+import { RosterModule } from '@modules/roster/roster.module';
 import { KSportsModule } from '@modules/ksports/ksports.module';
 
 @Module({
@@ -113,6 +114,7 @@ import { KSportsModule } from '@modules/ksports/ksports.module';
     StudyAdminModule,
     OrganizationsModule,
     ClassroomsModule,
+    RosterModule,
     CoursesModule,
     OrchestrationModule,
   ],

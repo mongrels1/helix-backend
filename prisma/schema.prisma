@@ -155,13 +155,33 @@ model Profile {
   // moment. Both nullable so existing/GHL-provisioned accounts are never broken.
   phone     String?
   timezone  String?
+  // School-assigned student ID captured on a roster upload — the dedup key on
+  // re-upload and the disambiguator when students share a name. Uniqueness is
+  // enforced per-organization in the roster import service (a Profile has no org
+  // column; the org is resolved from the classroom being imported into).
+  // Nullable + additive so existing accounts are untouched.
+  studentId String?
   user      User    @relation(fields: [userId], references: [id])
+
+  @@index([studentId])
 }
 
 model Organization {
   id          String       @id @default(uuid())
   name        String
   slug        String       @unique
+  // Institutional gates. rosterEnabled: a super-admin has approved this school
+  // for trial/contract, which unlocks teacher roster uploads. studentEmailInvites:
+  // may EdKairos email students a set-password link (default false = the teacher
+  // hands out a printed credential sheet instead). Parent-facing email is never
+  // sent from here — those reports are held for the school to vet and release.
+  rosterEnabled       Boolean @default(false)
+  studentEmailInvites Boolean @default(false)
+  // Per-teacher student cap for this school. null = TRIAL default (25 students
+  // per teacher, applied in code); a number = the contracted per-teacher limit.
+  // A single teacher can be overridden via User.maxStudents. The roster import
+  // service enforces: teacher.maxStudents ?? org.perTeacherCap ?? 25.
+  perTeacherCap       Int?
   memberships Membership[]
   classrooms  Classroom[]
   createdAt   DateTime     @default(now())
@@ -818,6 +838,34 @@ model WeeklyReportRun {
   createdAt      DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// Institutional weekly report — generated, then HELD for teacher review. Parent-
+// facing content is vetted by the school, so these are never auto-emailed; the
+// teacher releases or discards each one through the school's own channel. Kept
+// separate from WeeklyReportRun (the family/B2C send log) so the two reporting
+// worlds never mix. One row per (student, class, period); the UNIQUE key makes
+// regeneration idempotent.
+model HeldReport {
+  id           String    @id @default(uuid())
+  studentId    String
+  classroomId  String
+  teacherId    String
+  orgId        String
+  periodStart  DateTime
+  periodEnd    DateTime
+  studentName  String
+  minutesTotal Int       @default(0)
+  reportHtml   String
+  reportText   String
+  status       String    @default("HELD")
+  releasedAt   DateTime?
+  releasedById String?
+  createdAt    DateTime  @default(now())
+
+  @@unique([studentId, classroomId, periodStart])
+  @@index([classroomId, status])
+  @@index([teacherId, status])
 }
 
 model KSportsFact {
