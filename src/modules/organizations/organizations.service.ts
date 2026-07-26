@@ -7,6 +7,7 @@ import { Membership } from '@prisma/client';
 import { UsersRepository } from '@modules/users/users.repository';
 import { AddMemberDto } from './dto/add-member.dto';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
+import { RosterSettingsDto } from './dto/roster-settings.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { OrganizationEntity } from './entities/organization.entity';
 import { OrganizationsRepository } from './organizations.repository';
@@ -75,6 +76,14 @@ export class OrganizationsService {
     }
 
     return this.organizationsRepository.update(id, dto);
+  }
+
+  async updateRosterSettings(
+    id: string,
+    dto: RosterSettingsDto,
+  ): Promise<OrganizationEntity> {
+    await this.findById(id);
+    return this.organizationsRepository.updateRosterSettings(id, dto);
   }
 
   async remove(id: string): Promise<void> {

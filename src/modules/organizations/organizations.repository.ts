@@ -10,6 +10,9 @@ const organizationSelect = {
   name: true,
   slug: true,
   createdAt: true,
+  rosterEnabled: true,
+  studentEmailInvites: true,
+  perTeacherCap: true,
   _count: {
     select: {
       memberships: true,
@@ -22,6 +25,9 @@ type OrganizationRecord = {
   name: string;
   slug: string;
   createdAt: Date;
+  rosterEnabled: boolean;
+  studentEmailInvites: boolean;
+  perTeacherCap: number | null;
   _count?: {
     memberships: number;
   };
@@ -96,6 +102,25 @@ export class OrganizationsRepository {
     return organization;
   }
 
+  async updateRosterSettings(
+    id: string,
+    data: {
+      rosterEnabled?: boolean;
+      studentEmailInvites?: boolean;
+      perTeacherCap?: number | null;
+    },
+  ): Promise<OrganizationEntity> {
+    await this.prisma.organization.updateMany({
+      where: { id, deletedAt: null },
+      data,
+    });
+    const organization = await this.findById(id);
+    if (!organization) {
+      throw new Error('Organization not found');
+    }
+    return organization;
+  }
+
   async softDelete(id: string): Promise<void> {
     await this.prisma.organization.updateMany({
       where: { id, deletedAt: null },
@@ -147,6 +172,9 @@ export class OrganizationsRepository {
       slug: organization.slug,
       createdAt: organization.createdAt,
       memberCount: organization._count?.memberships,
+      rosterEnabled: organization.rosterEnabled,
+      studentEmailInvites: organization.studentEmailInvites,
+      perTeacherCap: organization.perTeacherCap,
     };
   }
 }

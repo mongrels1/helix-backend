@@ -10,9 +10,11 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { Membership } from '@prisma/client';
+import { Membership, Role } from '@prisma/client';
+import { Roles } from '@common/decorators/roles.decorator';
 import { AddMemberDto } from './dto/add-member.dto';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
+import { RosterSettingsDto } from './dto/roster-settings.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { OrganizationEntity } from './entities/organization.entity';
 import { OrganizationsService } from './organizations.service';
@@ -59,6 +61,22 @@ export class OrganizationsController {
     const organization = await this.organizationsService.update(
       id,
       updateOrganizationDto,
+    );
+    return { success: true, data: organization };
+  }
+
+  // Super-admin only: approve a school for roster uploads and set its per-teacher
+  // cap / student-email-invite policy. Separate from the generic PATCH so these
+  // gates can never be flipped by a non-super-admin.
+  @Patch(':id/roster-settings')
+  @Roles(Role.SUPER_ADMIN)
+  async updateRosterSettings(
+    @Param('id') id: string,
+    @Body() dto: RosterSettingsDto,
+  ): Promise<{ success: true; data: OrganizationEntity }> {
+    const organization = await this.organizationsService.updateRosterSettings(
+      id,
+      dto,
     );
     return { success: true, data: organization };
   }
