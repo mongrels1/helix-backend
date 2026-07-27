@@ -6,12 +6,19 @@ import {
 } from '../types/orchestration.types';
 
 type IntentContext = { classroomId?: string; assignmentId?: string };
+type IntentTarget = ParsedIntent['parameters']['target'];
 
 @Injectable()
 export class IntentParserService {
   constructor(private readonly aiRouterService: AIRouterService) {}
 
   async parse(command: string, context: IntentContext): Promise<ParsedIntent> {
+    // Deterministic first: the common read-only commands (and the dashboard's
+    // suggestion chips) map by keyword, so they resolve instantly and never
+    // depend on an AI provider being up or returning perfectly clean JSON.
+    const keyword = this.keywordIntent(command, context);
+    if (keyword) return keyword;
+
     const prompt = `You are an intent parser for a school management system.
 Parse the teacher's command into a structured intent.
 Supported actions:
@@ -41,15 +48,63 @@ Respond ONLY with valid JSON, no markdown, no explanation:
         prompt,
         maxTokens: 200,
         temperature: 0.1,
+        preferredProvider: 'claude',
       });
-      return this.normalizeParsedIntent(
-        JSON.parse(ai.text) as Partial<ParsedIntent>,
-        command,
-        context,
-      );
+      const parsed = JSON.parse(
+        this.extractJson(ai.text),
+      ) as Partial<ParsedIntent>;
+      return this.normalizeParsedIntent(parsed, command, context);
     } catch {
       return this.unknownIntent(command);
     }
+  }
+
+  // Maps the common read-only commands (and the dashboard chips) to an intent
+  // without calling the LLM. Notification/free-form commands return null and
+  // fall through to the AI parser, which can extract a message.
+  private keywordIntent(
+    command: string,
+    context: IntentContext,
+  ): ParsedIntent | null {
+    const c = command.toLowerCase();
+    const make = (
+      action: OrchestrationAction,
+      target?: IntentTarget,
+    ): ParsedIntent => ({
+      action,
+      confidence: 1,
+      parameters: {
+        classroomId: context.classroomId,
+        assignmentId: context.assignmentId,
+        ...(target ? { target } : {}),
+      },
+      rawCommand: command,
+    });
+
+    if (/at[\s-]?risk|struggling|falling behind|needs? help|failing/.test(c)) {
+      return make(OrchestrationAction.GET_AT_RISK_STUDENTS, 'AT_RISK');
+    }
+    if (
+      /overdue|not submitted|haven'?t submitted|hasn'?t submitted|missing submission|late submission|who .*(submit|turned in)/.test(
+        c,
+      )
+    ) {
+      return make(
+        OrchestrationAction.GET_OVERDUE_SUBMISSIONS,
+        'MISSING_SUBMISSIONS',
+      );
+    }
+    if (/insight|analyt|analysis|overview|summary|snapshot/.test(c)) {
+      return make(OrchestrationAction.GENERATE_INSIGHT);
+    }
+    return null;
+  }
+
+  // Models sometimes wrap JSON in prose or ```json fences despite the
+  // instruction; pull out the first {...} block before parsing.
+  private extractJson(text: string): string {
+    const match = text.match(/\{[\s\S]*\}/);
+    return match ? match[0] : text;
   }
 
   private normalizeParsedIntent(
