@@ -47,4 +47,9 @@ export default () => ({
     voiceId: process.env.ELEVENLABS_VOICE_ID ?? '21m00Tcm4TlvDq8ikWAM',
     model: process.env.ELEVENLABS_MODEL ?? 'eleven_flash_v2_5',
   },
+  lessonPlan: {
+    svcUrl: process.env.LESSON_PLAN_SVC_URL ?? '',
+    svcSecret: process.env.LESSON_PLAN_SVC_SECRET ?? '',
+    claudeModel: process.env.LESSON_PLAN_CLAUDE_MODEL ?? '',
+  },
 });
