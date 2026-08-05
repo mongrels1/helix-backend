@@ -50,21 +50,23 @@ async function main() {
     },
   });
 
-  // A small "climb" so the dashboard isn't empty on entry. Best-effort skill tags;
-  // adjust to your real taxonomy if these don't render with friendly names.
+  // Reset the demo's climb so re-runs stay clean, then seed friendly-named skills.
+  // The tutor sends "Teach me: <skillTag>" to the AI and the cards display the tag
+  // verbatim, so these names show exactly as written AND teach correctly.
+  await prisma.masteryHistory.deleteMany({ where: { masteryScore: { studentId: demo.id } } });
+  await prisma.masteryScore.deleteMany({ where: { studentId: demo.id } });
+
   const mastery = [
-    { skillTag: 'geometry.perimeter', score: 0.95, pMastered: 0.93, status: MasteryStatus.MASTERED },
-    { skillTag: 'geometry.area',      score: 0.78, pMastered: 0.78, status: MasteryStatus.EMERGING },
-    { skillTag: 'geometry.angles',    score: 0.34, pMastered: 0.34, status: MasteryStatus.NOT_STARTED },
+    { skillTag: 'Perimeter',          score: 0.95, pMastered: 0.93, status: MasteryStatus.MASTERED },
+    { skillTag: 'Area of rectangles', score: 0.78, pMastered: 0.78, status: MasteryStatus.EMERGING },
+    { skillTag: 'Angles',             score: 0.34, pMastered: 0.34, status: MasteryStatus.NOT_STARTED },
   ];
   for (const m of mastery) {
-    await prisma.masteryScore.upsert({
-      where: { studentId_skillTag: { studentId: demo.id, skillTag: m.skillTag } },
-      create: {
+    await prisma.masteryScore.create({
+      data: {
         studentId: demo.id, skillTag: m.skillTag, score: m.score, pMastered: m.pMastered,
         status: m.status, masteredAt: m.status === MasteryStatus.MASTERED ? new Date() : null,
       },
-      update: { score: m.score, pMastered: m.pMastered, status: m.status },
     });
   }
 
