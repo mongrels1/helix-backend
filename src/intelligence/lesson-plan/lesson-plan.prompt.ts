@@ -27,6 +27,8 @@ export interface PlanConfig {
   segments_per_day: number;
   differentiation_groups: string[];
   strategies?: string[];
+  /** Free-text teacher notes: what to add, emphasize, or differentiate. */
+  instructions?: string;
 }
 
 export function buildLessonPlanPrompt(
@@ -75,6 +77,13 @@ export function buildLessonPlanPrompt(
     `- Co-teaching/para: ${config.co_teaching ?? 'None'} (if not None, split teacher_actions by role: 'Teacher 1: ... Teacher 2: ...')`,
     `- Differentiation groups the teacher has (fill ONLY these, where warranted): ${JSON.stringify(groups)}`,
     `- Strategies to weave in where appropriate (not forced): ${JSON.stringify(config.strategies ?? [])}`,
+    ...(config.instructions && config.instructions.trim()
+      ? [
+          '',
+          "TEACHER'S SPECIFIC INSTRUCTIONS (high priority — honor these; weave them into teacher_actions, instructional_resources, and differentiation wherever they apply, without breaking the required structure or inventing standards not in the resources):",
+          config.instructions.trim(),
+        ]
+      : []),
     '',
     'RESOURCES (plan strictly from these):',
     resourcesText.slice(0, 12000),

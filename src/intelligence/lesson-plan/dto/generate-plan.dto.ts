@@ -35,4 +35,7 @@ export class GeneratePlanDto {
   @IsOptional() @IsString() week?: string;
   @IsOptional() @IsString() teacher?: string;
   @IsOptional() @IsString() coTeaching?: string;
+
+  /** Free-text teacher notes: what to add, emphasize, or differentiate. */
+  @IsOptional() @IsString() instructions?: string;
 }

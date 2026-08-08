@@ -116,6 +116,7 @@ export class LessonPlanService {
       segments_per_day: dto.segmentsPerDay,
       differentiation_groups: dto.differentiationGroups,
       strategies: dto.strategies,
+      instructions: dto.instructions,
     };
 
     // 1) draft content with Claude (via the shared AI router; falls back per its chain)
