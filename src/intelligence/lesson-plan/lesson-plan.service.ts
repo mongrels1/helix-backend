@@ -20,6 +20,7 @@ import {
   PlanConfig,
 } from './lesson-plan.prompt';
 import { GeneratePlanDto } from './dto/generate-plan.dto';
+import { patchDocxHeader } from './lesson-plan.docx-header';
 
 interface LessonPlanJob {
   id: string;
@@ -148,7 +149,15 @@ export class LessonPlanService {
       segmentsPerDay: dto.segmentsPerDay,
       differentiationGroups: dto.differentiationGroups,
     });
-    job.docx = fill.docx;
+    // sidecar fills the body grid but not the template header; write the
+    // Step-3 header fields (School/Teachers/Grade/Unit/Dates) in-process.
+    job.docx = await patchDocxHeader(fill.docx, {
+      school: dto.school,
+      teacher: dto.teacher,
+      grade: dto.grade,
+      unit: dto.unit,
+      dates: dto.week,
+    });
 
     return {
       engine: ai.provider,

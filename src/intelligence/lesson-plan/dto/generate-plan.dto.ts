@@ -34,6 +34,7 @@ export class GeneratePlanDto {
   @IsOptional() @IsString() unit?: string;
   @IsOptional() @IsString() week?: string;
   @IsOptional() @IsString() teacher?: string;
+  @IsOptional() @IsString() school?: string;
   @IsOptional() @IsString() coTeaching?: string;
 
   /** Free-text teacher notes: what to add, emphasize, or differentiate. */
