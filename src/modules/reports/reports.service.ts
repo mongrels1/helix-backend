@@ -200,6 +200,7 @@ export class ReportsService {
   async sendReportForUser(
     userId: string,
     trigger: 'CRON' | 'MANUAL' = 'MANUAL',
+    force = false,
   ): Promise<{ sent: boolean; recipient: string; students: number; reason?: string }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -212,6 +213,24 @@ export class ReportsService {
       },
     });
     if (!user) throw new NotFoundException('User not found');
+    // Idempotency: never send a recipient more than one weekly report per week,
+    // even if the Sunday cron double-fires (extra replica / external trigger).
+    // A manual send can override with force=true.
+    if (!force && (await this.alreadySentThisWeek(user.id))) {
+      await this.prisma.weeklyReportRun.create({
+        data: {
+          recipientId: user.id,
+          recipientEmail: user.email,
+          studentsCount: 0,
+          minutesTotal: 0,
+          status: 'SKIPPED',
+          trigger,
+          detail: 'duplicate suppressed (already sent this week)',
+        },
+      });
+      this.logger.log(`Weekly report skipped for ${user.email} (already sent this week)`);
+      return { sent: false, recipient: user.email, students: 0, reason: 'already sent this week' };
+    }
     const studentIds =
       user.role === Role.PARENT ? user.parentLinks.map((l) => l.studentId) : [user.id];
     if (studentIds.length === 0) {
@@ -239,10 +258,21 @@ export class ReportsService {
       throw e;
     }
   }
+  private async alreadySentThisWeek(recipientId: string): Promise<boolean> {
+    // Weekly reports run every 7 days; suppress a second SENT within a 6-day
+    // window (safely under the cadence) so a duplicate trigger can't email twice.
+    const since = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
+    const existing = await this.prisma.weeklyReportRun.findFirst({
+      where: { recipientId, status: 'SENT', createdAt: { gte: since } },
+      select: { id: true },
+    });
+    return Boolean(existing);
+  }
+
   async getRecentRuns(limit = 100) {
     return this.prisma.weeklyReportRun.findMany({ orderBy: { createdAt: 'desc' }, take: limit });
   }
-  async runWeeklyBatch(trigger: 'CRON' | 'MANUAL' = 'CRON'): Promise<{ processed: number; sent: number }> {
+  async runWeeklyBatch(trigger: 'CRON' | 'MANUAL' = 'CRON', force = false): Promise<{ processed: number; sent: number }> {
     const candidates = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
@@ -257,7 +287,7 @@ export class ReportsService {
     let sent = 0;
     for (const r of recipients) {
       try {
-        const res = await this.sendReportForUser(r.id, trigger);
+        const res = await this.sendReportForUser(r.id, trigger, force);
         if (res.sent) sent += 1;
       } catch (e) {
         this.logger.error(`Weekly report failed for ${r.email}: ${(e as Error).message}`);

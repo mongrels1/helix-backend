@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { Controller, Get, HttpCode, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -24,21 +24,27 @@ export class ReportsController {
 
   @Post('weekly/me')
   @HttpCode(200)
-  async sendMine(@CurrentUser() user: AuthenticatedUser): Promise<{
+  async sendMine(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('force') force?: string,
+  ): Promise<{
     success: true;
     data: Awaited<ReturnType<ReportsService['sendReportForUser']>>;
   }> {
-    return { success: true, data: await this.reports.sendReportForUser(user.userId) };
+    return {
+      success: true,
+      data: await this.reports.sendReportForUser(user.userId, 'MANUAL', force === 'true'),
+    };
   }
 
   @Post('weekly/run')
   @Roles(Role.SUPER_ADMIN)
   @HttpCode(200)
-  async runBatch(): Promise<{
+  async runBatch(@Query('force') force?: string): Promise<{
     success: true;
     data: Awaited<ReturnType<ReportsService['runWeeklyBatch']>>;
   }> {
-    return { success: true, data: await this.reports.runWeeklyBatch('MANUAL') };
+    return { success: true, data: await this.reports.runWeeklyBatch('MANUAL', force === 'true') };
   }
 
   @Get('runs')
