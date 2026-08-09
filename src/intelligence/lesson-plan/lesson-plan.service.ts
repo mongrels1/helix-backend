@@ -133,7 +133,10 @@ export class LessonPlanService {
       claudeModel: qualityModel,
       maxTokens: 8000,
       temperature: 0.4,
-      timeoutMs: 60000,
+      // Full-week generations run ~45-70s (≈9-10k tokens); 60s clipped the slow
+      // ones. Give generous headroom — the frontend has no request timeout and a
+      // "Generating…" spinner covers the wait, so higher is pure reliability.
+      timeoutMs: 180000,
     });
     const plan = extractJson(ai.text);
     if (!plan || !Array.isArray((plan as { days?: unknown }).days)) {
