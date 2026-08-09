@@ -10,6 +10,7 @@ export interface StudyScheduleView {
   timezone: string | null;
   phone: string | null;
   minDays: number;
+  remindersPaused: boolean;
   days: Array<{ dayOfWeek: number; studyTime: string }>;
 }
 
@@ -26,6 +27,7 @@ export class StudyScheduleService {
       timezone: contact.timezone,
       phone: contact.phone,
       minDays: MIN_DAYS,
+      remindersPaused: contact.remindersPaused,
       days: rows.map((r) => ({ dayOfWeek: r.dayOfWeek, studyTime: r.studyTime })),
     };
   }
@@ -57,7 +59,7 @@ export class StudyScheduleService {
       phone = normalized;
     }
 
-    await this.repo.replaceSchedule(studentId, timezone, phone, days);
+    await this.repo.replaceSchedule(studentId, timezone, phone, dto.remindersPaused, days);
     return this.getMine(studentId);
   }
 

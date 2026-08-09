@@ -17,12 +17,16 @@ export class StudyScheduleRepository {
   /** Contact/locale the reminder engine needs, read from the profile. */
   async getContact(
     studentId: string,
-  ): Promise<{ phone: string | null; timezone: string | null }> {
+  ): Promise<{ phone: string | null; timezone: string | null; remindersPaused: boolean }> {
     const profile = await this.prisma.profile.findUnique({
       where: { userId: studentId },
-      select: { phone: true, timezone: true },
+      select: { phone: true, timezone: true, remindersPaused: true },
     });
-    return { phone: profile?.phone ?? null, timezone: profile?.timezone ?? null };
+    return {
+      phone: profile?.phone ?? null,
+      timezone: profile?.timezone ?? null,
+      remindersPaused: profile?.remindersPaused ?? false,
+    };
   }
 
   /**
@@ -34,6 +38,7 @@ export class StudyScheduleRepository {
     studentId: string,
     timezone: string,
     phone: string | undefined,
+    remindersPaused: boolean | undefined,
     days: ScheduleDayInput[],
   ): Promise<StudySchedule[]> {
     await this.prisma.$transaction([
@@ -42,6 +47,7 @@ export class StudyScheduleRepository {
         data: {
           timezone,
           ...(phone !== undefined ? { phone: phone.trim() || null } : {}),
+          ...(remindersPaused !== undefined ? { remindersPaused } : {}),
         },
       }),
       this.prisma.studySchedule.deleteMany({ where: { studentId } }),

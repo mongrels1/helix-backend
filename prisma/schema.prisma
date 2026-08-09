@@ -155,6 +155,10 @@ model Profile {
   // moment. Both nullable so existing/GHL-provisioned accounts are never broken.
   phone     String?
   timezone  String?
+  // When true, the study-reminder engine skips this student (the "Silence
+  // reminders" toggle on the study-plan page). Additive + defaulted so existing
+  // rows are false and nothing is broken.
+  remindersPaused Boolean @default(false)
   // School-assigned student ID captured on a roster upload — the dedup key on
   // re-upload and the disambiguator when students share a name. Uniqueness is
   // enforced per-organization in the roster import service (a Profile has no org

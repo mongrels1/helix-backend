@@ -22,7 +22,7 @@ export class RemindersRepository {
   /** Every active student's schedule rows, joined to student + parent contacts. */
   async findAllScheduleContexts(): Promise<ScheduleContext[]> {
     const rows = await this.prisma.studySchedule.findMany({
-      where: { student: { deletedAt: null } },
+      where: { student: { deletedAt: null, profile: { remindersPaused: false } } },
       select: {
         id: true,
         studentId: true,

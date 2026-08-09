@@ -1,4 +1,4 @@
-import { IsArray, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 /** One selected study day + its local time. Shape is validated in the service
  *  (dayOfWeek 0–6, studyTime "HH:MM") so correctness doesn't depend on the
@@ -26,6 +26,11 @@ export class SetScheduleDto {
   @IsString()
   @IsOptional()
   phoneCountry?: string;
+
+  /** Silence (or re-enable) SMS study reminders without losing the plan or number. */
+  @IsBoolean()
+  @IsOptional()
+  remindersPaused?: boolean;
 
   /** One entry per selected day. Inner shape validated in the service. */
   @IsArray()
