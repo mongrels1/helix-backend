@@ -186,6 +186,17 @@ model Organization {
   // A single teacher can be overridden via User.maxStudents. The roster import
   // service enforces: teacher.maxStudents ?? org.perTeacherCap ?? 25.
   perTeacherCap       Int?
+  // Parent-facing free enrollment (the Redan model). publicEnrollmentEnabled is
+  // the master switch: off by default so no school is reachable until a
+  // super-admin turns it on. enrollmentToken is the unguessable value carried by
+  // the printed QR code — the slug is never the key, because a slug is guessable
+  // and this endpoint hands out free accounts. enrollmentCap bounds the damage if
+  // a token ever leaks; enrollmentsUsed is incremented inside the same
+  // transaction that creates the accounts, so the cap cannot be raced.
+  publicEnrollmentEnabled Boolean @default(false)
+  enrollmentToken         String? @unique
+  enrollmentCap           Int?
+  enrollmentsUsed         Int     @default(0)
   memberships Membership[]
   classrooms  Classroom[]
   createdAt   DateTime     @default(now())
@@ -881,4 +892,37 @@ model KSportsFact {
 
   @@unique([studentId, module, factKey])
   @@index([studentId])
+}
+
+// A signed parent opt-in, stored verbatim. The parent ticks three boxes and a
+// hold-harmless on a form a school district may later ask us to produce, so we
+// keep the exact wording shown (consentText) alongside the booleans — a version
+// string alone cannot prove what was on the screen. One row per student; the
+// unique key makes a double-submit idempotent rather than duplicating consent.
+model EnrollmentConsent {
+  id                   String   @id @default(uuid())
+  organizationId       String
+  parentId             String
+  studentId            String   @unique
+  parentName           String
+  parentEmail          String
+  parentPhone          String?
+  relationship         String
+  studentName          String
+  gradeLevel           String?
+  classPeriod          String?
+  studentIdExternal    String?
+  consentAccess        Boolean
+  consentProviderAndAi Boolean
+  consentDataUse       Boolean
+  consentHoldHarmless  Boolean
+  notifyEmail          Boolean  @default(false)
+  notifySms            Boolean  @default(false)
+  consentVersion       String
+  consentText          String
+  ipAddress            String?
+  userAgent            String?
+  signedAt             DateTime @default(now())
+
+  @@index([organizationId, signedAt])
 }

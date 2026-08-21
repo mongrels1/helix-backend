@@ -48,6 +48,7 @@ import { PrismaModule } from './prisma/prisma.module';
 
 import { ReportsModule } from './modules/reports/reports.module';
 import { RosterModule } from '@modules/roster/roster.module';
+import { InstitutionalEnrollmentModule } from './modules/institutional-enrollment/institutional-enrollment.module';
 import { KSportsModule } from '@modules/ksports/ksports.module';
 
 @Module({
@@ -117,6 +118,7 @@ import { KSportsModule } from '@modules/ksports/ksports.module';
     OrganizationsModule,
     ClassroomsModule,
     RosterModule,
+    InstitutionalEnrollmentModule,
     CoursesModule,
     OrchestrationModule,
   ],
