@@ -50,6 +50,15 @@ export class ParentExperienceService {
 
     return {
       children: links.map((link) => ({
+        // `id` and `profile` are what the parent UI actually reads. The flat
+        // studentId/firstName/lastName below are kept so nothing that already
+        // consumes this shape breaks — without `id` every child card fetched
+        // /child/undefined/grades and rendered the login address as the name.
+        id: link.student.id,
+        profile: {
+          firstName: link.student.profile?.firstName ?? null,
+          lastName: link.student.profile?.lastName ?? null,
+        },
         studentId: link.student.id,
         firstName: link.student.profile?.firstName ?? null,
         lastName: link.student.profile?.lastName ?? null,

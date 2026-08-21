@@ -195,7 +195,12 @@ export class InstitutionalEnrollmentService {
         expiresAt: new Date(Date.now() + SET_PASSWORD_TTL_DAYS * 86400_000),
       },
     });
-    const frontendUrl = this.config.get<string>('FRONTEND_URL') ?? 'https://app.edkairos.com';
+    // Same key every other link-builder in this codebase uses. The fallback is
+    // the real app, NOT localhost — a set-password link pointing at localhost is
+    // an account nobody can ever sign in to.
+    const frontendUrl = (
+      this.config.get<string>('app.frontendUrl') ?? 'https://app.edkairos.com'
+    ).replace(/\/$/, '');
     const studentSetPasswordUrl = `${frontendUrl}/reset-password?token=${token32}`;
 
     try {
