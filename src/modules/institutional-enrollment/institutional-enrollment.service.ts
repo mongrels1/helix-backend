@@ -97,8 +97,7 @@ export class InstitutionalEnrollmentService {
       // A null cap means unlimited. Otherwise the seat must still be free as of
       // THIS transaction — findOpenOrg checked it too, but that read happened
       // outside the lock and two parents can reach the last seat together.
-      const capped = fresh.enrollmentCap !== null;
-      if (capped && fresh.enrollmentsUsed >= fresh.enrollmentCap) {
+      if (fresh.enrollmentCap !== null && fresh.enrollmentsUsed >= fresh.enrollmentCap) {
         throw new ConflictException(
           'This school has reached its enrollment limit. Please contact your teacher.',
         );
