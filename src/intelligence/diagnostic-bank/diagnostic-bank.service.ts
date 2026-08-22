@@ -30,7 +30,7 @@ function provisionalDok(b: number): number {
 const DIAG_CLUSTER: Record<string, string> = {
   '4.NS': '4.NR.1', '4.G': '4.GSR.8', '4.MD': '4.MDR.6',
   '5.NS': '5.NR.1', '5.G': '5.GSR.8', '5.MD': '5.MDR.7',
-  '6.NS': '6.NR.1', '6.RP': '6.NR.4', '6.EE': '6.PAR.6', '6.G': '6.GSR.5', '6.SP': '6.DSR.7',
+  '6.NS': '6.NR.1', '6.RP': '6.NR.4', '6.EE': '6.PAR.6', '6.G': '6.GSR.5', '6.SP': '6.NR.2',
   '7.NS': '7.NR.1', '7.RP': '7.PAR.4', '7.EE': '7.PAR.3', '7.G': '7.GSR.5', '7.SP': '7.PR.6',
   '8.NS': '8.NR.1', '8.EE': '8.PAR.4', '8.F': '8.FGR.5', '8.G': '8.GSR.8', '8.SP': '8.FGR.6',
 };

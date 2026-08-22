@@ -1,21 +1,56 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { resolveToGa } from '../standards/ga-standards';
 
 /** Pull the grade number out of a standard or GA cluster code, e.g. "MGSE6.RP.2" -> 6, "6.NR.4" -> 6. */
 function gradeOf(s?: string | null): number | null {
   if (!s) return null;
+  const g = resolveToGa(String(s));
+  const n = g.expectation?.gradeNum ?? g.cluster?.gradeNum ?? null;
+  if (n !== null) return n;
   const m = String(s).match(/(\d+)/);
   return m ? Number(m[1]) : null;
 }
 
 /**
- * Resolve a generated item's diagnostic STRAND (NS/RP/EE/G/SP) from its MGSE
+ * Resolve a generated item's diagnostic STRAND (NS/RP/EE/G/SP) from its
  * standard. This is the join key between the diagnostic (which tags weaknesses
- * by strand) and generated items (which are tagged by MGSE standard). Grade 4-5
- * MGSE domains collapse into the same five strands the diagnostic uses.
+ * by strand) and generated items.
+ *
+ * WAS BROKEN: the regex matched ONLY legacy `MGSE<grade>.<DOMAIN>` codes, so any
+ * item carrying a current Georgia code ("6.NR.4.1") resolved to null. A null
+ * strand can never match a weak strand, so diagnostic-targeted practice quietly
+ * fell back to general practice — the targeting reported `basedOn: 'diagnostic'`
+ * nowhere and nobody noticed, because the tab was still full. Every item written
+ * by the GA-primary generator would have hit this.
+ *
+ * Georgia's six strands are folded onto the five strands the DiagnosticSession
+ * actually records. Ratio/proportion work is its own diagnostic strand but has
+ * no strand of its own in Georgia — it lives in 6.NR.4 and 7.PAR.4 — so those
+ * two competencies are routed to RP explicitly.
  */
 function strandOfStandard(std?: string | null): string | null {
-  const m = String(std ?? '').match(/MGSE\d+\.([A-Z]+)/i);
+  const raw = String(std ?? '').trim();
+  if (!raw) return null;
+
+  const r = resolveToGa(raw);
+  const gaStrand = r.expectation?.strand ?? r.cluster?.strand ?? null;
+  const gaCluster = r.cluster?.code ?? null;
+  if (gaStrand) {
+    if (gaCluster === '6.NR.4' || gaCluster === '7.PAR.4') return 'RP';
+    switch (gaStrand) {
+      case 'NR': return 'NS';
+      case 'PAR': return 'EE';
+      case 'FGR': return 'EE';
+      case 'GSR': return 'G';
+      case 'MDR': return 'SP';
+      case 'PR': return 'SP';
+      default: break;
+    }
+  }
+
+  // fall back to the legacy MGSE domain form for anything not yet migrated
+  const m = raw.match(/MGSE\d+\.([A-Z]+)/i);
   if (!m) return null;
   const d = m[1].toUpperCase();
   if (d === 'RP') return 'RP';

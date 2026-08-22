@@ -6,18 +6,36 @@
  * Design goals:
  *  - Every version stays faithful to the BASE question's own standard + grade
  *    (no drift to grade-6 ratios, no forced fraction/decimal/percent slate).
+ *  - GEORGIA IS THE TARGET FRAMEWORK. The prompt now carries the Georgia
+ *    standard's OWN WORDS, not just its code. Handing a model a bare code
+ *    ("MGSE6.RP.2") and telling it to stay aligned does not work: it has no
+ *    reliable knowledge of Georgia's codes, so it silently generates against
+ *    whatever Common Core content it associates with the topic. That is how
+ *    items ended up assessing a framework the student is not tested on.
+ *    See intelligence/standards/ga-standards.ts.
  *  - CRA: visual seeds (tables, graphs, coordinate planes, geometry, number
  *    lines) keep a matching figure — they are never flattened to words-only.
  */
 import type { BaseItem } from './types';
+import { gaStandardBlock, resolveToGa } from '../standards/ga-standards';
 
 export const SYSTEM_PROMPT = `You are the EdKairos Question-Generation Engine. Given ONE base middle-school math
 question (with its standard), produce the requested number of NEW versions that test the SAME
 standard at the SAME grade level as the base. Return VALID JSON only: an array of GeneratedItem objects.
 
+STANDARDS FRAMEWORK — read this before anything else. EdKairos targets GEORGIA'S K-12 MATHEMATICS
+STANDARDS (2021). The prompt gives you the Georgia competency and learning objective IN GEORGIA'S OWN
+WORDS. That text — not your prior knowledge of Common Core, and not the code on its own — defines what
+the item must assess, at what grade, with what number types. Georgia places several topics at a
+different grade than Common Core does, and words several of them more narrowly. Where they differ,
+GEORGIA WINS. Any Common Core code shown to you is a reference label only: never generate against it,
+and never emit one as the item's standard. The "standard" you tag MUST be the Georgia code you were
+given, copied exactly — never invent, abbreviate or "correct" a standard code.
+
 For each version:
-- Keep it mathematically valid, uniquely solvable, and aligned to the BASE question's standard and grade.
-  Do NOT drift to an easier grade or a different standard, and do NOT change the topic.
+- Keep it mathematically valid, uniquely solvable, and aligned to the Georgia standard text above, at
+  the grade that standard belongs to. Do NOT drift to an easier grade or a different standard, and do
+  NOT change the topic.
 - Vary CONTEXT and NUMBERS so no two versions share the same scenario or the same set of numbers. Use the
   number types and representations that are NATURAL for this standard — do NOT force fractions, decimals,
   or percents onto a standard that doesn't call for them.
@@ -97,15 +115,27 @@ export interface UserPromptParams {
 
 export function buildUserPrompt(p: UserPromptParams): string {
   const std = p.base.ga ?? p.base.standard ?? '';
+  const r = resolveToGa(std);
+  // The Georgia standard IN FULL. This block is the fix: without it the model
+  // sees a code it does not know and falls back on Common Core content.
+  const gaBlock = std ? gaStandardBlock(std) : '';
+  const gaCode = r.expectation?.code ?? r.cluster?.code ?? '';
   return [
-    `BASE QUESTION (standard ${std || 'infer it from the question'}):`,
+    gaBlock,
+    `BASE QUESTION (Georgia standard ${gaCode || 'not resolvable — infer grade and topic from the question'}):`,
     p.base.stem,
     p.base.options?.length
       ? `Seed distractor rationales: ${p.base.options.filter((o) => !o.correct).map((o) => o.misconception).join(' | ')}`
       : '',
     '',
-    `Generate ${p.versions} NEW versions that test the SAME standard and grade as the base — same topic and grade level, only new context and numbers.`,
-    !std ? `The base has no printed standard: infer its standard and grade from the question itself and stay faithful to it.` : '',
+    `Generate ${p.versions} NEW versions that test the SAME Georgia standard and grade as the base — same topic and grade level, only new context and numbers.`,
+    gaCode
+      ? `Tag every version with "standard": "${gaCode}" and "ga": "${gaCode}" — exactly that string. An item tagged with any other code, or with a Common Core code, is rejected.`
+      : '',
+    !std ? `The base has no printed standard: infer its grade and topic from the question itself and stay faithful to it. Do NOT guess a standard code.` : '',
+    std && r.unresolved
+      ? `NOTE: "${std}" is not a Georgia 2021 standard. Stay faithful to the base question's own mathematics and grade; do not substitute a different topic.`
+      : '',
     p.base.visual
       ? `This base is a VISUAL item: EVERY version MUST include a matching "figure" (table, graph, coordinate plane, number line, or geometric figure). Do NOT turn it into a words-only problem.`
       : '',

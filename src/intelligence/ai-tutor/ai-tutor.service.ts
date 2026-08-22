@@ -16,6 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { ConversationMessage } from '../ai-router/ai-router.types';
 import { figureIsSane } from '../item-generation/reliability-gate';
+import { resolveToGa, expectationsForGrade } from '../standards/ga-standards';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AITutorRepository,
@@ -209,15 +210,27 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       : '';
   }
 
+  /**
+   * When the session is launched from a diagnostic gap or a quest, `focus` may
+   * itself be a standard code ("6.NR.4.1") or carry one. If it resolves to a
+   * Georgia standard, the opener is taught against Georgia's own wording rather
+   * than against the model's default reading of the topic name.
+   *
+   * TODO: to hold the target for the WHOLE session rather than just the opener,
+   * `TutorSession` needs a `gaStandard` column; `getTutorReply` would then pass
+   * it to `buildSystemPrompt` the same way. Until then the grade-scope half of
+   * the directive carries every subsequent turn.
+   */
   private async generateOpener(
     focus: string,
     gradeLevel?: number,
   ): Promise<string> {
     const fallback = `Let's learn ${focus} together! I will show you one step at a time. Here is an easy example. Then you try one.`;
+    const gaStandard = resolveToGa(focus).unresolved ? undefined : focus;
     try {
       const ai = await this.aiRouterService.chat({
         prompt: `Begin tutoring the skill "${focus}" right now. Teach the core idea in ONE simple sentence, then show ONE quick worked example with real numbers, then give the student one easy "you try" problem on this skill. Lead it - do NOT ask what they already know.`,
-        systemPrompt: this.buildSystemPrompt(gradeLevel),
+        systemPrompt: this.buildSystemPrompt(gradeLevel, '', gaStandard),
         maxTokens: 400,
         temperature: 0.6,
         timeoutMs: this.TUTOR_TIMEOUT_MS,
@@ -328,11 +341,66 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     ].join('\n');
   }
 
-  /** Full system prompt = grade-aware reading-level directive + the core
-   * teaching/figure prompt + any per-session context note. */
-  private buildSystemPrompt(gradeLevel?: number, contextNote = ''): string {
+  /**
+   * Georgia standards directive.
+   *
+   * The tutor system prompt contained NO standards reference of any kind — not
+   * Georgia, not Common Core, not a grade-level scope. So the tutor taught
+   * generic middle-grades mathematics and, where the frameworks disagree about
+   * which grade owns a topic, it followed whatever it had seen most of, which is
+   * Common Core. Meanwhile the product is sold on being aligned to what Georgia
+   * actually tests. This closes that gap.
+   *
+   * It does NOT turn the tutor into a standards reciter — a child should never
+   * see a code. It constrains SCOPE: the grade Georgia places the topic at, the
+   * number types Georgia's wording calls for, and Georgia's vocabulary.
+   */
+  private gaStandardsDirective(gradeLevel?: number, gaStandard?: string): string {
+    const lines: string[] = [
+      'GEORGIA STANDARDS (scope rule — never spoken aloud to the student).',
+      "This student is taught and tested on Georgia's K-12 Mathematics Standards (2021), not Common Core.",
+      'Where the two disagree about which grade owns a topic, or about how far a topic goes, follow Georgia.',
+      'Never say a standard code, a strand name, or the word "standard" to the student. This shapes WHAT you teach, not how you talk.',
+    ];
+
+    if (gaStandard) {
+      const r = resolveToGa(gaStandard);
+      if (r.cluster) {
+        lines.push(
+          `Today's target — teach exactly this and nothing beyond it:`,
+          `  ${r.cluster.code} (Grade ${r.cluster.grade}, ${r.cluster.strandName}): ${r.cluster.text}`,
+        );
+        if (r.expectation) {
+          lines.push(`  ${r.expectation.code}: ${r.expectation.text}`);
+        }
+      }
+    }
+
+    if (typeof gradeLevel === 'number' && Number.isFinite(gradeLevel)) {
+      const scope = expectationsForGrade(gradeLevel);
+      if (scope.length) {
+        const clusters = [...new Set(scope.map((e) => e.cluster))];
+        lines.push(
+          `The student's grade in Georgia covers these competencies: ${clusters.join(', ')}.`,
+          'If the student asks about something above this grade, teach it — never refuse a curious child —',
+          'but say plainly that it comes later, and make sure the prerequisite underneath it is solid first.',
+        );
+      }
+    }
+    return lines.join('\n');
+  }
+
+  /** Full system prompt = grade-aware reading-level directive + the Georgia
+   * standards scope rule + the core teaching/figure prompt + any per-session
+   * context note. */
+  private buildSystemPrompt(
+    gradeLevel?: number,
+    contextNote = '',
+    gaStandard?: string,
+  ): string {
     return [
       this.readingLevelDirective(gradeLevel),
+      this.gaStandardsDirective(gradeLevel, gaStandard),
       this.SOCRATIC_SYSTEM_PROMPT,
       contextNote,
     ]

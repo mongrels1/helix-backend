@@ -4,7 +4,23 @@
  * EdKairos targets Georgia's CURRENT K-12 Mathematics Standards (Aug 2021).
  *   MGSE code -> GA expectation(s) -> GA cluster -> best figure type
  * The 6.NR.4 mapping is verified against Georgia-K-8-Mathematics-Standards.pdf.
+ *
+ * ── STATUS ────────────────────────────────────────────────────────────────
+ * The standards half of this file is now SUPERSEDED by
+ * `intelligence/standards/ga-standards.ts`, which holds all 67 Georgia
+ * competencies and all 265 learning objectives with their verbatim text,
+ * extracted from the GaDOE document. New code should call `resolveToGa()`.
+ * What stays useful here is FIGURE ROUTING — which representation suits which
+ * cluster — which the registry deliberately does not know about.
+ *
+ * FIXED: `MGSE6.SP` mapped to `6.DSR.7`. There is no 6.DSR.7 in Georgia's
+ * standards — grade-6 statistics live in `6.NR.2`. Any item generated through
+ * that scaffold cited a standard that does not exist, which is exactly the kind
+ * of claim a district reviewer checks. `resolveStandard()` below now defers to
+ * the registry so a fabricated code cannot come back out of it again.
  */
+
+import { resolveToGa as registryResolve } from '../standards/ga-standards';
 
 export type FigureType =
   | 'number_line' | 'fraction_bar' | 'rect' | 'bar_graph' | 'spinner'
@@ -49,6 +65,8 @@ export const CROSSWALK: CrosswalkEntry[] = [
 export const GA_CLUSTER_FIGURE: Record<string, FigureType> = {
   '4.GSR.7': 'angle', '4.GSR.8': 'geometry2d', '5.GSR.8': 'geometry2d',
   '6.GSR.5': 'geometry2d', '7.GSR.5': 'geometry2d', '8.GSR.8': 'geometry2d',
+  '6.NR.2': 'dot_plot', '8.FGR.6': 'coordinate_grid', '7.PR.6': 'spinner',
+  '6.NR.4': 'ratio_table', '7.PAR.4': 'ratio_table', '8.FGR.5': 'function_table',
 };
 
 export interface DomainScaffold { mgsePrefix: string; gaCluster: string; defaultFigure: FigureType; }
@@ -57,7 +75,9 @@ export const DOMAIN_SCAFFOLD: DomainScaffold[] = [
   { mgsePrefix: 'MGSE6.NS', gaCluster: '6.NR.1', defaultFigure: 'number_line' },
   { mgsePrefix: 'MGSE6.EE', gaCluster: '6.PAR.6', defaultFigure: 'rect' },
   { mgsePrefix: 'MGSE6.G',  gaCluster: '6.GSR.5', defaultFigure: 'geometry2d' },
-  { mgsePrefix: 'MGSE6.SP', gaCluster: '6.DSR.7', defaultFigure: 'dot_plot' },
+  // was '6.DSR.7' — a code that does not exist in Georgia's standards.
+  // Grade-6 statistics is filed under Numerical Reasoning: 6.NR.2.
+  { mgsePrefix: 'MGSE6.SP', gaCluster: '6.NR.2', defaultFigure: 'dot_plot' },
   { mgsePrefix: 'MGSE4.OA', gaCluster: '4.PAR.3', defaultFigure: 'function_table' },
   { mgsePrefix: 'MGSE4.NBT', gaCluster: '4.NR.1', defaultFigure: 'place_value_chart' },
   { mgsePrefix: 'MGSE4.NF', gaCluster: '4.NR.4', defaultFigure: 'fraction_bar' },
@@ -85,7 +105,34 @@ const byGa = new Map(CROSSWALK.map((e) => [norm(e.ga), e]));
 
 export interface Resolved { input: string; ga: string; gaCluster: string; figure: FigureType; exact: boolean; }
 
+/**
+ * @deprecated for STANDARDS resolution — call `resolveToGa()` from
+ * `intelligence/standards/ga-standards.ts`, which is built from the GaDOE
+ * document and cannot return a code Georgia does not have. Kept because the
+ * FIGURE half of the answer still lives here. This wrapper asks the registry
+ * first and only falls back to the local tables for the figure.
+ */
 export function resolveStandard(code: string): Resolved {
+  const reg = registryResolve(code);
+  if (!reg.unresolved && reg.cluster) {
+    const gaCode = reg.expectation?.code ?? reg.cluster.code;
+    const cluster = reg.cluster.code;
+    const row = byGa.get(norm(gaCode)) ?? CROSSWALK.find((e) => e.gaCluster === cluster);
+    const figure = row ? row.figure.primary : (GA_CLUSTER_FIGURE[cluster] ?? figureFromScaffold(code));
+    return { input: code, ga: gaCode, gaCluster: cluster, figure, exact: !!reg.expectation };
+  }
+  return legacyResolveStandard(code);
+}
+
+/** figure hint from the legacy MGSE domain scaffold, when the registry has none */
+function figureFromScaffold(code: string): FigureType {
+  const c = norm(code);
+  const s = DOMAIN_SCAFFOLD.filter((x) => c.startsWith(norm(x.mgsePrefix)))
+    .sort((a, b) => b.mgsePrefix.length - a.mgsePrefix.length)[0];
+  return s ? s.defaultFigure : null;
+}
+
+function legacyResolveStandard(code: string): Resolved {
   const c = norm(code);
   if (!c.startsWith('MGSE')) {
     const m = c.match(/^(\d+\.[A-Z]+\.\d+)/);
