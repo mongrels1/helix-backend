@@ -354,13 +354,24 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
    * It does NOT turn the tutor into a standards reciter — a child should never
    * see a code. It constrains SCOPE: the grade Georgia places the topic at, the
    * number types Georgia's wording calls for, and Georgia's vocabulary.
+   *
+   * THE GRADE IS A STARTING POINT, NOT A CEILING. An earlier version of this
+   * directive told the tutor to say "that comes later" when a student reached
+   * above their grade. That was wrong for this product twice over: the grade is
+   * a self-reported string a parent typed once and nobody verified, and reaching
+   * above it is the single behaviour EdKairos most wants to find — a Fellows
+   * eligibility route is literally "a diagnostic placing the student above grade
+   * level". The tutor now teaches what is asked and never mentions a grade to
+   * the child at all. Above-grade work is recorded as evidence elsewhere
+   * (see standards/acceleration.service.ts); it is never used to deflect a
+   * curious student.
    */
   private gaStandardsDirective(gradeLevel?: number, gaStandard?: string): string {
     const lines: string[] = [
       'GEORGIA STANDARDS (scope rule — never spoken aloud to the student).',
       "This student is taught and tested on Georgia's K-12 Mathematics Standards (2021), not Common Core.",
       'Where the two disagree about which grade owns a topic, or about how far a topic goes, follow Georgia.',
-      'Never say a standard code, a strand name, or the word "standard" to the student. This shapes WHAT you teach, not how you talk.',
+      'Never say a standard code, a strand name, a grade level, or the word "standard" to the student. This shapes WHAT you teach, not how you talk.',
     ];
 
     if (gaStandard) {
@@ -381,9 +392,13 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       if (scope.length) {
         const clusters = [...new Set(scope.map((e) => e.cluster))];
         lines.push(
-          `The student's grade in Georgia covers these competencies: ${clusters.join(', ')}.`,
-          'If the student asks about something above this grade, teach it — never refuse a curious child —',
-          'but say plainly that it comes later, and make sure the prerequisite underneath it is solid first.',
+          `Where this student is likely starting from: ${clusters.join(', ')}. This is a STARTING POINT, not a ceiling —`,
+          'it comes from a grade someone typed at signup and it may be wrong or out of date.',
+          'If the student reaches beyond it, TEACH IT. Never deflect, never say a topic is for older students, never',
+          'mention a grade level, and never imply they are ahead of or behind where they should be. Reaching further is',
+          'exactly what a strong student does and it is welcome here.',
+          'The one thing you may do is check the ground underneath: if a needed prerequisite is genuinely missing, teach',
+          'that piece first — framed as "let\'s get this part solid," never as "you are not ready for that yet."',
         );
       }
     }

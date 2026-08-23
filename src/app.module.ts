@@ -21,6 +21,7 @@ import { PacingEngineModule } from './intelligence/pacing-engine/pacing-engine.m
 import { ItemGenerationModule } from './intelligence/item-generation/item-generation.module';
 import { DiagnosticBankModule } from './intelligence/diagnostic-bank/diagnostic-bank.module';
 import { PracticeModule } from './intelligence/practice/practice.module';
+import { StandardsModule } from './intelligence/standards/standards.module';
 import { TtsModule } from './intelligence/tts/tts.module';
 import { LessonPlanModule } from './intelligence/lesson-plan/lesson-plan.module';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
@@ -97,6 +98,7 @@ import { KSportsModule } from '@modules/ksports/ksports.module';
     ItemGenerationModule,
     DiagnosticBankModule,
     PracticeModule,
+    StandardsModule,
     TtsModule,
     LessonPlanModule,
     EventsModule,
