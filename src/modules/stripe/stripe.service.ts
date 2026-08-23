@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type Stripe from 'stripe';
+import { isOwnerAccount } from '../../common/billing/billing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '@modules/email/email.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -206,11 +207,21 @@ export class StripeService {
   ): Promise<boolean> {
     const user = await this.prisma.user.findFirst({
       where: { email: { equals: email.trim(), mode: 'insensitive' }, deletedAt: null },
-      select: { id: true },
+      select: { id: true, role: true },
     });
     if (!user) {
       this.logger.warn(`Stripe webhook: no active account for ${email} (-> ${planStatus})`);
       return false;
+    }
+    // The owner account is not billed. If the owner's email ever lands on a
+    // subscription (a test purchase, a personal card, a legacy customer record)
+    // a single past_due webhook would otherwise mark the platform's own account
+    // delinquent - and lock it out of anything that later enforces on it.
+    if (isOwnerAccount(user.role)) {
+      this.logger.warn(
+        `Stripe webhook: ignoring planStatus=${planStatus} for owner account ${email} (ownership is not billed)`,
+      );
+      return true;
     }
     await this.prisma.user.update({
       where: { id: user.id },

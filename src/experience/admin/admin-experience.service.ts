@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import Redis from 'ioredis';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isBillingExempt, isOwnerAccount } from '../../common/billing/billing';
 
 @Injectable()
 export class AdminExperienceService {
@@ -135,8 +136,12 @@ export class AdminExperienceService {
           suspendedAt: user.suspendedAt,
           plan: user.plan,
           planStatus: user.planStatus,
+          // Staff and the owner are not billed, so any planStatus on those rows
+          // is stale noise - the client renders "not billed" instead of a
+          // billing state, and no billing rule may act on it.
+          billingExempt: isBillingExempt(user.role),
           status: user.suspendedAt ? 'paused' : 'active',
-          canDelete: !isPaid && !hasActivity,
+          canDelete: !isPaid && !hasActivity && !isOwnerAccount(user.role),
         };
       }),
       meta: { page: normalizedPage, limit: normalizedLimit, total },

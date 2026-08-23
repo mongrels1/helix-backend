@@ -6,8 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { EntitlementService } from '@modules/entitlement/entitlement.service';
-
-const STAFF_ROLES = new Set(['TEACHER', 'ORG_ADMIN', 'SUPER_ADMIN']);
+import { isBillingExempt } from '../billing/billing';
 
 /**
  * Hard-enforces a paid subscription at the API. Apply to student-facing paid
@@ -24,7 +23,9 @@ export class EntitlementGuard implements CanActivate {
     const user = req.user as { userId?: string; id?: string; role?: string } | undefined;
     const userId = user?.userId ?? user?.id;
     if (!userId) throw new UnauthorizedException();
-    if (user?.role && STAFF_ROLES.has(user.role)) return true;
+    // Staff and the owner are never billed - common/billing/billing.ts is the
+    // single source for that rule.
+    if (isBillingExempt(user?.role)) return true;
 
     const ok = await this.entitlement.isEntitled(userId);
     if (!ok) {

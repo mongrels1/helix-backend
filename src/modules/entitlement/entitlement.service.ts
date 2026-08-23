@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isBillingExempt } from '../../common/billing/billing';
 
 /**
  * Decides whether a user may access the PAID learning features (AI Tutor,
@@ -25,6 +26,10 @@ export class EntitlementService {
       select: { role: true, planStatus: true, planRenewsAt: true },
     });
     if (!user) return false;
+    // Staff and the owner do not pay, so they are entitled regardless of what
+    // planStatus happens to say. Without this a stray Stripe webhook against
+    // the owner's email would revoke the owner's own access.
+    if (isBillingExempt(user.role)) return true;
     if (this.isActive(user.planStatus, user.planRenewsAt)) return true;
 
     if (user.role === 'STUDENT') {

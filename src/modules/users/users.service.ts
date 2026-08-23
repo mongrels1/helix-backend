@@ -8,6 +8,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserEntity } from './entities/user.entity';
 import { UsersRepository } from './users.repository';
+import { isOwnerAccount } from '../../common/billing/billing';
 
 const SALT_ROUNDS = 12;
 
@@ -71,6 +72,11 @@ export class UsersService {
 
   async remove(id: string): Promise<void> {
     const user = await this.findById(id);
+    // The owner account is never billed, so the "no active plan" branch below
+    // would happily hard-delete it. Ownership is not a subscription state.
+    if (isOwnerAccount(user.role)) {
+      throw new BadRequestException('The owner account cannot be deleted.');
+    }
     const activity = await this.usersRepository.countActivity(id);
     const isPaid = (user.planStatus ?? '').toLowerCase() === 'active';
     const hasActivity =
