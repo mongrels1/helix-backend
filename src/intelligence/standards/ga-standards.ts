@@ -283,6 +283,63 @@ export function gaStandardBlock(code: string, opts: GaPromptOptions = {}): strin
   return lines.join('\n');
 }
 
+/* ==========================================================================
+ * The display rule
+ * ======================================================================== */
+
+export interface DisplayStandard {
+  code: string;
+  text: string;
+  converted: boolean;
+}
+
+/**
+ * What a school is allowed to see.
+ *
+ * A Georgia school does not audit the database — it looks at one screen or one
+ * document and sees a code. If that code is `MGSE8.EE.7` or `6.RP.A.2`, the
+ * conversation ends: "that's not our standards." One wrong code in front of one
+ * reviewer costs more than a thousand mis-tagged rows nobody opens.
+ *
+ *     Render a VERIFIED Georgia code, or render no code at all.
+ *
+ * A missing code is invisible; a foreign code is fatal. So this is deliberately
+ * STRICTER than `resolveToGa()`. It will not use:
+ *   - the legacy domain scaffold — measured 58% accurate overall, 17% for
+ *     MGSE8.EE, which spans six different Georgia clusters
+ *   - the CCSS crosswalk — 265 rows, none human-reviewed, and its reverse
+ *     direction picks the first of several matches
+ * Both are fine for ROUTING work internally. Neither is fit to make a claim to
+ * a district on. Guessing is precisely what produces the wrong code.
+ *
+ * Returns null when no verified Georgia code exists. Callers must then render
+ * the topic or description alone — never the raw stored value.
+ */
+export function displayGaCode(raw?: string | null): DisplayStandard | null {
+  const c = norm(String(raw ?? ''));
+  if (!c) return null;
+
+  const exp = byExpectation.get(c);
+  if (exp) return { code: exp.code, text: exp.text, converted: false };
+
+  const clu = byCluster.get(c);
+  if (clu) return { code: clu.code, text: clu.text, converted: false };
+
+  // The seven MGSE ratio codes that were hand-verified against the GaDOE PDF.
+  // Deliberately the only legacy conversion permitted on a display path.
+  const legacy = MGSE_EXACT[c];
+  if (legacy) {
+    const e = byExpectation.get(norm(legacy));
+    if (e) return { code: e.code, text: e.text, converted: true };
+  }
+  return null;
+}
+
+/** Convenience for a payload: the code alone, or null. */
+export function safeStandard(raw?: string | null): string | null {
+  return displayGaCode(raw)?.code ?? null;
+}
+
 /** One-line human label, e.g. "6.NR.4.1 - Explain the concept of a ratio..." */
 export function gaLabel(code: string, maxLen = 120): string {
   const r = resolveToGa(code);

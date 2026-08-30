@@ -18,6 +18,7 @@ describe('StripeService entitlement writes', () => {
   let prisma: {
     user: { findFirst: jest.Mock; update: jest.Mock };
   };
+  let email: { sendTrialEndingEmail: jest.Mock; sendAdminAlert: jest.Mock };
 
   const subscription = (over: Record<string, unknown> = {}) =>
     ({
@@ -36,11 +37,12 @@ describe('StripeService entitlement writes', () => {
     prisma = {
       user: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) },
     };
+    email = { sendTrialEndingEmail: jest.fn(), sendAdminAlert: jest.fn().mockResolvedValue(undefined) };
     const module = await Test.createTestingModule({
       providers: [
         StripeService,
         { provide: PrismaService, useValue: prisma },
-        { provide: EmailService, useValue: { sendTrialEndingEmail: jest.fn() } },
+        { provide: EmailService, useValue: email },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('') } },
       ],
     }).compile();
@@ -129,5 +131,48 @@ describe('StripeService entitlement writes', () => {
     // Surfaced in the result and logged at error level: an unresolved webhook
     // means somebody is paying and not entitled.
     expect(res.action).toContain('no_user');
+  });
+
+  it('emails a human when a payment cannot be matched', async () => {
+    prisma.user.findFirst.mockResolvedValue(null);
+
+    await service.handleEvent(event(subscription()));
+
+    // A log line only works if somebody is reading the log. This is the one
+    // billing failure the customer cannot see, so it pages every time.
+    expect(email.sendAdminAlert).toHaveBeenCalledTimes(1);
+    const [subject, body] = email.sendAdminAlert.mock.calls[0];
+    expect(subject).toContain('PAID BUT NOT ENTITLED');
+    expect(body).toContain('sub_1');
+    expect(body).toContain('cus_123');
+  });
+
+  it("does not re-alert on Stripe's retries of the same subscription", async () => {
+    prisma.user.findFirst.mockResolvedValue(null);
+
+    await service.handleEvent(event(subscription()));
+    await service.handleEvent(event(subscription()));
+    await service.handleEvent(event(subscription()));
+
+    expect(email.sendAdminAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it('still alerts for a DIFFERENT unmatched subscription', async () => {
+    prisma.user.findFirst.mockResolvedValue(null);
+
+    await service.handleEvent(event(subscription()));
+    await service.handleEvent(event(subscription({ id: 'sub_2' })));
+
+    // Each unmatched subscription is a different person who has paid, so a
+    // blanket cooldown would have swallowed this one.
+    expect(email.sendAdminAlert).toHaveBeenCalledTimes(2);
+  });
+
+  it('never lets a failing mail provider break the webhook', async () => {
+    prisma.user.findFirst.mockResolvedValue(null);
+    email.sendAdminAlert.mockRejectedValue(new Error('resend is down'));
+
+    // A webhook that 500s makes Stripe retry, which makes this worse.
+    await expect(service.handleEvent(event(subscription()))).resolves.toBeDefined();
   });
 });

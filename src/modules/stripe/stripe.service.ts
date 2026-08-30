@@ -14,6 +14,14 @@ export class StripeService {
   private readonly couponId: string;
   private readonly webhookSecret: string;
   private readonly upgradeUrl: string;
+  /**
+   * Subscription ids already alerted on, so Stripe's own retries of the same
+   * event do not send the same email repeatedly. Deliberately NOT a time-based
+   * cooldown like the AI-router alert: every unmatched subscription is a
+   * different person who has paid and cannot use what they bought, and a
+   * cooldown would swallow the second one.
+   */
+  private readonly alertedUnmatched = new Set<string>();
 
   constructor(
     private readonly config: ConfigService,
@@ -279,11 +287,12 @@ export class StripeService {
       // Loud on purpose. A webhook that resolves to nobody used to return 200
       // and vanish; that silence is how a paying family stays locked out for
       // weeks. Anything that reads these logs should alert on this line.
-      this.logger.error(
+      const detail =
         `Stripe webhook UNMATCHED: sub ${subscriptionId} -> ${planStatus}; ` +
-          `no active account for email=${email ?? 'none'} customer=${customerId ?? 'none'} ` +
-          `metaUserId=${metaUserId ?? 'none'}. THE BUYER IS PAYING AND NOT ENTITLED.`,
-      );
+        `no active account for email=${email ?? 'none'} customer=${customerId ?? 'none'} ` +
+        `metaUserId=${metaUserId ?? 'none'}. THE BUYER IS PAYING AND NOT ENTITLED.`;
+      this.logger.error(detail);
+      await this.alertUnmatched(subscriptionId, detail, email, customerId);
       return false;
     }
 
@@ -329,5 +338,59 @@ export class StripeService {
       `Stripe webhook: ${user.id} -> planStatus=${planStatus} (matched by ${matchedBy})`,
     );
     return true;
+  }
+
+  /**
+   * Page a human when a payment cannot be attached to an account.
+   *
+   * A log line only works if somebody is reading the log, and nobody reads a
+   * log at 2am. This is the one failure in the billing path where the customer
+   * has already been charged and has no way to tell that anything is wrong -
+   * they simply find the product still locked and email us, or charge back. It
+   * is worth an email every single time.
+   *
+   * Never allowed to throw: a webhook that 500s because the mail provider is
+   * down would make Stripe retry, which makes the problem worse rather than
+   * better.
+   */
+  private async alertUnmatched(
+    subscriptionId: string,
+    detail: string,
+    email: string | null,
+    customerId: string | null,
+  ): Promise<void> {
+    if (this.alertedUnmatched.has(subscriptionId)) return;
+    this.alertedUnmatched.add(subscriptionId);
+    // Bound the set so a long-lived process cannot grow it without limit.
+    if (this.alertedUnmatched.size > 500) {
+      this.alertedUnmatched.delete(this.alertedUnmatched.values().next().value as string);
+    }
+
+    const body = [
+      detail,
+      '',
+      'A Stripe subscription event could not be matched to any active EdKairos',
+      'account. The customer has been charged and their access has NOT been',
+      'granted. They will not see an error - the product simply stays locked.',
+      '',
+      'To fix one of these by hand:',
+      `  1. Open the subscription in Stripe: ${subscriptionId}`,
+      `  2. Find the app account the family actually uses${email ? ` (they paid as ${email})` : ''}.`,
+      `  3. Set that user's stripeCustomerId to ${customerId ?? 'the customer id on the subscription'},`,
+      '     then re-send the subscription event from Stripe. It will match on the id',
+      '     and never need the email again.',
+      '',
+      'If these arrive often, the checkout is not carrying uid - check that the',
+      'GHL order form passes it through to Stripe metadata.',
+    ].join('\n');
+
+    try {
+      await this.email.sendAdminAlert(
+        '[EdKairos] PAID BUT NOT ENTITLED - a payment could not be matched to an account',
+        body,
+      );
+    } catch (err) {
+      this.logger.error(`Failed to send unmatched-payment alert: ${String(err)}`);
+    }
   }
 }
