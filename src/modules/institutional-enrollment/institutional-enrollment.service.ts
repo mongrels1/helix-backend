@@ -25,6 +25,11 @@ const SET_PASSWORD_TTL_DAYS = 30;
  *
  * That is the whole guarantee behind "no charge, no trial that turns into a
  * charge, no credit card and no subscription" on a form a parent signs.
+ *
+ * Both rows are stamped planSource INSTITUTIONAL. The Stripe webhook refuses to
+ * write to anything that is not STRIPE, so the guarantee is now enforced by the
+ * billing path rather than by the assumption that Stripe will never see the
+ * address.
  */
 @Injectable()
 export class InstitutionalEnrollmentService {
@@ -113,6 +118,11 @@ export class InstitutionalEnrollmentService {
           plan,
           planStatus: 'active',
           planRenewsAt: null,
+          // Provenance, so the Stripe webhook can refuse to touch this row. The
+          // comment above used to argue Stripe "never knows these" emails - true
+          // until a Redan parent buys anything personally, after which one
+          // past_due would revoke a free family's access with no trace.
+          planSource: 'INSTITUTIONAL',
           profile: {
             create: {
               firstName: dto.parentName.trim().split(/\s+/)[0] ?? dto.parentName.trim(),
@@ -132,6 +142,10 @@ export class InstitutionalEnrollmentService {
           email: studentEmail,
           passwordHash: studentTempHash,
           role: Role.STUDENT,
+          // The child is entitled through the parent link, not their own plan,
+          // but the row still needs provenance so Stripe cannot write to it and
+          // so the child is never shown a counter or a price.
+          planSource: 'INSTITUTIONAL',
           profile: {
             create: {
               firstName: dto.studentFirstName.trim(),

@@ -2,7 +2,9 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@ne
 import { Role, TutorMessage, TutorSession } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
-import { EntitlementGuard } from '@common/guards/entitlement.guard';
+import { MeteredGuard } from '@common/guards/metered.guard';
+import { Meter } from '@common/decorators/meter.decorator';
+import { UsageService } from '@modules/usage/usage.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { StartSessionDto } from './dto/start-session.dto';
 import { TutorSessionWithMessages } from './ai-tutor.repository';
@@ -14,9 +16,12 @@ interface AuthenticatedUser {
 }
 
 @Controller('api/v1/tutor')
-@UseGuards(EntitlementGuard)
+@UseGuards(MeteredGuard)
 export class AITutorController {
-  constructor(private readonly aiTutorService: AITutorService) {}
+  constructor(
+    private readonly aiTutorService: AITutorService,
+    private readonly usageMeter: UsageService,
+  ) {}
 
   @Post('sessions')
   @Roles(Role.STUDENT)
@@ -65,8 +70,14 @@ export class AITutorController {
     return { success: true, data };
   }
 
+  /**
+   * One tutor question. This is the metered action: the reply is produced
+   * first and only then charged, so a failed call never costs a student one of
+   * their three.
+   */
   @Post('sessions/:id/messages')
   @Roles(Role.STUDENT)
+  @Meter('TUTOR')
   async sendMessage(
     @Param('id') id: string,
     @Body() dto: SendMessageDto,
@@ -77,6 +88,7 @@ export class AITutorController {
       dto.content,
       user.userId,
     );
+    await this.usageMeter.consume(user.userId, 'TUTOR');
     return { success: true, data };
   }
 

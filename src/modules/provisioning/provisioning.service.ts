@@ -116,6 +116,8 @@ export class ProvisioningService {
           plan: product ?? DEFAULT_PLAN_LABEL,
           planStatus: 'active',
           planRenewsAt: renewsAt,
+          // This account's access was bought, so Stripe owns its plan status.
+          planSource: 'STRIPE',
           // Seat limit tracks the resolved plan (null = single-student default).
           maxStudents: config.maxStudents,
         },

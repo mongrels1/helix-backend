@@ -33,3 +33,46 @@ export function isBillingExempt(role: string | null | undefined): boolean {
 export function isOwnerAccount(role: string | null | undefined): boolean {
   return role === Role.SUPER_ADMIN;
 }
+
+/**
+ * Whether the Stripe webhook is allowed to write a plan status onto this row.
+ *
+ * `applyEntitlement` matches a Stripe customer to an app user, and until this
+ * guard existed that match was by email alone. An institutional or comped
+ * family has no Stripe object at all, but they do have an email address — and a
+ * Redan parent who ever bought anything personally has an address Stripe knows.
+ * One `past_due` on that unrelated subscription would silently revoke a free
+ * family's access, with nothing in any dashboard to show why.
+ *
+ * NULL means "unknown / legacy" and stays writable, so every row that exists
+ * today behaves exactly as it does today. Only rows we have positively
+ * identified as not-Stripe are protected.
+ */
+export function isStripeWritable(planSource: string | null | undefined): boolean {
+  return planSource === null || planSource === undefined || planSource === 'STRIPE';
+}
+
+/** True when the account's access is granted by an institution, not a purchase. */
+export function isInstitutional(planSource: string | null | undefined): boolean {
+  return planSource === 'INSTITUTIONAL';
+}
+
+/**
+ * Whether this account should ever be shown a price, a usage counter or an
+ * upgrade prompt.
+ *
+ * Three populations must never see one: staff and the owner (not billed),
+ * institutional and comped families (someone else is paying, and the Redan
+ * consent form promises "no charge, no trial that turns into a charge, no
+ * credit card and no subscription"), and anyone already subscribed.
+ *
+ * Everyone else — self-serve STUDENT and PARENT — is the audience for it.
+ */
+export function showsBillingSurface(
+  role: string | null | undefined,
+  planSource: string | null | undefined,
+): boolean {
+  if (isBillingExempt(role)) return false;
+  if (planSource === 'INSTITUTIONAL' || planSource === 'COMP') return false;
+  return true;
+}

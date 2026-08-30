@@ -15,6 +15,17 @@ enum Role {
   PARENT
 }
 
+/// Where an account's plan came from. The Stripe webhook may only write to
+/// STRIPE rows: an institutional or comped family has no Stripe object, so a
+/// past_due event that happens to match their email must not revoke access.
+/// Same shape as the owner protection in common/billing/billing.ts, generalized.
+enum PlanSource {
+  STRIPE
+  INSTITUTIONAL
+  COMP
+}
+
+
 enum ContentBlockType {
   VIDEO
   DOCUMENT
@@ -91,6 +102,8 @@ model User {
   plan         String?
   planStatus   String?
   planRenewsAt DateTime?
+  planSource       PlanSource? 
+  stripeCustomerId String?     @unique
   maxStudents  Int?
   profile      Profile?
   memberships  Membership[]
@@ -124,6 +137,7 @@ model User {
   studySchedules StudySchedule[] @relation("StudentStudySchedules")
   loginEvents   LoginEvent[]  @relation("UserLoginEvents")
   studyReminders StudyReminder[] @relation("StudentReminders")
+  dailyUsage    DailyUsage[]  @relation("UserDailyUsage")
 }
 
 model ParentStudentLink {
@@ -925,4 +939,25 @@ model EnrollmentConsent {
   signedAt             DateTime @default(now())
 
   @@index([organizationId, signedAt])
+}
+
+/// One row per user per day per metered feature. The free tier is a daily
+/// allowance, not a trial: it renews every midnight, so there is no expiry to
+/// manage and every day is a fresh chance to convert.
+///
+/// `day` is a 'YYYY-MM-DD' string in the app's business timezone (see
+/// common/usage/usage.constants.ts) rather than a timestamp, so the reset
+/// boundary is decided in one place and the unique index does the rest.
+model DailyUsage {
+  id        String   @id @default(uuid())
+  userId    String
+  day       String
+  kind      String
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation("UserDailyUsage", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day, kind])
+  @@index([userId, day])
 }

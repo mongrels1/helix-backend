@@ -9,6 +9,7 @@ import { AIRouterService } from '../ai-router/ai-router.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AITutorRepository } from './ai-tutor.repository';
 import { AITutorService } from './ai-tutor.service';
+import { ConfigService } from '@nestjs/config';
 
 describe('AITutorService', () => {
   let service: AITutorService;
@@ -75,6 +76,11 @@ describe('AITutorService', () => {
         { provide: AITutorRepository, useValue: repository },
         { provide: AIRouterService, useValue: aiRouterService },
         { provide: PrismaService, useValue: prisma },
+        // AITutorService has taken a ConfigService since before this branch;
+        // the spec was never updated, so every case in this file failed on DI
+        // rather than on behaviour. get() returns undefined so each option
+        // falls back to its default.
+        { provide: ConfigService, useValue: { get: jest.fn() } },
       ],
     }).compile();
 

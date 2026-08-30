@@ -29,6 +29,7 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { ProvisioningModule } from '@modules/provisioning/provisioning.module';
 import { ReferralModule } from '@modules/referral/referral.module';
 import { StripeModule } from '@modules/stripe/stripe.module';
+import { UsageModule } from '@modules/usage/usage.module';
 import { AssignmentsModule } from '@modules/assignments/assignments.module';
 import { ClassroomsModule } from '@modules/classrooms/classrooms.module';
 import { CoursesModule } from '@modules/courses/courses.module';
@@ -98,6 +99,7 @@ import { KSportsModule } from '@modules/ksports/ksports.module';
     ItemGenerationModule,
     DiagnosticBankModule,
     PracticeModule,
+    UsageModule,
     StandardsModule,
     TtsModule,
     LessonPlanModule,

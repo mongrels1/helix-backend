@@ -1,16 +1,22 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { EntitlementGuard } from '@common/guards/entitlement.guard';
+import { MeteredGuard } from '@common/guards/metered.guard';
+import { Meter } from '@common/decorators/meter.decorator';
+import { UsageService } from '@modules/usage/usage.service';
 import { PracticeService } from './practice.service';
 
 /**
- * Student practice surface. Gated by EntitlementGuard: a learner needs an active
- * subscription (own or a linked parent's family plan); staff bypass. The global
- * JwtAuthGuard still requires a valid token.
+ * Student practice surface. Metered rather than locked: anyone signed in may
+ * open the page and load items, and only answering costs one of the day's
+ * allowance. Subscribers, staff and institutional families are not counted at
+ * all. The global JwtAuthGuard still requires a valid token.
  */
 @Controller('api/v1/practice')
-@UseGuards(EntitlementGuard)
+@UseGuards(MeteredGuard)
 export class PracticeController {
-  constructor(private readonly svc: PracticeService) {}
+  constructor(
+    private readonly svc: PracticeService,
+    private readonly usage: UsageService,
+  ) {}
 
   @Get('items')
   async items(
@@ -21,12 +27,16 @@ export class PracticeController {
     return { success: true as const, data };
   }
 
+  /** Answering one item. The metered action; charged only after it is recorded. */
   @Post('responses')
+  @Meter('PRACTICE')
   async recordResponse(
     @Body() body: { itemId: string; pickedIndex: number },
     @Req() req: { user?: { userId?: string; id?: string } },
   ) {
-    const data = await this.svc.recordResponse((req.user?.userId ?? req.user?.id), body);
+    const userId = req.user?.userId ?? req.user?.id;
+    const data = await this.svc.recordResponse(userId, body);
+    if (userId) await this.usage.consume(userId, 'PRACTICE');
     return { success: true as const, data };
   }
 

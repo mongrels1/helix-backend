@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type Stripe from 'stripe';
-import { isOwnerAccount } from '../../common/billing/billing';
+import { isOwnerAccount, isStripeWritable } from '../../common/billing/billing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '@modules/email/email.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -84,10 +84,17 @@ export class StripeService {
   private async syncSubscription(
     sub: Stripe.Subscription,
   ): Promise<{ handled: boolean; action?: string; email?: string }> {
+    const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? null;
+    // A durable key, when the checkout carried one. GHL order forms do not set
+    // metadata today, which is exactly why customerId below matters.
+    const metaUserId =
+      (sub.metadata?.userId as string | undefined) ??
+      (sub.metadata?.uid as string | undefined) ??
+      null;
     const email = await this.customerEmail(sub.customer);
-    if (!email) {
-      this.logger.warn(`Stripe ${sub.status} sub ${sub.id}: no resolvable customer email`);
-      return { handled: true, action: `no_email:${sub.status}` };
+    if (!email && !customerId && !metaUserId) {
+      this.logger.warn(`Stripe ${sub.status} sub ${sub.id}: no resolvable customer identity`);
+      return { handled: true, action: `no_identity:${sub.status}` };
     }
 
     // current_period_end read defensively (its typed location varies by SDK API version).
@@ -134,8 +141,12 @@ export class StripeService {
       }
     }
 
-    const found = await this.applyEntitlement(email, planStatus, renewsAt);
-    return { handled: true, action: `${sub.status}->${planStatus}${found ? '' : ':no_user'}`, email };
+    const found = await this.applyEntitlement(
+      { email, customerId, metaUserId, subscriptionId: sub.id },
+      planStatus,
+      renewsAt,
+    );
+    return { handled: true, action: `${sub.status}->${planStatus}${found ? '' : ':no_user'}`, email: email ?? undefined };
   }
 
   private async getCustomer(
@@ -200,34 +211,123 @@ export class StripeService {
     return { handled: true, action: 'trial_will_end:reminded', email };
   }
 
+  /**
+   * Write a plan status onto the buying account.
+   *
+   * Identity is resolved in order of durability, because email is not a key:
+   * a parent may check out with a different address than they registered with,
+   * a household shares one inbox, and GHL can hold two contacts on the same
+   * address. When that match failed the parent was charged and the child stayed
+   * locked out, with nothing in any dashboard to say why.
+   *
+   *   1. an explicit userId carried in subscription metadata
+   *   2. the Stripe customer id, once we have seen it before
+   *   3. email - still supported, logged as a soft match, and on success the
+   *      customer id is stored so this subscription never needs email again
+   *
+   * Two accounts are refused outright: the owner (ownership is not billed) and
+   * any row whose planSource says the plan did not come from Stripe. An
+   * institutional family has no Stripe object, but they do have an email
+   * address, and one past_due on an unrelated personal subscription would
+   * otherwise revoke a free family's access.
+   */
   private async applyEntitlement(
-    email: string,
+    identity: {
+      email: string | null;
+      customerId: string | null;
+      metaUserId: string | null;
+      subscriptionId: string;
+    },
     planStatus: string,
     renewsAt: Date | null | undefined,
   ): Promise<boolean> {
-    const user = await this.prisma.user.findFirst({
-      where: { email: { equals: email.trim(), mode: 'insensitive' }, deletedAt: null },
-      select: { id: true, role: true },
-    });
+    const { email, customerId, metaUserId, subscriptionId } = identity;
+    const select = { id: true, role: true, planSource: true, stripeCustomerId: true } as const;
+
+    type MatchedUser = {
+      id: string;
+      role: string;
+      planSource: string | null;
+      stripeCustomerId: string | null;
+    };
+    let user: MatchedUser | null = null;
+    let matchedBy = '';
+
+    if (metaUserId) {
+      user = (await this.prisma.user.findFirst({
+        where: { id: metaUserId, deletedAt: null },
+        select,
+      })) as MatchedUser | null;
+      if (user) matchedBy = 'metadata.userId';
+    }
+    if (!user && customerId) {
+      user = (await this.prisma.user.findFirst({
+        where: { stripeCustomerId: customerId, deletedAt: null },
+        select,
+      })) as MatchedUser | null;
+      if (user) matchedBy = 'stripeCustomerId';
+    }
+    if (!user && email) {
+      user = (await this.prisma.user.findFirst({
+        where: { email: { equals: email.trim(), mode: 'insensitive' }, deletedAt: null },
+        select,
+      })) as MatchedUser | null;
+      if (user) matchedBy = 'email';
+    }
+
     if (!user) {
-      this.logger.warn(`Stripe webhook: no active account for ${email} (-> ${planStatus})`);
+      // Loud on purpose. A webhook that resolves to nobody used to return 200
+      // and vanish; that silence is how a paying family stays locked out for
+      // weeks. Anything that reads these logs should alert on this line.
+      this.logger.error(
+        `Stripe webhook UNMATCHED: sub ${subscriptionId} -> ${planStatus}; ` +
+          `no active account for email=${email ?? 'none'} customer=${customerId ?? 'none'} ` +
+          `metaUserId=${metaUserId ?? 'none'}. THE BUYER IS PAYING AND NOT ENTITLED.`,
+      );
       return false;
     }
-    // The owner account is not billed. If the owner's email ever lands on a
-    // subscription (a test purchase, a personal card, a legacy customer record)
-    // a single past_due webhook would otherwise mark the platform's own account
-    // delinquent - and lock it out of anything that later enforces on it.
+
     if (isOwnerAccount(user.role)) {
       this.logger.warn(
-        `Stripe webhook: ignoring planStatus=${planStatus} for owner account ${email} (ownership is not billed)`,
+        `Stripe webhook: ignoring planStatus=${planStatus} for owner account (ownership is not billed)`,
       );
       return true;
     }
+
+    if (!isStripeWritable(user.planSource)) {
+      this.logger.warn(
+        `Stripe webhook: refusing planStatus=${planStatus} for ${user.id} - ` +
+          `planSource=${user.planSource}, so this account's access does not come from Stripe. ` +
+          `Matched by ${matchedBy}; the subscription is unrelated to their entitlement.`,
+      );
+      return true;
+    }
+
+    if (matchedBy === 'email') {
+      this.logger.warn(
+        `Stripe webhook: matched ${user.id} by EMAIL for sub ${subscriptionId}. ` +
+          `Email is not a key - storing customer id so future events match durably.`,
+      );
+    }
+
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { planStatus, ...(renewsAt !== undefined ? { planRenewsAt: renewsAt } : {}) },
+      data: {
+        planStatus,
+        ...(renewsAt !== undefined ? { planRenewsAt: renewsAt } : {}),
+        // First Stripe write on this row establishes provenance, so a later
+        // institutional grant cannot be mistaken for a purchase and vice versa.
+        ...(user.planSource == null ? { planSource: 'STRIPE' as const } : {}),
+        // Backfill the durable key. After this, email is never needed again for
+        // this customer.
+        ...(customerId && user.stripeCustomerId !== customerId
+          ? { stripeCustomerId: customerId }
+          : {}),
+      },
     });
-    this.logger.log(`Stripe webhook: ${email} -> planStatus=${planStatus}`);
+    this.logger.log(
+      `Stripe webhook: ${user.id} -> planStatus=${planStatus} (matched by ${matchedBy})`,
+    );
     return true;
   }
 }
