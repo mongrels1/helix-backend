@@ -59,6 +59,23 @@ export class StudyScheduleService {
       phone = normalized;
     }
 
+    // ★ A reminder plan with nowhere to send the reminder is the one outcome
+    // this feature must never produce: the student picks days and times, believes
+    // they will be nudged, and nothing ever arrives. Reminders on ⇒ a number must
+    // exist. Switching reminders off is always allowed and keeps the plan.
+    //
+    // Both fields are patch-style — undefined means "leave as it is" — so this
+    // has to be checked against what the record will look like AFTER the write,
+    // not against the payload on its own.
+    const current = await this.getMine(studentId);
+    const remindersPausedAfter = dto.remindersPaused ?? current.remindersPaused;
+    const phoneAfter = phone !== undefined ? phone.trim() : (current.phone ?? '');
+    if (!remindersPausedAfter && phoneAfter === '') {
+      throw new BadRequestException(
+        'Add a mobile number so we can text your study reminders — or switch reminders off to save the plan without them.',
+      );
+    }
+
     await this.repo.replaceSchedule(studentId, timezone, phone, dto.remindersPaused, days);
     return this.getMine(studentId);
   }
