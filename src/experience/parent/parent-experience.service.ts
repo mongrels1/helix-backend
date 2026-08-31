@@ -93,9 +93,18 @@ export class ParentExperienceService {
     });
   }
 
-  /** `parent+ada@gmail.com` style login, so reset mail lands in the parent's inbox. */
+  /**
+   * `parent+ada@gmail.com` style login, so reset mail lands in the parent's
+   * inbox and no child mailbox is created.
+   *
+   * Any +alias already on the parent's address is stripped first — a parent
+   * signed up as `me+test1@gmail.com` was otherwise given a child login of
+   * `me+test1+ada@gmail.com`, which stacks aliases, reads as the parent's own
+   * address, and looks like a mistake.
+   */
   private async deriveChildLogin(parentEmail: string, firstName: string): Promise<string> {
-    const [local, domain] = parentEmail.split('@');
+    const [rawLocal, domain] = parentEmail.split('@');
+    const local = (rawLocal ?? '').split('+')[0];
     if (!local || !domain) {
       throw new BadRequestException('Please enter a login address for your child');
     }
@@ -134,6 +143,14 @@ export class ParentExperienceService {
   }
 
   async getChildren(parentId: string) {
+    // Seats travel with the list so the UI can show "2 of 3 used" and hide the
+    // add button when full, instead of only discovering the limit on submit.
+    const parent = await this.prisma.user.findUnique({
+      where: { id: parentId },
+      select: { maxStudents: true },
+    });
+    const seats = parent?.maxStudents ?? DEFAULT_FAMILY_SEATS;
+
     const links = await this.prisma.parentStudentLink.findMany({
       where: { parentId },
       include: {
@@ -149,6 +166,8 @@ export class ParentExperienceService {
     });
 
     return {
+      seats,
+      seatsUsed: links.length,
       children: links.map((link) => ({
         // `id` and `profile` are what the parent UI actually reads. The flat
         // studentId/firstName/lastName below are kept so nothing that already
