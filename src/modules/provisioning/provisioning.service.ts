@@ -192,13 +192,29 @@ export class ProvisioningService {
     const v = String(raw).trim();
     return v || null;
   }
-  /** Map a purchased product to the account role + seat limit. A "family"
-   *  product → PARENT who can add multiple child logins; everything else →
-   *  a single STUDENT. Seat count is tunable here. */
+  /**
+   * Map a purchased product to the account role + seat limit.
+   *
+   * ★ This used to match the substring "family" and fall through to a lone
+   * STUDENT. No EdKairos product contains that word — not Standard, not
+   * Above-Grade, not Legacy — so every buyer was provisioned as a STUDENT with
+   * `maxStudents: null`, and no family could ever add a child. Match the real
+   * product names instead.
+   *
+   * The buyer is always the parent: they hold the subscription and add the child
+   * logins, so every consumer product yields PARENT. Seats follow each product's
+   * published copy — Legacy says "up to 3 children in one household", the
+   * single-child plans say one.
+   */
   private planConfig(product: string | null): { role: Role; maxStudents: number | null } {
     const p = (product ?? '').toLowerCase();
-    if (p.includes('family')) return { role: Role.PARENT, maxStudents: 6 };
-    return { role: Role.STUDENT, maxStudents: null };
+    // Legacy is the multi-child plan; "family"/"founding" are its older labels.
+    if (p.includes('legacy') || p.includes('family') || p.includes('founding')) {
+      return { role: Role.PARENT, maxStudents: 3 };
+    }
+    // Standard, Above-Grade, and anything unrecognised: one child, and a parent
+    // who can actually add them.
+    return { role: Role.PARENT, maxStudents: 1 };
   }
 
   /** True when the webhook represents a cancellation/refund (revoke access). */

@@ -5,11 +5,111 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { AttendanceStatus, Role } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
+
+const SALT_ROUNDS = 10;
+
+/**
+ * Seats for an account whose `maxStudents` is null — every account created
+ * before provisioning began setting it. One, deliberately: a larger default
+ * would hand every legacy row seats nobody paid for. Purchases set the real
+ * number in `provisioning.planConfig()`.
+ */
+const DEFAULT_FAMILY_SEATS = 1;
 
 @Injectable()
 export class ParentExperienceService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * A parent creates a child's login and links it, in one step.
+   *
+   * Until this existed a family could pay and then not use the product: the only
+   * link endpoint was ORG_ADMIN-only and required a student account that already
+   * existed, so a consumer parent — who has no administrator — had no path at
+   * all. The child is entitled through the linked parent's plan, so nothing else
+   * has to change for access to work.
+   *
+   * The child's email is a login, not a mailbox. If the parent doesn't supply
+   * one we derive a +alias on the parent's own address, so password mail reaches
+   * the parent and no child inbox is created.
+   */
+  async addChild(
+    parentId: string,
+    input: {
+      firstName: string;
+      lastName: string;
+      grade?: string | null;
+      email?: string | null;
+      password: string;
+    },
+  ) {
+    const parent = await this.prisma.user.findUnique({
+      where: { id: parentId },
+      select: { id: true, role: true, email: true, maxStudents: true },
+    });
+    if (!parent || parent.role !== Role.PARENT) {
+      throw new ForbiddenException('Only a parent account can add a child');
+    }
+
+    const seats = parent.maxStudents ?? DEFAULT_FAMILY_SEATS;
+    const used = await this.prisma.parentStudentLink.count({ where: { parentId } });
+    if (used >= seats) {
+      throw new BadRequestException(
+        `Your plan includes ${seats} child ${seats === 1 ? 'login' : 'logins'}, and ${used} ${used === 1 ? 'is' : 'are'} already in use.`,
+      );
+    }
+
+    const email =
+      input.email?.trim().toLowerCase() ||
+      (await this.deriveChildLogin(parent.email, input.firstName));
+
+    const taken = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (taken) {
+      throw new ConflictException('That login address is already in use');
+    }
+
+    const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+
+    return this.prisma.$transaction(async (tx) => {
+      const student = await tx.user.create({
+        data: {
+          email,
+          passwordHash,
+          role: Role.STUDENT,
+          profile: {
+            create: {
+              firstName: input.firstName.trim(),
+              lastName: input.lastName.trim(),
+              grade: input.grade?.trim() || null,
+            },
+          },
+        },
+        select: { id: true, email: true },
+      });
+      await tx.parentStudentLink.create({ data: { parentId, studentId: student.id } });
+      return { id: student.id, email: student.email, seatsUsed: used + 1, seats };
+    });
+  }
+
+  /** `parent+ada@gmail.com` style login, so reset mail lands in the parent's inbox. */
+  private async deriveChildLogin(parentEmail: string, firstName: string): Promise<string> {
+    const [local, domain] = parentEmail.split('@');
+    if (!local || !domain) {
+      throw new BadRequestException('Please enter a login address for your child');
+    }
+    const slug = firstName.trim().toLowerCase().replace(/[^a-z0-9]/g, '') || 'child';
+    for (let i = 0; i < 20; i++) {
+      const candidate = `${local}+${slug}${i === 0 ? '' : i}@${domain}`.toLowerCase();
+      const exists = await this.prisma.user.findUnique({
+        where: { email: candidate },
+        select: { id: true },
+      });
+      if (!exists) return candidate;
+    }
+    throw new BadRequestException('Please enter a login address for your child');
+  }
 
   async linkParentToStudent(parentId: string, studentId: string) {
     const [parent, student, existing] = await Promise.all([
