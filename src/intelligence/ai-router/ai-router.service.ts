@@ -198,13 +198,32 @@ export class AIRouterService {
 
     const startedAt = Date.now();
     const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
+
+    const body: Anthropic.MessageCreateParamsNonStreaming = {
       model: req.claudeModel ?? 'claude-haiku-4-5-20251001',
       max_tokens: maxTokens,
       temperature: req.temperature ?? 0.7,
       ...(req.systemPrompt ? { system: req.systemPrompt } : {}),
       messages: this.buildClaudeMessages(req),
-    });
+    };
+
+    // Newer Claude models have retired `temperature` and answer a request
+    // carrying it with a 400, which the router would otherwise read as "Claude
+    // is down" and fall through to providers that are not funded. Rather than
+    // keep a list of which models still accept it — a list that is wrong the
+    // week after it is written — drop the parameter and ask again. Every model
+    // has a sane default; none of them need us to insist.
+    let response: Anthropic.Message;
+    try {
+      response = await client.messages.create(body);
+    } catch (err) {
+      if (!/temperature/i.test(String(err)) || body.temperature === undefined) throw err;
+      this.logger.warn(
+        `claude model ${body.model} rejects temperature; retrying without it`,
+      );
+      delete body.temperature;
+      response = await client.messages.create(body);
+    }
     const text = response.content
       .filter((block) => block.type === 'text')
       .map((block) => ('text' in block ? block.text : ''))
