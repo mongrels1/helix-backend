@@ -99,16 +99,91 @@ export function buildLessonPlanPrompt(
   ].join('\n');
 }
 
+/**
+ * Close a JSON object that stopped mid-flight.
+ *
+ * A week of plans is long, and a reply clipped at max_tokens ends inside a
+ * string or an array — valid so far, just unfinished. Rather than throw away
+ * four days of work because the fifth is incomplete, drop back to the last
+ * balanced point and shut the structure cleanly. Better a plan missing its
+ * tail, which the teacher can see and fix, than a red banner and no plan.
+ */
+function repairTruncatedJson(src: string): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let lastSafe = -1;
+  const stack: string[] = [];
+
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === '{' || c === '[') { stack.push(c === '{' ? '}' : ']'); depth++; }
+    else if (c === '}' || c === ']') { stack.pop(); depth--; }
+    // A comma at the top of an array is a clean seam between whole items.
+    else if (c === ',' && depth > 0) lastSafe = i;
+  }
+
+  if (stack.length === 0) return null; // not truncated; nothing to repair
+  if (lastSafe < 0) return null;       // nothing whole to salvage
+
+  // Re-walk to the seam so the closers match what is actually still open.
+  const head = src.slice(0, lastSafe);
+  const closers: string[] = [];
+  let d = 0, str = false, esc = false;
+  const open: string[] = [];
+  for (let i = 0; i < head.length; i++) {
+    const c = head[i];
+    if (str) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') str = false;
+      continue;
+    }
+    if (c === '"') { str = true; continue; }
+    if (c === '{') { open.push('}'); d++; }
+    else if (c === '[') { open.push(']'); d++; }
+    else if (c === '}' || c === ']') { open.pop(); d--; }
+  }
+  while (open.length) closers.push(open.pop() as string);
+  return head + closers.join('');
+}
+
 /** Extract the first JSON object from a model response. */
 export function extractJson(text: string): Record<string, unknown> | null {
-  const trimmed = (text ?? '').trim();
+  let trimmed = (text ?? '').trim();
+  // Models fence JSON even when told not to. Unwrap it before parsing.
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) trimmed = fenced[1].trim();
+
   const match = trimmed.match(/\{[\s\S]*\}/);
-  for (const cand of [trimmed, match?.[0]]) {
+  const candidates = [trimmed, match?.[0]];
+
+  for (const cand of candidates) {
     if (!cand) continue;
     try {
       return JSON.parse(cand) as Record<string, unknown>;
     } catch {
       /* try next */
+    }
+  }
+
+  // Last resort: the reply was cut off. Salvage the complete days.
+  const start = trimmed.indexOf('{');
+  if (start >= 0) {
+    const repaired = repairTruncatedJson(trimmed.slice(start));
+    if (repaired) {
+      try {
+        return JSON.parse(repaired) as Record<string, unknown>;
+      } catch {
+        /* give up */
+      }
     }
   }
   return null;

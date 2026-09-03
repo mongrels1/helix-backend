@@ -23,6 +23,10 @@ export interface AIResponse {
   provider: AIProvider;
   tokensUsed: number;
   latencyMs: number;
+  /** Why the model stopped. 'max_tokens' means the reply was cut off, which is
+   *  the difference between "the model got it wrong" and "we did not give it
+   *  room to finish" — worth knowing before blaming the prompt. */
+  stopReason?: string;
 }
 
 export interface ProviderConfig {

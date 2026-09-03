@@ -131,7 +131,14 @@ export class LessonPlanService {
       systemPrompt: LESSON_PLAN_SYSTEM,
       preferredProvider: 'claude',
       claudeModel: qualityModel,
-      maxTokens: 8000,
+      // A week of plans is big: days x segments x nine prose fields, doubled
+      // again when co-teaching splits teacher_actions by role and the teacher
+      // asks for resources cited in every day. 8000 put the reply right on the
+      // ceiling, so it was clipped mid-JSON and failed to parse — every time,
+      // which is why retrying never helped. Sonnet and Opus both allow far
+      // more; this is headroom, not cost, since output is billed on what is
+      // actually produced.
+      maxTokens: 24000,
       temperature: 0.4,
       // Full-week generations run ~45-70s (≈9-10k tokens); 60s clipped the slow
       // ones. Give generous headroom — the frontend has no request timeout and a
@@ -140,8 +147,20 @@ export class LessonPlanService {
     });
     const plan = extractJson(ai.text);
     if (!plan || !Array.isArray((plan as { days?: unknown }).days)) {
-      this.logger.error('model did not return a valid plan JSON');
-      throw new BadRequestException('generation did not return a usable plan; try again');
+      // The old log said only that it failed, which made eight identical
+      // failures indistinguishable from bad luck. Say what actually came back.
+      const text = ai.text ?? '';
+      this.logger.error(
+        `lesson plan JSON unusable — provider=${ai.provider} stopReason=${ai.stopReason ?? 'n/a'} ` +
+          `chars=${text.length} tokens=${ai.tokensUsed} days=${dto.days?.length ?? 0} ` +
+          `segmentsPerDay=${dto.segmentsPerDay} groups=${(dto.differentiationGroups ?? []).length}`,
+      );
+      this.logger.error(`lesson plan reply tail: ${JSON.stringify(text.slice(-400))}`);
+      throw new BadRequestException(
+        ai.stopReason === 'max_tokens'
+          ? 'the plan came back too long to finish; try fewer days or fewer differentiation groups'
+          : 'generation did not return a usable plan; try again',
+      );
     }
 
     // 2) deterministic pacing + structure-locked fill (sidecar)

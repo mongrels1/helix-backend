@@ -196,6 +196,7 @@ export class AIRouterService {
         (response.usage?.input_tokens ?? 0) +
         (response.usage?.output_tokens ?? 0),
       latencyMs: Date.now() - startedAt,
+      stopReason: response.stop_reason ?? undefined,
     };
   }
 
