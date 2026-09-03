@@ -171,15 +171,36 @@ export class AIRouterService {
     };
   }
 
+  /**
+   * The SDK refuses a non-streaming request whose max_tokens implies more than
+   * ten minutes of work — it throws client-side, before anything is sent, and
+   * the router then reads that as "Claude is down" and falls through to
+   * providers that may not be funded. One caller asking for too much can
+   * therefore take every AI feature offline at once. Clamp instead: the caller
+   * gets a shorter answer, not an outage. Above this, stream.
+   *
+   * Ceiling from @anthropic-ai/sdk client.js: (3600 * maxTokens) / 128000 must
+   * stay under 600 seconds, so maxTokens must stay under 21,333.
+   */
+  private static readonly CLAUDE_NONSTREAMING_MAX_TOKENS = 21000;
+
   private async callClaude(req: AIRequest): Promise<AIResponse> {
     const apiKey = this.config.get<string>('ai.anthropicKey');
     if (!apiKey) throw new Error('Claude not configured');
+
+    const requested = req.maxTokens ?? 1024;
+    const maxTokens = Math.min(requested, AIRouterService.CLAUDE_NONSTREAMING_MAX_TOKENS);
+    if (maxTokens < requested) {
+      this.logger.warn(
+        `claude maxTokens ${requested} exceeds the non-streaming ceiling; clamped to ${maxTokens}`,
+      );
+    }
 
     const startedAt = Date.now();
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: req.claudeModel ?? 'claude-haiku-4-5-20251001',
-      max_tokens: req.maxTokens ?? 1024,
+      max_tokens: maxTokens,
       temperature: req.temperature ?? 0.7,
       ...(req.systemPrompt ? { system: req.systemPrompt } : {}),
       messages: this.buildClaudeMessages(req),

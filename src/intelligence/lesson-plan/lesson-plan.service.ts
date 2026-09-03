@@ -138,7 +138,7 @@ export class LessonPlanService {
       // which is why retrying never helped. Sonnet and Opus both allow far
       // more; this is headroom, not cost, since output is billed on what is
       // actually produced.
-      maxTokens: 24000,
+      maxTokens: 16000,
       temperature: 0.4,
       // Full-week generations run ~45-70s (≈9-10k tokens); 60s clipped the slow
       // ones. Give generous headroom — the frontend has no request timeout and a
