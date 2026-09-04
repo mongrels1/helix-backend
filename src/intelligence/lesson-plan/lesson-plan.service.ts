@@ -40,6 +40,13 @@ interface LessonPlanJob {
  * v1 persistence is in-memory (see PORT_NOTES.md for the Prisma LessonPlanJob
  * model + R2 artifact storage to swap in for production).
  */
+/** One day's worth of drafted plan, plus which provider produced it. */
+interface DayDraft {
+  days: unknown[];
+  smallGroup?: unknown;
+  provider: string;
+}
+
 @Injectable()
 export class LessonPlanService {
   private readonly logger = new Logger(LessonPlanService.name);
@@ -120,48 +127,69 @@ export class LessonPlanService {
       instructions: dto.instructions,
     };
 
-    // 1) draft content with Claude (via the shared AI router; falls back per its chain)
-    // Optional stronger model for this reasoning-heavy task. If unset, the AI
-    // router uses its own default Claude model. Set LESSON_PLAN_CLAUDE_MODEL to
-    // a Sonnet/Opus id to raise quality.
+    // 1) draft the content, one day per call.
+    //
+    // A whole week in a single reply is days x segments x nine prose fields,
+    // doubled again when co-teaching splits teacher_actions by role. It was
+    // landing on the 8000-token ceiling and being clipped mid-JSON; raising the
+    // ceiling only made the reply take long enough that the connection died
+    // before it arrived. Both are the same problem — one request carrying too
+    // much — and asking for one day at a time removes it rather than moving it.
+    //
+    // Each day is its own small, fast call, and they run together, so a five-day
+    // week with four differentiation groups costs no more wall-clock than a
+    // two-day one. The prompt is unchanged: it already takes the day list, so
+    // passing a list of one asks for exactly one day.
     const qualityModel = this.config.get<string>('lessonPlan.claudeModel') || undefined;
-    const prompt = buildLessonPlanPrompt(cfg, resourcesText);
-    const ai = await this.ai.chat({
-      prompt,
-      systemPrompt: LESSON_PLAN_SYSTEM,
-      preferredProvider: 'claude',
-      claudeModel: qualityModel,
-      // A week of plans is big: days x segments x nine prose fields, doubled
-      // again when co-teaching splits teacher_actions by role and the teacher
-      // asks for resources cited in every day. 8000 put the reply right on the
-      // ceiling, so it was clipped mid-JSON and failed to parse — every time,
-      // which is why retrying never helped. Sonnet and Opus both allow far
-      // more; this is headroom, not cost, since output is billed on what is
-      // actually produced.
-      maxTokens: 16000,
-      temperature: 0.4,
-      // Full-week generations run ~45-70s (≈9-10k tokens); 60s clipped the slow
-      // ones. Give generous headroom — the frontend has no request timeout and a
-      // "Generating…" spinner covers the wait, so higher is pure reliability.
-      timeoutMs: 180000,
-    });
-    const plan = extractJson(ai.text);
-    if (!plan || !Array.isArray((plan as { days?: unknown }).days)) {
-      // The old log said only that it failed, which made eight identical
-      // failures indistinguishable from bad luck. Say what actually came back.
-      const text = ai.text ?? '';
-      this.logger.error(
-        `lesson plan JSON unusable — provider=${ai.provider} stopReason=${ai.stopReason ?? 'n/a'} ` +
-          `chars=${text.length} tokens=${ai.tokensUsed} days=${dto.days?.length ?? 0} ` +
-          `segmentsPerDay=${dto.segmentsPerDay} groups=${(dto.differentiationGroups ?? []).length}`,
-      );
-      this.logger.error(`lesson plan reply tail: ${JSON.stringify(text.slice(-400))}`);
-      throw new BadRequestException(
-        ai.stopReason === 'max_tokens'
-          ? 'the plan came back too long to finish; try fewer days or fewer differentiation groups'
-          : 'generation did not return a usable plan; try again',
-      );
+
+    const drafted: DayDraft[] = (
+      await Promise.all(
+        (dto.days ?? []).map(async (day): Promise<DayDraft | null> => {
+          const ai = await this.ai.chat({
+            prompt: buildLessonPlanPrompt({ ...cfg, days: [day] }, resourcesText),
+            systemPrompt: LESSON_PLAN_SYSTEM,
+            preferredProvider: 'claude',
+            claudeModel: qualityModel,
+            // One day of segments is ~1500-2500 tokens. 6000 is headroom, and
+            // well inside the SDK non-streaming ceiling whatever the model.
+            maxTokens: 6000,
+            temperature: 0.4,
+            timeoutMs: 120000,
+          });
+
+          const parsed = extractJson(ai.text) as { days?: unknown; small_group?: unknown } | null;
+          const days = parsed?.days;
+          if (!Array.isArray(days) || days.length === 0) {
+            const text = ai.text ?? '';
+            this.logger.error(
+              `lesson plan day "${day}" unusable — provider=${ai.provider} ` +
+                `stopReason=${ai.stopReason ?? 'n/a'} chars=${text.length} ` +
+                `tokens=${ai.tokensUsed} segmentsPerDay=${dto.segmentsPerDay} ` +
+                `groups=${(dto.differentiationGroups ?? []).length}`,
+            );
+            this.logger.error(`lesson plan day "${day}" tail: ${JSON.stringify(text.slice(-400))}`);
+            return null;
+          }
+
+          return { days, smallGroup: parsed?.small_group, provider: ai.provider };
+        }),
+      )
+    ).filter((d): d is DayDraft => d !== null);
+
+    if (drafted.length === 0) {
+      throw new BadRequestException('generation did not return a usable plan; try again');
     }
+    if (drafted.length < (dto.days ?? []).length) {
+      // Better a plan the teacher can see is short than no plan at all — but say so.
+      this.logger.warn(`lesson plan drafted ${drafted.length} of ${(dto.days ?? []).length} days`);
+    }
+
+    // Days keep the order they were asked for. small_group is a week-level
+    // section, so take the first one any day produced.
+    const plan = {
+      days: drafted.flatMap((d) => d.days),
+      small_group: drafted.find((d) => Array.isArray(d.smallGroup))?.smallGroup ?? [],
+    };
 
     // 2) deterministic pacing + structure-locked fill (sidecar)
     const fill = await this.sidecar.fill({
@@ -182,7 +210,7 @@ export class LessonPlanService {
     });
 
     return {
-      engine: ai.provider,
+      engine: drafted[0].provider,
       structureLocked: fill.structureLocked,
       pacingOk: fill.pacingOk,
       periodMinutes: dto.periodMinutes,
