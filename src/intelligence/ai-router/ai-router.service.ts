@@ -18,7 +18,18 @@ import {
 @Injectable()
 export class AIRouterService {
   private readonly logger = new Logger(AIRouterService.name);
-  private readonly timeoutMs = 8000;
+  /**
+   * Eight seconds was never long enough for a language model to answer, so
+   * every caller that did not set its own timeout — the instructor assistant,
+   * the mastery engine, the pacing engine, the intent parser, the response
+   * synthesiser — has been timing out and quietly serving its hardcoded
+   * fallback. That is why the dashboard shows the same pacing recommendation
+   * thirteen times: it is one fallback string, not thirteen judgements.
+   *
+   * A completion routinely takes 5-30 seconds. Callers that need longer still
+   * pass timeoutMs (lesson plans ask for 180s).
+   */
+  private readonly timeoutMs = 60000;
   private readonly providerChain: AIProvider[] = ['claude', 'openai', 'gemini'];
   private lastAlertAt = 0;
   private readonly alertCooldownMs = 15 * 60 * 1000;
