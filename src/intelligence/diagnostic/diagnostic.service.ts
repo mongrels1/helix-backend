@@ -11,6 +11,7 @@ import { MasteryEngineService } from '../mastery-engine/mastery-engine.service';
 import { SaveDiagnosticDto } from './dto/save-diagnostic.dto';
 import { RemediationService } from '../remediation/remediation.service';
 import { NotificationsService } from '../../modules/notifications/notifications.service';
+import { applyUrl as fellowsApplyLink } from '@modules/fellows/evidence-token';
 
 @Injectable()
 export class DiagnosticService {
@@ -63,10 +64,33 @@ export class DiagnosticService {
     if (userId) {
       await this.syncMasteryFromResponses(userId, dto.responses);
     }
+    // ── EdKairos Fellows admissions evidence ──────────────────────────────────
+    // One of the five Fellows eligibility routes is "an EdKairos diagnostic placing the
+    // student above grade level". That route has to be checkable, or a parent can simply
+    // type a number into the apply URL. So we sign the provisional level HERE, where it
+    // was actually computed, and hand back a link the family can follow.
+    //
+    // Note what is signed: `profile.level` — provisionalLevel(theta) — NOT a percentile.
+    // The diagnostic does not compute a percentile and must never be read as if it does.
+    // Returns undefined when FELLOWS_PCT_SECRET is unset, and the Fellows route is then
+    // simply unavailable rather than silently unverified.
+    const level = Number((dto.profile as { level?: unknown } | undefined)?.level);
+    const fellowsApplyUrl = Number.isFinite(level)
+      ? (fellowsApplyLink({
+          level,
+          grade: Number.isFinite(Number(dto.grade)) ? Number(dto.grade) : undefined,
+          theta: dto.theta,
+          se: dto.se,
+          child: dto.studentName ?? undefined,
+          dx: session.id,
+        }) ?? undefined)
+      : undefined;
+
     return {
       id: session.id,
       saved: Boolean(userId),
       claimToken: session.claimToken,
+      fellowsApplyUrl,
     };
   }
 
