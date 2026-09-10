@@ -30,7 +30,14 @@
  * It is NOT a placement claim about a child, and must never be published as one.
  */
 
-import crypto from 'node:crypto';
+// NAMED imports, deliberately. This tsconfig sets `module: commonjs` and does NOT set
+// `esModuleInterop`, so `import crypto from 'node:crypto'` compiles to
+// `node_crypto_1.default.createHmac(...)` — and `require('node:crypto').default` is
+// `undefined` at runtime. That is a TypeError, not a compile error, because
+// `allowSyntheticDefaultImports: true` silences the type check without changing the emit.
+// It broke every diagnostic save from 7 Sept 2026. Do not "tidy" this back into a
+// default import.
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export const MAX_AGE_DAYS = 60;   // a diagnostic older than a term is not evidence of today
 
@@ -49,7 +56,7 @@ function secret(): string | null {
 }
 
 function hmac(payloadB64: string, key: string): string {
-  return b64url(crypto.createHmac('sha256', key).update(payloadB64).digest());
+  return b64url(createHmac('sha256', key).update(payloadB64).digest());
 }
 
 /**
@@ -117,7 +124,7 @@ export function verify(token: unknown, opts: VerifyOpts = {}): VerifyResult {
 
   // Constant-time. Length check first, because timingSafeEqual throws on a length mismatch.
   const a = Buffer.from(sig), b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return fail('bad-signature');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return fail('bad-signature');
 
   let claim: any;
   try { claim = JSON.parse(unb64url(p).toString('utf8')); }

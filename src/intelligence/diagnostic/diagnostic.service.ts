@@ -74,17 +74,34 @@ export class DiagnosticService {
     // The diagnostic does not compute a percentile and must never be read as if it does.
     // Returns undefined when FELLOWS_PCT_SECRET is unset, and the Fellows route is then
     // simply unavailable rather than silently unverified.
-    const level = Number((dto.profile as { level?: unknown } | undefined)?.level);
-    const fellowsApplyUrl = Number.isFinite(level)
-      ? (fellowsApplyLink({
-          level,
-          grade: Number.isFinite(Number(dto.grade)) ? Number(dto.grade) : undefined,
-          theta: dto.theta,
-          se: dto.se,
-          child: dto.studentName ?? undefined,
-          dx: session.id,
-        }) ?? undefined)
-      : undefined;
+    //
+    // Wrapped, and it must stay wrapped. The diagnostic is already in the database by
+    // the time we reach here. The Fellows link is an OPTIONAL extra on the way out — a
+    // marketing affordance for one of five eligibility routes. If building it fails for
+    // any reason, the family must still get their saved diagnostic back. Losing a
+    // completed 15-question session because an admissions link could not be signed is
+    // exactly backwards, and it is what happened from 7-9 September 2026.
+    let fellowsApplyUrl: string | undefined;
+    try {
+      const level = Number((dto.profile as { level?: unknown } | undefined)?.level);
+      if (Number.isFinite(level)) {
+        fellowsApplyUrl =
+          fellowsApplyLink({
+            level,
+            grade: Number.isFinite(Number(dto.grade)) ? Number(dto.grade) : undefined,
+            theta: dto.theta,
+            se: dto.se,
+            child: dto.studentName ?? undefined,
+            dx: session.id,
+          }) ?? undefined;
+      }
+    } catch (err) {
+      this.logger.error(
+        `fellows apply link failed for session=${session.id}: ${String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      fellowsApplyUrl = undefined;
+    }
 
     return {
       id: session.id,
