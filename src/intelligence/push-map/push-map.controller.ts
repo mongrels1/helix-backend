@@ -1,9 +1,16 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { Public } from '@common/decorators/public.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
+import { KairosReviewService, type ReportStatus } from './kairos-review.service';
 import { PushMapService } from './push-map.service';
-import { ConfirmedExtractionDto, ExtractDto, GenerateDto } from './dto/push-map.dto';
+import {
+  ConfirmedExtractionDto,
+  ExtractDto,
+  GenerateDto,
+  RejectDto,
+} from './dto/push-map.dto';
 import type { ScoreExtraction } from './push-map.types';
 
 type AuthenticatedUser = { userId: string; role: Role };
@@ -24,7 +31,10 @@ type AuthenticatedUser = { userId: string; role: Role };
 @Controller('api/v1/push-map')
 @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
 export class PushMapController {
-  constructor(private readonly service: PushMapService) {}
+  constructor(
+    private readonly service: PushMapService,
+    private readonly review: KairosReviewService,
+  ) {}
 
   /**
    * Scholars this map can be built for.
@@ -81,6 +91,72 @@ export class PushMapController {
   @Get('jobs/:id')
   getMap(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return { success: true as const, data: this.service.getMap(id, user.userId) };
+  }
+
+  /* ---------------------------------------------------------------- *
+   * The administrative gate
+   *
+   * Every one of these is an explicit, authenticated action. There is no
+   * endpoint that generates and sends in one step, and adding one would
+   * defeat the point of the queue.
+   * ---------------------------------------------------------------- */
+
+  /** The review queue. `?status=` to see APPROVED, SENT or REJECTED instead. */
+  @Get('reports')
+  async reports(@Query('status') status?: string) {
+    const allowed: ReportStatus[] = ['PENDING_REVIEW', 'APPROVED', 'SENT', 'REJECTED'];
+    const s = allowed.includes(status as ReportStatus)
+      ? (status as ReportStatus)
+      : 'PENDING_REVIEW';
+    return { success: true as const, data: await this.review.queue(s) };
+  }
+
+  /** One report in full, for inspection before approving. */
+  @Get('reports/:id')
+  async report(@Param('id') id: string) {
+    return { success: true as const, data: await this.review.get(id) };
+  }
+
+  @Post('reports/:id/approve')
+  async approve(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const data = await this.review.approve(id, user.userId);
+    return { success: true as const, data: { id: data.id, status: data.status } };
+  }
+
+  @Post('reports/:id/reject')
+  async reject(
+    @Param('id') id: string,
+    @Body() dto: RejectDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const data = await this.review.reject(id, user.userId, dto.note);
+    return { success: true as const, data: { id: data.id, status: data.status } };
+  }
+
+  /** Sends to the covering parent. Refuses anything not APPROVED. */
+  @Post('reports/:id/dispatch')
+  async dispatch(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const data = await this.review.dispatch(id, user.userId);
+    return { success: true as const, data };
+  }
+}
+
+/**
+ * The family's view of a sent report.
+ *
+ * A separate controller because it is the one **public** surface in this
+ * feature: a parent opens it from a signed link in their email, without a login.
+ * Keeping it out of `PushMapController` means the class-level `@Roles` guard
+ * above cannot be loosened by accident and take this with it.
+ */
+@Controller('api/v1/kairos-point')
+export class KairosPointPublicController {
+  constructor(private readonly review: KairosReviewService) {}
+
+  @Public()
+  @Get('view')
+  async view(@Query('d') token?: string) {
+    return { success: true as const, data: await this.review.openByToken(token) };
   }
 }
 

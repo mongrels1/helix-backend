@@ -166,3 +166,10 @@ export class GenerateDto {
   @MaxLength(64)
   studentId!: string;
 }
+
+/** Rejecting a report requires a reason — see `KairosReviewService.reject`. */
+export class RejectDto {
+  @IsString()
+  @MaxLength(1000)
+  note!: string;
+}

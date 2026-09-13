@@ -138,6 +138,8 @@ model User {
   loginEvents   LoginEvent[]  @relation("UserLoginEvents")
   studyReminders StudyReminder[] @relation("StudentReminders")
   dailyUsage    DailyUsage[]  @relation("UserDailyUsage")
+  kairosReports        KairosPointReport[] @relation("StudentKairosReports")
+  kairosReportsCreated KairosPointReport[] @relation("CreatedKairosReports")
 }
 
 model ParentStudentLink {
@@ -960,4 +962,68 @@ model DailyUsage {
 
   @@unique([userId, day, kind])
   @@index([userId, day])
+}
+
+/// A generated Kairos Point, held for administrative review before it reaches
+/// a family.
+///
+/// ★ **Nothing here dispatches itself.** A row is written at `PENDING_REVIEW`
+/// and can only become `SENT` by way of an explicit human approval, recorded
+/// with who approved it and when. The report makes specific claims about a named
+/// child from numbers a model read off a document; the confirm screen catches a
+/// misread before the page is built, and this row is what makes a second pair of
+/// eyes possible before the page is sent.
+///
+/// It is also the baseline the *next* report diffs against. That diff — "since
+/// August he moved from Strengthen to Push in Measurement and Data" — is the
+/// prove-the-gain half of the product, and history that was never written down
+/// cannot be recovered later. Before this table, maps lived in memory for six
+/// hours and then ceased to exist.
+model KairosPointReport {
+  id        String @id @default(uuid())
+  studentId String
+  /// The account that generated it — staff today, the linked parent once
+  /// self-serve upload ships.
+  createdById String
+
+  /// PENDING_REVIEW · APPROVED · SENT · REJECTED. A plain string rather than an
+  /// enum so a new state does not require a migration on a live database.
+  status String @default("PENDING_REVIEW")
+
+  /// What the human confirmed on screen 2. Kept alongside the composed map so a
+  /// report can be rebuilt, and so a later composition change can be replayed
+  /// against the original numbers rather than re-read from a document.
+  extraction Json
+  /// The composed PushMap exactly as it was shown and sent.
+  map        Json
+
+  /// Resolved at generation time. A later tier change must not silently rewrite
+  /// what a family was told.
+  productId String
+  reach     Int
+
+  /// Denormalised for the review queue, so listing does not join three tables.
+  studentName    String
+  assessmentName String
+  takenOn        String?
+  overall        Int
+
+  reviewedById String?
+  reviewedAt   DateTime?
+  /// Why it was rejected. Recorded so a pattern of misreads is visible.
+  reviewNote   String?
+
+  sentAt      DateTime?
+  /// Where it actually went, captured at send time — the parent's address may
+  /// change afterwards, and "who did we tell" must stay answerable.
+  sentToEmail String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student   User @relation("StudentKairosReports", fields: [studentId], references: [id], onDelete: Cascade)
+  createdBy User @relation("CreatedKairosReports", fields: [createdById], references: [id])
+
+  @@index([status, createdAt])
+  @@index([studentId, createdAt])
 }

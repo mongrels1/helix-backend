@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { AIRouterService } from '../ai-router/ai-router.service';
+import { KairosReviewService } from './kairos-review.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isPlanActive } from '../../common/billing/billing';
 import { coveringParent, loadFamilyLinksFor } from '../../common/family/family';
@@ -19,6 +20,8 @@ interface PushMapJob {
   id: string;
   ownerId: string;
   studentId?: string;
+  /** KairosPointReport.id once the map has been composed and persisted. */
+  reportId?: string;
   note?: string;
   extraction?: ScoreExtraction;
   map?: PushMap;
@@ -47,11 +50,13 @@ const EMPTY_EXTRACTION: ScoreExtraction = {
  * after that is deterministic, so the same confirmed numbers always produce the
  * same plan.
  *
- * v1 persistence is in-memory, matching LessonPlanService. **This should become a
- * table before long** — a Push Map is the baseline the next one diffs against,
- * and that diff ("since August, he moved from Strengthen to Push in Measurement
- * and Data") is the "prove the gain" half of the product. History we never wrote
- * down cannot be recovered later.
+ * The in-memory job map is scaffolding for the build flow only, with a 6h TTL.
+ * **The durable record is the `KairosPointReport` row** written at the moment a
+ * map is composed — see `KairosReviewService`. That row is what holds a report
+ * for administrative review, and it is the baseline the next report diffs
+ * against; that diff ("since August he moved from Strengthen to Push in
+ * Measurement and Data") is the prove-the-gain half of the product, and history
+ * that was never written down cannot be recovered later.
  */
 @Injectable()
 export class PushMapService {
@@ -63,6 +68,7 @@ export class PushMapService {
     private readonly ai: AIRouterService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly review: KairosReviewService,
   ) {}
 
   createJob(ownerId: string): { jobId: string } {
@@ -292,6 +298,21 @@ export class PushMapService {
     });
     job.studentId = studentId;
     job.map = map;
+
+    // ★ The row, not the in-memory job, is the record. It is written at
+    // PENDING_REVIEW and cannot reach a family without an explicit approval —
+    // see KairosReviewService. A failure to persist must not look like a
+    // successful build, so this is deliberately not wrapped in a try/catch:
+    // a map the reviewer will never see is worse than an error the operator does.
+    const record = await this.review.record({
+      studentId,
+      createdById: ownerId,
+      extraction,
+      map,
+      productId: product.id,
+      reach: REACH_BY_PRODUCT[product.id] ?? 1,
+    });
+    job.reportId = record.id;
     this.logger.log(
       `Push Map built for ${studentId} (${product.id}, reach=${REACH_BY_PRODUCT[product.id] ?? 1}): ` +
         `${map.push.length} push, ${map.strengthen.length} strengthen`,
