@@ -252,7 +252,7 @@ export class AdminExperienceService {
           product: toProductRef(
             plan.source === 'parent' && plan.via
               ? productFor(plan.via.plan, null, true)
-              : productFor(user.plan, user.planSource, isPaid),
+              : productFor(user.plan, user.planSource, isPaid, user.role),
           ),
 
           canDelete: !isPaid && !hasActivity && !isOwnerAccount(user.role) && !familyBlock,
@@ -434,18 +434,25 @@ export class AdminExperienceService {
     const fromParent = plan.source === 'parent' && plan.via;
     const def = fromParent
       ? productFor(plan.via!.plan, null, true)
-      : productFor(user.plan, user.planSource, paid);
+      : productFor(user.plan, user.planSource, paid, user.role);
 
     // The comparison table behind the ribbon. Always the publicly purchasable
     // products, plus this family's own if it is not one of them — so a Legacy
     // or Fellows household sees their own column, while nobody else is shown an
     // invitation-only rate they cannot buy.
     const ids: ProductId[] = [...COMPARABLE_PRODUCT_IDS];
-    if (def.id !== 'NONE' && !ids.includes(def.id)) ids.push(def.id);
+    // Staff and free accounts add no column: one has no product to compare,
+    // the other is looking at what they could buy.
+    if (def.id !== 'NONE' && def.id !== 'STAFF' && !ids.includes(def.id)) ids.push(def.id);
 
     return {
       product: { ...def, includes: includesFor(def.id) },
-      source: fromParent ? 'parent' : paid || user.planSource === 'INSTITUTIONAL' ? 'own' : 'none',
+      source:
+        fromParent
+          ? 'parent'
+          : paid || user.planSource === 'INSTITUTIONAL' || def.id === 'STAFF'
+            ? 'own'
+            : 'none',
       coveredBy: fromParent ? plan.via!.name : null,
       comparison: {
         products: ids.map((id) => ({

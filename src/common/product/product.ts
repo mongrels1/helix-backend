@@ -43,12 +43,15 @@
  * differentiator.
  */
 
+import { isBillingExempt } from '../billing/billing';
+
 export type ProductId =
   | 'STANDARD'
   | 'ABOVE_GRADE'
   | 'LEGACY'
   | 'FELLOWS'
   | 'INSTITUTIONAL'
+  | 'STAFF'
   | 'NONE';
 
 /** The publicly purchasable products, in the order a comparison table shows them. */
@@ -73,7 +76,16 @@ export interface Capability {
   pending?: boolean;
 }
 
-const ALL_PAID: ProductId[] = ['STANDARD', 'ABOVE_GRADE', 'LEGACY', 'FELLOWS', 'INSTITUTIONAL'];
+const ALL_PAID: ProductId[] = [
+  'STANDARD',
+  'ABOVE_GRADE',
+  'LEGACY',
+  'FELLOWS',
+  'INSTITUTIONAL',
+  // Staff are billing-exempt and fully entitled. Without them here the ribbon
+  // told the owner of the platform he was on the free tier.
+  'STAFF',
+];
 const EVERYONE: ProductId[] = [...ALL_PAID, 'NONE'];
 
 export const CAPABILITIES: Capability[] = [
@@ -202,6 +214,14 @@ const DEFINITIONS: Record<ProductId, Omit<ProductDefinition, 'id'>> = {
     stripePriceIds: [],
     invitationOnly: true,
   },
+  STAFF: {
+    name: 'Staff access',
+    price: null,
+    summary: 'Full access as a member of the team. Not a subscription, and never billed.',
+    seats: null,
+    stripePriceIds: [],
+    invitationOnly: true,
+  },
   NONE: {
     name: 'Free',
     price: null,
@@ -229,7 +249,12 @@ export function resolveProductId(
   plan: string | null | undefined,
   planSource?: string | null,
   hasActivePlan = true,
+  role?: string | null,
 ): ProductId {
+  // Staff and the owner first: they are billing-exempt, entitled regardless of
+  // planStatus, and have no product to speak of. Resolving them by label put
+  // "Free" on the owner's own ribbon.
+  if (isBillingExempt(role)) return 'STAFF';
   if (planSource === 'INSTITUTIONAL') return 'INSTITUTIONAL';
 
   const p = (plan ?? '').toLowerCase();
@@ -273,8 +298,9 @@ export function productFor(
   plan: string | null | undefined,
   planSource?: string | null,
   hasActivePlan = true,
+  role?: string | null,
 ): ProductDefinition {
-  return PRODUCTS[resolveProductId(plan, planSource, hasActivePlan)];
+  return PRODUCTS[resolveProductId(plan, planSource, hasActivePlan, role)];
 }
 
 /** The products an admin may assign by hand. Excludes NONE and INSTITUTIONAL. */
