@@ -52,4 +52,12 @@ export default () => ({
     svcSecret: process.env.LESSON_PLAN_SVC_SECRET ?? '',
     claudeModel: process.env.LESSON_PLAN_CLAUDE_MODEL ?? '',
   },
+  pushMap: {
+    // Model used to read a scanned score report. Empty falls back to
+    // `claudeVision`'s own default. Overridable because this is the one call in
+    // the feature where model quality maps straight onto a wrong plan for a
+    // named child: a misread scale score is not caught downstream, only on the
+    // confirm screen by a person.
+    visionModel: process.env.PUSH_MAP_VISION_MODEL ?? '',
+  },
 });

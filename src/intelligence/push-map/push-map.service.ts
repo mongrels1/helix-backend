@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { AIRouterService } from '../ai-router/ai-router.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -8,6 +9,7 @@ import { productFor } from '../../common/product/product';
 import {
   SCORE_EXTRACTION_SYSTEM,
   buildExtractionPrompt,
+  buildVisionExtractionPrompt,
   extractJson,
 } from './push-map.prompt';
 import { REACH_BY_PRODUCT, composePushMap, strandForVendorDomain } from './push-map.tracks';
@@ -60,6 +62,7 @@ export class PushMapService {
   constructor(
     private readonly ai: AIRouterService,
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
   ) {}
 
   createJob(ownerId: string): { jobId: string } {
@@ -83,37 +86,70 @@ export class PushMapService {
   /**
    * Transcribe an uploaded report.
    *
-   * The text arrives already extracted client-side by `lib/pdfExtract.ts`, which
-   * is in production for the question generator. Doing it in the browser keeps
-   * the original document off our servers entirely — a child's score report is
-   * about as sensitive as school data gets, and the least we can hold is none
-   * of it.
+   * Two ways in, and the second is the common one:
+   *
+   * - **text** — the PDF had a text layer, pulled client-side by
+   *   `lib/pdfExtract.ts`. Cheap and exact.
+   * - **page images** — it did not. Schools overwhelmingly hand out
+   *   printed-then-scanned PDFs, so a builder that only reads text layers is a
+   *   builder that fails on most real reports. The pages are rendered to JPEG in
+   *   the browser and read by `claudeVision`.
+   *
+   * Either way the work happens in the browser and only the derived text or
+   * images are posted. The original document never reaches our servers — a
+   * child's score report is about as sensitive as school data gets, and the
+   * least we can hold is none of it.
    */
   async extract(
     jobId: string,
     ownerId: string,
-    input: { reportText: string; note?: string },
+    input: { reportText?: string; pageImages?: string[]; note?: string },
   ): Promise<ScoreExtraction> {
     const job = this.get(jobId, ownerId);
     const text = (input.reportText ?? '').trim();
-    if (text.length < 40) {
+    const images = (input.pageImages ?? [])
+      .map((raw) => decodeDataUrl(raw))
+      .filter((img): img is { base64: string; mediaType: string } => img !== null);
+
+    let reply: string;
+    let via: string;
+
+    if (text.length >= MIN_REPORT_TEXT) {
+      const ai = await this.ai.chat({
+        prompt: buildExtractionPrompt(text, input.note),
+        systemPrompt: SCORE_EXTRACTION_SYSTEM,
+        preferredProvider: 'claude',
+        maxTokens: 2000,
+        temperature: 0,
+        timeoutMs: 60_000,
+      });
+      reply = ai.text;
+      via = `text/${ai.provider}`;
+    } else if (images.length > 0) {
+      // `claudeVision` sits outside the provider fallback chain by design, and
+      // it falls back to its own default model if the configured one fails.
+      // Reading a child's scores off a scan is the single place in this feature
+      // where model quality maps directly to a wrong plan, so the model is
+      // overridable per-environment rather than pinned in code.
+      reply = await this.ai.claudeVision({
+        text: buildVisionExtractionPrompt(input.note),
+        images,
+        systemPrompt: SCORE_EXTRACTION_SYSTEM,
+        maxTokens: 2000,
+        // Several full pages take appreciably longer than a text call.
+        timeoutMs: 120_000,
+        model: this.config.get<string>('pushMap.visionModel') || undefined,
+      });
+      via = `vision/${images.length}p`;
+    } else {
       throw new BadRequestException(
-        'We could not read any text from that file. If it is a scan or a photo, type the scores in by hand on the next screen.',
+        'There was nothing readable in that file. Paste the text, or type the scores in by hand on the next screen.',
       );
     }
 
-    const ai = await this.ai.chat({
-      prompt: buildExtractionPrompt(text, input.note),
-      systemPrompt: SCORE_EXTRACTION_SYSTEM,
-      preferredProvider: 'claude',
-      maxTokens: 2000,
-      temperature: 0,
-      timeoutMs: 60_000,
-    });
-
-    const parsed = extractJson<Partial<ScoreExtraction>>(ai.text);
+    const parsed = extractJson<Partial<ScoreExtraction>>(reply);
     if (!parsed) {
-      this.logger.warn(`Push Map extraction returned no JSON (provider=${ai.provider})`);
+      this.logger.warn(`Push Map extraction returned no JSON (${via})`);
       // Not an error the family should see as a failure — the confirm screen can
       // be filled in by hand, which is the whole reason it exists.
       job.extraction = { ...EMPTY_EXTRACTION, unreadable: ['everything — please enter by hand'] };
@@ -122,6 +158,10 @@ export class PushMapService {
 
     job.note = input.note;
     job.extraction = this.normalize(parsed);
+    this.logger.log(
+      `Push Map extraction ${via}: vendor=${job.extraction.vendor} ` +
+        `domains=${job.extraction.domains.length} unreadable=${job.extraction.unreadable.length}`,
+    );
     return job.extraction;
   }
 
@@ -309,6 +349,32 @@ export class PushMapService {
       grade: r.profile?.grade ?? null,
     }));
   }
+}
+
+/**
+ * Below this, a "text layer" is page furniture — a header, a page number — not a
+ * report. Falling through to vision on a near-empty text layer is right: a PDF
+ * that is a scan with a letterhead typed over it reads as 20 characters here.
+ */
+const MIN_REPORT_TEXT = 40;
+
+/** The image types the Anthropic API accepts. Anything else is dropped. */
+const VISION_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/**
+ * `data:image/jpeg;base64,…` → what `claudeVision` wants.
+ *
+ * Returns null rather than throwing for anything malformed or of a type the API
+ * will not take. A single bad page should cost that page, not the whole upload —
+ * and `extract` already handles ending up with no usable images at all.
+ */
+function decodeDataUrl(raw: string): { base64: string; mediaType: string } | null {
+  const m = /^data:([a-z]+\/[a-z0-9.+-]+);base64,(.+)$/i.exec((raw ?? '').trim());
+  if (!m) return null;
+  const mediaType = m[1].toLowerCase();
+  if (!VISION_MEDIA_TYPES.has(mediaType)) return null;
+  if (!m[2] || m[2].length < 100) return null;
+  return { base64: m[2], mediaType };
 }
 
 /** "4", "Grade 4", "4th" → 4. K → 0. Anything else → null. */

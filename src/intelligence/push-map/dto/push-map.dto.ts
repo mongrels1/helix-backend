@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsIn,
   IsInt,
@@ -15,11 +16,13 @@ import {
 /**
  * DTOs for the Push Map builder.
  *
- * These exist as classes rather than interfaces because the global
- * ValidationPipe runs with `whitelist` + `forbidNonWhitelisted`: a body typed
- * only as an interface carries no metadata, so every property would be stripped
- * and the request would arrive empty. Every field the confirm screen can send
- * has to be declared here.
+ * These are classes so the bodies are actually **validated**. The global
+ * ValidationPipe skips any body whose emitted metatype is `Object` — which is
+ * what an `interface` or an inline object type compiles to — and passes it
+ * through untouched. So an interface-typed body is not stripped; it simply
+ * arrives unchecked, which on this surface means a `vendor` we do not handle or
+ * a `percentile` of 4000 reaching the composer. Declaring classes is what turns
+ * the pipe on.
  *
  * `@IsOptional()` is used rather than `@IsNotEmpty()` throughout on purpose —
  * the confirm screen is allowed to submit nulls. A field nobody could read stays
@@ -27,10 +30,33 @@ import {
  */
 
 export class ExtractDto {
-  /** Text pulled from the PDF in the browser by `lib/pdfExtract.ts`. */
+  /**
+   * Text pulled from the PDF in the browser by `lib/pdfExtract.ts`.
+   *
+   * Optional because most score reports do not have any. Schools hand out
+   * printed-then-scanned PDFs and screenshots, which carry no text layer at
+   * all — see `pageImages`.
+   */
+  @IsOptional()
   @IsString()
   @MaxLength(200_000)
-  reportText!: string;
+  reportText?: string;
+
+  /**
+   * Rendered page images as `data:image/jpeg;base64,…` URLs, from
+   * `renderPdfPages()`. The vision path, used when the PDF has no text layer.
+   *
+   * `main.ts` raises the JSON body limit to 30mb for exactly this. The caps
+   * here are the belt to that braces: eight pages is more than any score report
+   * runs to, and a page that renders larger than ~6MB of base64 means the
+   * client ignored the render options.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsString({ each: true })
+  @MaxLength(6_000_000, { each: true })
+  pageImages?: string[];
 
   @IsOptional()
   @IsString()

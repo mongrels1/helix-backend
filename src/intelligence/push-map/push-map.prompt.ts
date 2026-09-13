@@ -54,6 +54,32 @@ export function buildExtractionPrompt(reportText: string, note?: string): string
 }
 
 /**
+ * The same job, given page images instead of text.
+ *
+ * Most score reports have no text layer — schools hand out printed-then-scanned
+ * PDFs — so this is the common path, not the fallback. The extra instruction
+ * about tables earns its place: every vendor lays the domain scores out as a
+ * grid, and a model reading a grid is at its most likely to slide a number one
+ * row off and attach it to the wrong domain. That error is invisible
+ * downstream — a plausible score against the wrong strand sends a child to the
+ * wrong work — so it is called out here and caught on the confirm screen.
+ */
+export function buildVisionExtractionPrompt(note?: string): string {
+  return [
+    'These images are the pages of one standardized test score report.',
+    ' Transcribe it into the JSON shape you were given.',
+    '\n\nRead tables row by row. Each domain score must come from the same row as its',
+    ' domain name — if you cannot tell which row a number belongs to, return null for',
+    ' that domain and add it to "unreadable". Do not read a number off a chart axis or',
+    ' a bar height; only take numbers that are printed as text.',
+    note?.trim()
+      ? `\n\nContext the family added (do NOT let this change any number you read):\n${note.trim()}`
+      : '',
+    '\n\nReturn only the JSON object.',
+  ].join('');
+}
+
+/**
  * Pull the first JSON object out of a reply.
  *
  * Same defensive shape as the lesson-plan extractor: models wrap JSON in fences
