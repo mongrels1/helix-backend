@@ -47,14 +47,24 @@ export class DiagnosticController {
     return { success: true, data };
   }
 
-  /** Attach an anonymous session to the signed-in user (after sign-up). */
+  /**
+   * File an anonymous session with the scholar it belongs to.
+   *
+   * Not "attach it to the signed-in user" — see `DiagnosticService.claim`. The
+   * caller authenticates; the service decides whose record it lands on, and
+   * returns `savedFor` so the client can name that scholar back to the family.
+   *
+   * ★ The status code is a contract with the client:
+   * **409 = recoverable, keep the claim token and retry after the right sign-in;
+   * 403 / 404 = permanently dead, discard the token.**
+   */
   @Roles(...ANY_USER)
   @Post('sessions/:id/claim')
   async claim(
     @Param('id') id: string,
     @Body() dto: ClaimDiagnosticDto,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{ success: true; data: { id: string; saved: boolean } }> {
+  ): Promise<{ success: true; data: { id: string; saved: boolean; savedFor?: string } }> {
     const data = await this.diagnosticService.claim(id, dto.claimToken, user.userId);
     return { success: true, data };
   }

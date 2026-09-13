@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -12,6 +13,7 @@ import { SaveDiagnosticDto } from './dto/save-diagnostic.dto';
 import { RemediationService } from '../remediation/remediation.service';
 import { NotificationsService } from '../../modules/notifications/notifications.service';
 import { applyUrl as fellowsApplyLink } from '@modules/fellows/evidence-token';
+import { loadFamilyLinksFor } from '../../common/family/family';
 
 @Injectable()
 export class DiagnosticService {
@@ -25,11 +27,95 @@ export class DiagnosticService {
   ) {}
 
   /**
-   * Persist a finished diagnostic. If userId is provided (signed-in student),
-   * the session is attached to that account immediately. Otherwise it is stored
-   * anonymously with a one-time claimToken so it can be attached after sign-up.
+   * Decide which account a diagnostic belongs to, given whoever is signed in.
+   *
+   * ★ **A diagnostic belongs to the scholar who sat it, never to the adult at
+   * the keyboard.** Both doors into ownership — `save()` for a signed-in run and
+   * `claim()` for an anonymous one — ask this one question, so the two can never
+   * answer it differently.
+   *
+   * - **STUDENT** → themselves.
+   * - **PARENT with exactly one linked scholar** → that scholar.
+   * - **PARENT with none, or several** → nobody. We do not guess which child sat
+   *   a test; a wrong guess files one sibling's results on another's record,
+   *   which is worse than asking.
+   * - **anyone else** → nobody. A teacher or admin account is never the home for
+   *   a child's diagnostic.
+   *
+   * Returns `ownerId: null` plus a `reason` written to be shown to a family,
+   * not to a developer. The callers differ in what they do with it: `claim()`
+   * refuses, `save()` falls back to storing the run anonymously so it can be
+   * filed correctly later. Neither ever throws the result away.
    */
-  async save(dto: SaveDiagnosticDto, userId?: string) {
+  private async resolveOwner(
+    userId: string,
+  ): Promise<{ ownerId: string; savedFor: string } | { ownerId: null; reason: string }> {
+    const claimer = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        email: true,
+        profile: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (!claimer) return { ownerId: null, reason: 'Account not found' };
+
+    if (claimer.role === 'STUDENT') {
+      const name = [claimer.profile?.firstName, claimer.profile?.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      return { ownerId: claimer.id, savedFor: name || claimer.email };
+    }
+
+    if (claimer.role === 'PARENT') {
+      const links = await loadFamilyLinksFor(this.prisma, claimer.id);
+      if (links.children.length === 1) {
+        this.logger.log(
+          `Diagnostic owner resolved: parent ${claimer.id} -> scholar ${links.children[0].id}`,
+        );
+        return { ownerId: links.children[0].id, savedFor: links.children[0].name };
+      }
+      return {
+        ownerId: null,
+        reason:
+          links.children.length === 0
+            ? 'This result belongs to a scholar, not to a parent account. Sign in as your scholar to save it, or add them to your family first — the result is kept in the meantime.'
+            : 'You have more than one scholar, so we will not guess whose result this is. Sign in as the scholar who took it and it will save to them.',
+      };
+    }
+
+    return {
+      ownerId: null,
+      reason:
+        'A diagnostic is saved to the scholar who took it. Sign in as that scholar to save this result.',
+    };
+  }
+
+  /**
+   * Persist a finished diagnostic.
+   *
+   * ⚠ This used to write `userId` — whoever was signed in — straight onto the
+   * session, **and set `claimToken` to null because it looked saved**. So a
+   * parent signed in while their child sat the test got the child's results on
+   * their own record, silently, with no token left in existence to move it. That
+   * is a worse failure than the anonymous one, because nothing is recoverable.
+   *
+   * Now the owner comes from `resolveOwner()`. When it cannot name a scholar the
+   * run is stored **anonymously with a claim token** rather than on the wrong
+   * account: the results page then shows "not saved yet", and the scholar can
+   * sign in and claim it. Saving to nobody is recoverable. Saving to the wrong
+   * person is not.
+   */
+  async save(dto: SaveDiagnosticDto, signedInUserId?: string) {
+    const owner = signedInUserId ? await this.resolveOwner(signedInUserId) : null;
+    if (owner && owner.ownerId === null) {
+      this.logger.warn(
+        `Diagnostic from user ${signedInUserId} stored anonymously for later claim: ${owner.reason}`,
+      );
+    }
+    const userId = owner?.ownerId ?? undefined;
     const claimToken = userId ? null : randomUUID();
     const session = await this.prisma.diagnosticSession.create({
       data: {
@@ -111,33 +197,64 @@ export class DiagnosticService {
     };
   }
 
-  /** Attach a previously-anonymous session to a user after they sign up / log in. */
-  async claim(sessionId: string, claimToken: string, userId: string) {
+  /**
+   * Attach an anonymous diagnostic to an account.
+   *
+   * ★ **A diagnostic belongs to the scholar who sat it, never to the adult who
+   * signs in.**
+   *
+   * This used to write `userId` — the id of whoever happened to authenticate —
+   * straight onto the session. In a family product that is systematically the
+   * wrong person: the child takes the test, the parent holds the account and
+   * logs in, and the child's results land on the parent's record. On 13 Sept
+   * 2026 that is exactly what happened to the Sterlings, and the parent wrote in
+   * to say the site had lost her son's assessment. It had not lost it. It had
+   * filed it under her name.
+   *
+   * Ownership now comes from `resolveOwner()` — the same rule `save()` uses.
+   *
+   * ⚠ The `409` is deliberately distinct from the `403`s below, because the
+   * client uses the status to decide whether to keep the claim token and try
+   * again. **A 409 is recoverable; a 403 never will be.** Changing either status
+   * changes client behaviour — see `claimPendingDiagnostic` in the frontend.
+   */
+  async claim(sessionId: string, claimToken: string, claimerId: string) {
     const session = await this.prisma.diagnosticSession.findUnique({
       where: { id: sessionId },
     });
     if (!session) throw new NotFoundException('Diagnostic session not found');
+
+    // `savedFor` is the scholar's display name, returned so the client can say
+    // *whose* record it landed on rather than just "saved". A parent told "saved
+    // to Cameron's record" can see at a glance that it went to the right child —
+    // and "saved" is precisely what the old code could have said while filing it
+    // under the wrong person.
+    const owner = await this.resolveOwner(claimerId);
+    if (owner.ownerId === null) throw new ConflictException(owner.reason);
+    const { ownerId, savedFor } = owner;
+
+    // Already attached? Fine if it is already where it belongs.
     if (session.userId) {
-      if (session.userId !== userId) {
-        throw new ForbiddenException('This diagnostic is already saved to another account');
-      }
-      return { id: session.id, saved: true };
+      if (session.userId === ownerId) return { id: session.id, saved: true, savedFor };
+      throw new ForbiddenException('This diagnostic is already saved to another account');
     }
     if (!session.claimToken || session.claimToken !== claimToken) {
       throw new ForbiddenException('Invalid claim token');
     }
+
     await this.prisma.diagnosticSession.update({
       where: { id: sessionId },
-      data: { userId, claimToken: null },
+      data: { userId: ownerId, claimToken: null },
     });
-    // Now that the anonymous run belongs to a student, feed its results into the
-    // mastery engine so the autonomous chain (mastery -> pacing -> tutor) engages.
+    // Now that the run belongs to a scholar, feed its results into the mastery
+    // engine so the autonomous chain (mastery -> pacing -> tutor) engages. This
+    // is why moving a row by hand is not equivalent to a real claim.
     const responses = await this.prisma.diagnosticResponse.findMany({
       where: { sessionId },
       select: { kc: true, tag: true },
     });
-    await this.syncMasteryFromResponses(userId, responses);
-    return { id: sessionId, saved: true };
+    await this.syncMasteryFromResponses(ownerId, responses);
+    return { id: sessionId, saved: true, savedFor };
   }
 
   /**
