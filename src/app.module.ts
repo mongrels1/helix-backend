@@ -24,6 +24,7 @@ import { PracticeModule } from './intelligence/practice/practice.module';
 import { StandardsModule } from './intelligence/standards/standards.module';
 import { TtsModule } from './intelligence/tts/tts.module';
 import { LessonPlanModule } from './intelligence/lesson-plan/lesson-plan.module';
+import { PushMapModule } from './intelligence/push-map/push-map.module';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
 import { AuthModule } from '@modules/auth/auth.module';
 import { ProvisioningModule } from '@modules/provisioning/provisioning.module';
@@ -105,6 +106,7 @@ import { KSportsModule } from '@modules/ksports/ksports.module';
     StandardsModule,
     TtsModule,
     LessonPlanModule,
+    PushMapModule,
     EventsModule,
     AttendanceModule,
     KSportsModule,

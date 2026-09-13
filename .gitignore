@@ -18,3 +18,10 @@ tsconfig.build.tsbuildinfo
 *.bak
 export_items.js
 reject_items.js
+
+# Deliverables dropped into the repo root are documents, not source. They sit
+# outside src/, so the default `**/*` include drags them in and `rootDir` then
+# rejects them — one stray .ts here breaks `nest build` for the whole service.
+# Excluded from the compiler too; see tsconfig.build.json.
+Claude outputs/
+*.bak.*

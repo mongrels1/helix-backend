@@ -8,6 +8,7 @@
     "test",
     "dist",
     "prisma",
-    "**/*spec.ts"
+    "**/*spec.ts",
+    "Claude outputs"
   ]
 }
