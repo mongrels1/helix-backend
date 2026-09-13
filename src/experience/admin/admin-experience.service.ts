@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AttendanceStatus,
@@ -17,6 +17,35 @@ import {
   resolvePlan,
   type FamilyMember,
 } from '../../common/family/family';
+import {
+  COMPARABLE_PRODUCT_IDS,
+  PRODUCTS,
+  comparisonMatrix,
+  includesFor,
+  isAssignableProductId,
+  productFor,
+  type ProductDefinition,
+  type ProductId,
+} from '../../common/product/product';
+
+/** The product, flattened for the wire. `includes` is not sent with the list. */
+interface ProductRef {
+  id: ProductId;
+  name: string;
+  price: string | null;
+  summary: string;
+  invitationOnly: boolean;
+}
+
+function toProductRef(def: ProductDefinition): ProductRef {
+  return {
+    id: def.id,
+    name: def.name,
+    price: def.price,
+    summary: def.summary,
+    invitationOnly: def.invitationOnly,
+  };
+}
 
 /** What a linked relative looks like on the wire. Dates are serialised by Nest. */
 interface FamilyRef {
@@ -213,6 +242,19 @@ export class AdminExperienceService {
           /** 'own' | 'parent' | 'none' — where the entitlement comes from. */
           planSourceKind: plan.source,
 
+          /**
+           * The resolved product — its own column in the UI, so accounts can be
+           * sorted and segmented by what they bought. A scholar inherits the
+           * product of the parent actually paying for them, which is why this
+           * reads `plan.via` rather than the row's own label: Cameron Sterling
+           * has no plan of his own and is on Above-Grade all the same.
+           */
+          product: toProductRef(
+            plan.source === 'parent' && plan.via
+              ? productFor(plan.via.plan, null, true)
+              : productFor(user.plan, user.planSource, isPaid),
+          ),
+
           canDelete: !isPaid && !hasActivity && !isOwnerAccount(user.role) && !familyBlock,
           deleteBlockedReason,
         };
@@ -283,6 +325,136 @@ export class AdminExperienceService {
           seatsFull: seatsUsed >= seats,
         };
       }),
+    };
+  }
+
+  /**
+   * Correct the product on an account by hand.
+   *
+   * Exists because there was no way to. `UpdateUserDto` extends `CreateUserDto`,
+   * which carries email, name, role and password and nothing about billing — so
+   * when a customer on Above-Grade was recorded as Standard, the only routes to
+   * fixing it were a SQL statement or waiting for her next renewal.
+   *
+   * **This writes the label and the seat count; it does not touch `planStatus`.**
+   * It is a correction to what somebody bought, not a grant of access. An
+   * account with no active plan stays without one, and the caller is told so
+   * rather than quietly ending up with a product name on a free row.
+   */
+  async setProduct(
+    userId: string,
+    productId: string,
+  ): Promise<{
+    id: string;
+    product: ProductRef;
+    seats: number | null;
+    seatsChangedFrom: number | null;
+    warning: string | null;
+  }> {
+    if (!isAssignableProductId(productId)) {
+      throw new BadRequestException(
+        `Unknown product "${productId}". Assignable products are ${Object.values(PRODUCTS)
+          .filter((p) => p.id !== 'NONE' && p.id !== 'INSTITUTIONAL')
+          .map((p) => p.id)
+          .join(', ')}.`,
+      );
+    }
+    const def = PRODUCTS[productId];
+
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true, role: true, planStatus: true, planRenewsAt: true, maxStudents: true, planSource: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Institutional access is granted by a school, not bought. Overwriting it
+    // with a consumer product label would misreport a free family as a paying
+    // one and put them back in reach of billing copy they were promised they
+    // would never see.
+    if (user.planSource === 'INSTITUTIONAL') {
+      throw new BadRequestException(
+        'This account’s access comes from a school or partner programme, not a purchase. Change it there, not here.',
+      );
+    }
+
+    const seatsChangedFrom =
+      def.seats !== null && user.maxStudents !== def.seats ? user.maxStudents : null;
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        plan: def.name,
+        ...(def.seats !== null ? { maxStudents: def.seats } : {}),
+      },
+    });
+
+    const warning = isPlanActive(user.planStatus, user.planRenewsAt)
+      ? null
+      : 'Recorded, but this account has no active plan — the product name alone does not grant access.';
+
+    return {
+      id: userId,
+      product: toProductRef(def),
+      seats: def.seats,
+      seatsChangedFrom,
+      warning,
+    };
+  }
+
+  /**
+   * The product for one account, as that family sees it — for the ribbon.
+   *
+   * A scholar has no plan of their own; theirs comes from the parent paying for
+   * them, exactly as `EntitlementService` decides access. Returns the full
+   * definition, `includes` and all, because the ribbon opens onto it and a
+   * family reading what they are owed should not need a second call.
+   */
+  async getProductForUser(userId: string): Promise<{
+    product: ProductDefinition & { includes: string[] };
+    source: 'own' | 'parent' | 'none';
+    coveredBy: string | null;
+    comparison: {
+      products: { id: ProductId; name: string; price: string | null }[];
+      rows: { key: string; label: string; has: Record<string, boolean> }[];
+    };
+  }> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true, role: true, plan: true, planStatus: true, planRenewsAt: true, planSource: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const family = (await loadFamilyLinks(this.prisma, [userId])).get(userId) ?? {
+      parents: [],
+      children: [],
+    };
+    const plan = resolvePlan(user, family);
+
+    const paid = isPlanActive(user.planStatus, user.planRenewsAt);
+    const fromParent = plan.source === 'parent' && plan.via;
+    const def = fromParent
+      ? productFor(plan.via!.plan, null, true)
+      : productFor(user.plan, user.planSource, paid);
+
+    // The comparison table behind the ribbon. Always the publicly purchasable
+    // products, plus this family's own if it is not one of them — so a Legacy
+    // or Fellows household sees their own column, while nobody else is shown an
+    // invitation-only rate they cannot buy.
+    const ids: ProductId[] = [...COMPARABLE_PRODUCT_IDS];
+    if (def.id !== 'NONE' && !ids.includes(def.id)) ids.push(def.id);
+
+    return {
+      product: { ...def, includes: includesFor(def.id) },
+      source: fromParent ? 'parent' : paid || user.planSource === 'INSTITUTIONAL' ? 'own' : 'none',
+      coveredBy: fromParent ? plan.via!.name : null,
+      comparison: {
+        products: ids.map((id) => ({
+          id,
+          name: PRODUCTS[id].name,
+          price: PRODUCTS[id].price,
+        })),
+        rows: comparisonMatrix(ids),
+      },
     };
   }
 

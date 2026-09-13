@@ -1,14 +1,27 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   DefaultValuePipe,
   Get,
+  Param,
   ParseIntPipe,
+  Patch,
   Query,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { IsString } from 'class-validator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { AdminExperienceService } from './admin-experience.service';
+
+/**
+ * The global pipe runs with `forbidNonWhitelisted`, so this has to be declared
+ * or the request 400s before it reaches the service.
+ */
+class SetProductDto {
+  @IsString()
+  productId!: string;
+}
 
 @Controller('api/v1/experience/admin')
 @Roles(Role.ORG_ADMIN, Role.SUPER_ADMIN)
@@ -45,6 +58,22 @@ export class AdminExperienceController {
     @Query('search') search?: string,
   ): Promise<{ success: true; data: Awaited<ReturnType<AdminExperienceService['listLinkableParents']>> }> {
     const data = await this.adminExperienceService.listLinkableParents(search);
+    return { success: true, data };
+  }
+
+  /**
+   * Correct which product an account is on.
+   *
+   * A correction, not a grant: it writes the product name and its seat count and
+   * leaves `planStatus` alone. If the account has no active plan the response
+   * says so rather than leaving an admin believing they granted access.
+   */
+  @Patch('users/:id/product')
+  async setProduct(
+    @Param('id') id: string,
+    @Body() body: SetProductDto,
+  ): Promise<{ success: true; data: Awaited<ReturnType<AdminExperienceService['setProduct']>> }> {
+    const data = await this.adminExperienceService.setProduct(id, body.productId);
     return { success: true, data };
   }
 

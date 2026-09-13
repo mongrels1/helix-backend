@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type Stripe from 'stripe';
 import { isOwnerAccount, isStripeWritable } from '../../common/billing/billing';
+import { priceIdMappingConfigured, resolveProductByPriceId } from '../../common/product/product';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '@modules/email/email.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -185,6 +186,24 @@ export class StripeService {
   private async planLabel(sub: Stripe.Subscription): Promise<string | null> {
     const price = sub.items?.data?.[0]?.price as Stripe.Price | undefined;
     if (!price) return null;
+
+    // ★ The join, tried first. A price id is what actually charged the card, so
+    // it answers "what did they buy" without trusting a typed product name —
+    // and when it matches, the label we store is OUR canonical name from the
+    // catalogue rather than GHL's string, which is what stops the two drifting
+    // apart at all.
+    const byPrice = resolveProductByPriceId(price.id);
+    if (byPrice) return byPrice.name;
+    if (priceIdMappingConfigured()) {
+      // Some products are mapped and this one is not: the catalogue has fallen
+      // behind Stripe, which is exactly how a new tier starts getting
+      // mislabelled. Loud on purpose. (Silent while no ids are filled in at
+      // all, because then every price would warn and the line would be noise.)
+      this.logger.warn(
+        `Stripe price ${price.id} is not in the product catalogue. Falling back to ` +
+          `the product name — add the id to common/product/product.ts.`,
+      );
+    }
 
     const product = price.product;
     if (product && typeof product !== 'string') {
