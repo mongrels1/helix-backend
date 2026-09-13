@@ -70,8 +70,23 @@ export function buildVisionExtractionPrompt(note?: string): string {
     ' Transcribe it into the JSON shape you were given.',
     '\n\nRead tables row by row. Each domain score must come from the same row as its',
     ' domain name — if you cannot tell which row a number belongs to, return null for',
-    ' that domain and add it to "unreadable". Do not read a number off a chart axis or',
-    ' a bar height; only take numbers that are printed as text.',
+    ' that domain and add it to "unreadable".',
+    '\n\nOnly take numbers that are PRINTED AS TEXT. Never estimate one from the height',
+    ' of a bar or a position on an axis. A number printed as a label on a chart (for',
+    ' example "Typical 500", "Stretch 510", or a score printed under a bar) is printed',
+    ' text and you should read it.',
+    // ★ The failure that made this instruction necessary. A parent's "report" is
+    // usually a browser print of the whole i-Ready dashboard: a one-page summary
+    // whose domain table shows ONLY placement labels, then one detail page per
+    // domain — pages apart, under pages of lesson-resource boilerplate — where the
+    // actual scale score is finally printed under the domain heading. A reader
+    // that stops at the summary table reports three of four domains unreadable,
+    // which is exactly what happened on the first real file.
+    '\n\nIMPORTANT: the summary table near the front often shows each domain with only',
+    ' a placement label and no number. The numeric score for each domain is usually',
+    ' printed later, on that domain\'s own detail page, directly under the domain',
+    ' heading beside its placement. Look through ALL the pages for each domain before',
+    ' concluding its score is unreadable, and record both the number and the label.',
     note?.trim()
       ? `\n\nContext the family added (do NOT let this change any number you read):\n${note.trim()}`
       : '',

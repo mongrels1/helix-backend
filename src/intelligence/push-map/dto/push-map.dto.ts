@@ -46,14 +46,21 @@ export class ExtractDto {
    * Rendered page images as `data:image/jpeg;base64,…` URLs, from
    * `renderPdfPages()`. The vision path, used when the PDF has no text layer.
    *
-   * `main.ts` raises the JSON body limit to 30mb for exactly this. The caps
-   * here are the belt to that braces: eight pages is more than any score report
-   * runs to, and a page that renders larger than ~6MB of base64 means the
-   * client ignored the render options.
+   * `main.ts` raises the JSON body limit to 30mb for exactly this.
+   *
+   * The cap is 30 pages, not the 8 it started at. What families upload is not a
+   * tidy two-page report — it is a browser print of the whole dashboard, and the
+   * first real one was 21 pages with the four domain scores on pages 2, 11, 15
+   * and 19. An 8-page cap silently truncated three of them, and the reader
+   * correctly reported what it had been given: unreadable. A page budget below
+   * the length of a real document is a wrong answer generator.
+   *
+   * At the render settings the client uses, 30 pages is roughly 7MB of base64 —
+   * comfortably inside the body limit.
    */
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(8)
+  @ArrayMaxSize(30)
   @IsString({ each: true })
   @MaxLength(6_000_000, { each: true })
   pageImages?: string[];
