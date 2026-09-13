@@ -9,6 +9,7 @@ import { GA_STRANDS } from '../standards/ga-standards.data';
 import type {
   DomainTrack,
   ExtractedDomain,
+  PlanBlock,
   PushMap,
   ScoreExtraction,
   Track,
@@ -46,7 +47,7 @@ export const REACH_BY_PRODUCT: Record<string, number> = {
  * believing a domain gap. Deliberately not zero: i-Ready reports ±8 on a scale
  * where domains span ~26 points, so a handful of points is never a signal.
  */
-const DEFAULT_NOISE_BAND = 8;
+export const DEFAULT_NOISE_BAND = 8;
 
 /**
  * Vendor domain wording → Georgia strand.
@@ -134,6 +135,103 @@ function standardsFor(strand: GaStrand | null, grade: number, limit = 6): string
 }
 
 /**
+ * ★ The Kairos Point is a one-page document. This is what keeps it one page.
+ *
+ * Everything else in the report is bounded by construction: the letterhead, the
+ * four headline figures and the opening paragraph are fixed, and the chart grows
+ * by one thin row per domain, which no instrument reports many of. The standards
+ * list is the only unbounded part — six per strand across eight strands is
+ * forty-eight lines, which is three pages, and the report would have quietly
+ * become a stapled packet the first time a scholar's report carried more
+ * domains than Cameron's did.
+ *
+ * The budget only bites when the total would exceed it, so a report that
+ * already fits is returned untouched. When it does bite, it trims the longest
+ * blocks first and never takes a strand below one standard — a strand named in
+ * the plan with nothing under it would read as an omission rather than a
+ * summary. What is cut is counted and shown.
+ */
+/**
+ * A standard's cost is the space it takes, not the fact that it is one item.
+ *
+ * Georgia objectives run from 76 to 180 characters, so counting items rather
+ * than lines under-reads the long ones by a factor of three. These constants
+ * are calibrated against the rendered two-column report at 7.8pt.
+ */
+const CHARS_PER_LINE = 55;
+const BLOCK_HEADER_LINES = 1.6;
+/**
+ * Vertical budget for the plan section, measured in wrapped text lines **of the
+ * taller of the two columns** — not of the total.
+ *
+ * The plan renders as two explicit side-by-side columns, so what reaches the
+ * bottom of the page is the taller one. Budgeting the total was the earlier
+ * mistake and it let the footer tip onto a second page while every line of
+ * content still fitted.
+ */
+const BASE_COLUMN_LINES = 39;
+/**
+ * Every extra domain adds a chart row, which spends the plan's budget.
+ *
+ * 4.5 rather than the ~1.7 a single-line row measures, because vendor domain
+ * names run long — "Operations and Algebraic Thinking", "Real and Complex Number
+ * Systems" — and wrap the name column, roughly doubling the row. Both constants
+ * are calibrated by rendering two real shapes to PDF and counting pages: a
+ * four-domain i-Ready report and a six-domain MAP report with maximal standards
+ * text. 39 is one step below the largest value that still fits both, so there is
+ * margin for a report neither case anticipates.
+ */
+const LINES_PER_DOMAIN_ROW = 4.5;
+
+/**
+ * The taller column after the same greedy balance the renderers apply.
+ * Duplicated deliberately: the budget is meaningless unless it measures the
+ * layout that will actually be produced.
+ */
+function tallestColumn(blocks: { standards: string[] }[]): number {
+  let lh = 0;
+  let rh = 0;
+  for (const b of blocks) {
+    const h = estimateLines(b);
+    if (lh <= rh) lh += h;
+    else rh += h;
+  }
+  return Math.max(lh, rh);
+}
+
+function estimateLines(b: { standards: string[] }): number {
+  return (
+    BLOCK_HEADER_LINES +
+    b.standards.reduce((n, s) => n + Math.ceil(s.length / CHARS_PER_LINE), 0)
+  );
+}
+
+export function fitToOnePage(
+  blocks: { strand: string; grade: number; standards: string[] }[],
+  domainCount: number,
+): PlanBlock[] {
+  const out: PlanBlock[] = blocks.map((b) => ({ ...b, omitted: 0 }));
+  const budget = BASE_COLUMN_LINES - domainCount * LINES_PER_DOMAIN_ROW;
+
+  // Trim one standard at a time from whichever block is currently tallest.
+  // One at a time rather than proportionally keeps the blocks even, so no single
+  // strand is gutted to protect another.
+  while (tallestColumn(out) > budget) {
+    const tallest = out.reduce((a, b) => (estimateLines(b) > estimateLines(a) ? b : a));
+    // The floor is zero standards, not one. A strand can be reduced to its
+    // heading plus a count — "Numerical Reasoning · Grade 4 · +6 at this grade" —
+    // which still tells a parent the strand is in the plan and how much work sits
+    // under it. Stopping at one standard per strand was a floor high enough that
+    // a six-domain report could not be made to fit at all, and the page silently
+    // became two.
+    if (tallest.standards.length === 0) break;
+    tallest.standards.pop();
+    tallest.omitted += 1;
+  }
+  return out;
+}
+
+/**
  * Was this taken in the opening weeks of the school year?
  *
  * ★ The single most useful thing the report can tell a parent. A test taken in
@@ -218,9 +316,10 @@ export function composePushMap(
     throw new Error('An overall score and a grade are required to build a Push Map.');
   }
 
+  const noiseBand = extraction.overall.standardError ?? DEFAULT_NOISE_BAND;
   const domains = assignTracks(extraction.domains, overall, grade, {
     reach: opts.reach ?? 1,
-    noiseBand: extraction.overall.standardError,
+    noiseBand,
   });
   const push = domains.filter((d) => d.track === 'PUSH');
   const strengthen = domains.filter((d) => d.track === 'STRENGTHEN');
@@ -234,23 +333,34 @@ export function composePushMap(
     takenOn: extraction.takenOn,
     overall,
     percentile: extraction.percentile,
+    standardError: extraction.overall.standardError,
+    noiseBand,
     kairosPoint: composeKairosPoint(firstName, extraction, push, earlyInYear),
     earlyInYear,
     domains,
     push,
     strengthen,
-    plan: {
-      push: push.map((d) => ({
-        strand: strandLabel(d.strand),
-        grade: d.gradeCeiling,
-        standards: standardsFor(d.strand, d.gradeCeiling),
-      })),
-      strengthen: strengthen.map((d) => ({
-        strand: strandLabel(d.strand),
-        grade: d.gradeFloor,
-        standards: standardsFor(d.strand, d.gradeFloor),
-      })),
-    },
+    // Budgeted across both tracks at once — see `fitToOnePage`. Push blocks are
+    // listed first so that when the budget bites it is the consolidation lists
+    // that shorten, not the headline.
+    plan: (() => {
+      const fitted = fitToOnePage(
+        [
+        ...push.map((d) => ({
+          strand: strandLabel(d.strand),
+          grade: d.gradeCeiling,
+          standards: standardsFor(d.strand, d.gradeCeiling),
+        })),
+        ...strengthen.map((d) => ({
+          strand: strandLabel(d.strand),
+          grade: d.gradeFloor,
+          standards: standardsFor(d.strand, d.gradeFloor),
+        })),
+        ],
+        domains.length,
+      );
+      return { push: fitted.slice(0, push.length), strengthen: fitted.slice(push.length) };
+    })(),
     growthTargets: {
       baseline: overall,
       typical: extraction.growthTargets.typical,

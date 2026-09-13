@@ -61,6 +61,15 @@ export interface ScoreExtraction {
 
 export type Track = 'PUSH' | 'STRENGTHEN';
 
+/** One strand's slice of the plan. */
+export interface PlanBlock {
+  strand: string;
+  grade: number;
+  standards: string[];
+  /** Standards that exist at this grade and strand but did not fit. */
+  omitted: number;
+}
+
 export interface DomainTrack {
   name: string;
   strand: GaStrand | null;
@@ -86,6 +95,18 @@ export interface PushMap {
   takenOn: string | null;
   overall: number;
   percentile: number | null;
+  /** As printed on the report. Null when the instrument prints none. */
+  standardError: number | null;
+  /**
+   * The half-width of the band around `overall` inside which a domain gap is not
+   * yet evidence — the reported standard error, or the default when none was
+   * printed.
+   *
+   * Exposed because the report draws it. It could be reverse-engineered from the
+   * `provisional` flags, but a number the reader is shown should be the number
+   * the decision was made with, not one inferred back out of its consequences.
+   */
+  noiseBand: number;
   /** The named opening paragraph. */
   kairosPoint: string;
   /** True when the report was taken in the opening weeks of the school year. */
@@ -93,10 +114,17 @@ export interface PushMap {
   domains: DomainTrack[];
   push: DomainTrack[];
   strengthen: DomainTrack[];
-  /** Per-strand standards for each track, drawn from the GA registry. */
+  /**
+   * Per-strand standards for each track, drawn from the GA registry.
+   *
+   * `omitted` is how many further standards exist at that grade and strand but
+   * were cut to keep the report to one page — see `fitToOnePage`. It is
+   * surfaced, never silently dropped: a parent reading "+4 more" knows the list
+   * is a selection, which a truncated list with no marker does not tell them.
+   */
   plan: {
-    push: { strand: string; grade: number; standards: string[] }[];
-    strengthen: { strand: string; grade: number; standards: string[] }[];
+    push: PlanBlock[];
+    strengthen: PlanBlock[];
   };
   growthTargets: { baseline: number | null; typical: number | null; stretch: number | null };
   generatedAt: string;
