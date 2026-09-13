@@ -153,8 +153,66 @@ export class StripeService {
       { email, customerId, metaUserId, subscriptionId: sub.id },
       planStatus,
       renewsAt,
+      await this.planLabel(sub),
     );
     return { handled: true, action: `${sub.status}->${planStatus}${found ? '' : ':no_user'}`, email: email ?? undefined };
+  }
+
+  /**
+   * The product name to record on the account, e.g. "EdKairos Founding Family".
+   *
+   * This path never wrote one. `ProvisioningService` (the GHL purchase webhook)
+   * has always set `plan` from the payload's product field, so GHL-bought
+   * accounts carry a tier name — but a subscription that reaches us only through
+   * Stripe left `plan` null, and the admin list could then say nothing more
+   * specific than "Paid". Reading the price's nickname/product here closes that
+   * gap for every future event on the row, including renewals of existing ones.
+   *
+   * ⚠ A `customer.subscription.*` webhook carries `items.data[0].price` with
+   * `product` as a bare **string id**, not an expanded object — so reading the
+   * event alone usually yields nothing but the price nickname, which most
+   * accounts never set. That is why this retrieves the product when it has only
+   * an id: without the retrieve, this function would silently return null on
+   * almost every real event and the feature would look implemented while doing
+   * nothing. One extra API call per subscription event, on a path that already
+   * retrieves the customer.
+   *
+   * Returns null rather than a guess when nothing names the tier. A null is
+   * written as "no change", so an existing label is never overwritten with a
+   * blank — and the UI prints "Paid" with no tier, which is honest, where
+   * inventing a tier would not be.
+   */
+  private async planLabel(sub: Stripe.Subscription): Promise<string | null> {
+    const price = sub.items?.data?.[0]?.price as Stripe.Price | undefined;
+    if (!price) return null;
+
+    const product = price.product;
+    if (product && typeof product !== 'string') {
+      if (!('deleted' in product && product.deleted)) {
+        const name = (product as Stripe.Product).name?.trim();
+        if (name) return name;
+      }
+    } else if (typeof product === 'string' && this.stripe) {
+      try {
+        // `products.retrieve` is typed as always returning a live Product, so a
+        // cast to DeletedProduct does not type-check. Read both fields
+        // structurally: a deleted product still answers, and must not be used.
+        const fetched = (await this.stripe.products.retrieve(product)) as {
+          name?: string;
+          deleted?: boolean;
+        };
+        if (!fetched.deleted) {
+          const name = fetched.name?.trim();
+          if (name) return name;
+        }
+      } catch (err) {
+        // Never fail the webhook over a cosmetic label. A missed name leaves
+        // the row reading "Paid", which is still true.
+        this.logger.warn(`Could not retrieve Stripe product ${product}: ${String(err)}`);
+      }
+    }
+
+    return price.nickname?.trim() || null;
   }
 
   private async getCustomer(
@@ -248,6 +306,7 @@ export class StripeService {
     },
     planStatus: string,
     renewsAt: Date | null | undefined,
+    planLabel?: string | null,
   ): Promise<boolean> {
     const { email, customerId, metaUserId, subscriptionId } = identity;
     const select = { id: true, role: true, planSource: true, stripeCustomerId: true } as const;
@@ -324,6 +383,10 @@ export class StripeService {
       data: {
         planStatus,
         ...(renewsAt !== undefined ? { planRenewsAt: renewsAt } : {}),
+        // Record the tier name when Stripe gave us one. Never blank an existing
+        // label: a GHL-provisioned row already carries the right product name,
+        // and an un-expanded price on one event must not erase it.
+        ...(planLabel ? { plan: planLabel } : {}),
         // First Stripe write on this row establishes provenance, so a later
         // institutional grant cannot be mistaken for a purchase and vice versa.
         ...(user.planSource == null ? { planSource: 'STRIPE' as const } : {}),

@@ -3,23 +3,25 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { AttendanceStatus, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
+// Seats moved to common/family so the admin surface can show the same number
+// this service enforces. Re-exported below; nothing that imported it from here
+// needs to change.
+import { DEFAULT_FAMILY_SEATS } from '../../common/family/family';
 
 const SALT_ROUNDS = 10;
 
-/**
- * Seats for an account whose `maxStudents` is null — every account created
- * before provisioning began setting it. One, deliberately: a larger default
- * would hand every legacy row seats nobody paid for. Purchases set the real
- * number in `provisioning.planConfig()`.
- */
-const DEFAULT_FAMILY_SEATS = 1;
+export { DEFAULT_FAMILY_SEATS };
 
 @Injectable()
 export class ParentExperienceService {
+  private readonly logger = new Logger(ParentExperienceService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -120,13 +122,38 @@ export class ParentExperienceService {
     throw new BadRequestException('Please enter a login address for your child');
   }
 
-  async linkParentToStudent(parentId: string, studentId: string) {
-    const [parent, student, existing] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: parentId }, select: { id: true, role: true } }),
+  /**
+   * Attach an existing scholar to an existing parent. Admin-only (see the
+   * controller).
+   *
+   * ## Seats
+   *
+   * `addChild()` has always refused to exceed the parent's `maxStudents`, but
+   * this path never checked it — so the admin route could quietly put a fourth
+   * scholar on a three-seat plan, and the family would be over their allowance
+   * with nothing anywhere recording that a person decided it.
+   *
+   * Exceeding the cap is often exactly right (a comped extra child, a family
+   * mid-upgrade), so this does not forbid it: it refuses by default and accepts
+   * `allowOverSeatLimit`, which the admin UI only sends after showing the
+   * numbers and asking. An override you had to click is a decision; a limit that
+   * silently did not apply is a bug waiting to be discovered at renewal.
+   */
+  async linkParentToStudent(
+    parentId: string,
+    studentId: string,
+    options: { allowOverSeatLimit?: boolean } = {},
+  ) {
+    const [parent, student, existing, seatsUsed] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: parentId },
+        select: { id: true, role: true, maxStudents: true },
+      }),
       this.prisma.user.findUnique({ where: { id: studentId }, select: { id: true, role: true } }),
       this.prisma.parentStudentLink.findUnique({
         where: { parentId_studentId: { parentId, studentId } },
       }),
+      this.prisma.parentStudentLink.count({ where: { parentId } }),
     ]);
 
     if (!parent || parent.role !== Role.PARENT) {
@@ -139,7 +166,49 @@ export class ParentExperienceService {
       throw new ConflictException('Parent is already linked to this student');
     }
 
-    return this.prisma.parentStudentLink.create({ data: { parentId, studentId } });
+    const seats = parent.maxStudents ?? DEFAULT_FAMILY_SEATS;
+    if (seatsUsed >= seats && !options.allowOverSeatLimit) {
+      throw new BadRequestException(
+        `That parent's plan includes ${seats} child ${seats === 1 ? 'login' : 'logins'} and ` +
+          `${seatsUsed} ${seatsUsed === 1 ? 'is' : 'are'} already in use. ` +
+          `Link anyway only if you intend to give the family an extra seat.`,
+      );
+    }
+
+    const link = await this.prisma.parentStudentLink.create({ data: { parentId, studentId } });
+    if (seatsUsed >= seats) {
+      // Over-cap links are deliberate but must not be invisible. This is the
+      // only record that a human chose to exceed the plan.
+      this.logger.warn(
+        `Admin linked student ${studentId} to parent ${parentId} OVER the seat limit ` +
+          `(${seatsUsed + 1} of ${seats}).`,
+      );
+    }
+    return { ...link, seats, seatsUsed: seatsUsed + 1, overSeatLimit: seatsUsed >= seats };
+  }
+
+  /**
+   * Remove a parent↔scholar link, leaving both accounts standing.
+   *
+   * Admin-only (see the controller). This is what an admin should reach for
+   * when a scholar is attached to the wrong family — the previous alternatives
+   * were to delete the scholar's account outright, or to leave it wrong.
+   *
+   * Note the consequence and say it out loud to whoever asks: if this was the
+   * scholar's only link to a paying parent, they lose entitlement the moment it
+   * is cut, because `EntitlementService` reads exactly this relation.
+   */
+  async unlinkParentFromStudent(parentId: string, studentId: string) {
+    const existing = await this.prisma.parentStudentLink.findUnique({
+      where: { parentId_studentId: { parentId, studentId } },
+    });
+    if (!existing) {
+      throw new NotFoundException('That parent and student are not linked');
+    }
+    await this.prisma.parentStudentLink.delete({
+      where: { parentId_studentId: { parentId, studentId } },
+    });
+    return { parentId, studentId, unlinked: true as const };
   }
 
   async getChildren(parentId: string) {

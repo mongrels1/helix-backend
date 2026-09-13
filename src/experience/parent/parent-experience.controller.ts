@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { ParentExperienceService } from './parent-experience.service';
@@ -16,6 +16,20 @@ class LinkParentStudentDto {
 
   @IsString()
   studentId!: string;
+}
+
+/**
+ * Linking, which additionally carries the seat override.
+ *
+ * The global pipe runs with `forbidNonWhitelisted`, so the flag has to be
+ * declared or the request 400s — and it is deliberately absent from the unlink
+ * DTO, which has nothing to override.
+ */
+class AdminLinkDto extends LinkParentStudentDto {
+  /** Set only after an admin has been shown the seat count and confirmed. */
+  @IsOptional()
+  @IsBoolean()
+  allowOverSeatLimit?: boolean;
 }
 
 /**
@@ -74,9 +88,31 @@ export class ParentExperienceController {
   @HttpCode(200)
   @Roles(Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async link(
-    @Body() body: LinkParentStudentDto,
+    @Body() body: AdminLinkDto,
   ): Promise<{ success: true; data: Awaited<ReturnType<ParentExperienceService['linkParentToStudent']>> }> {
     const data = await this.parentExperienceService.linkParentToStudent(
+      body.parentId,
+      body.studentId,
+      { allowOverSeatLimit: body.allowOverSeatLimit },
+    );
+    return { success: true, data };
+  }
+
+  /**
+   * Detach a scholar from a parent. Admin-only, like `link` above.
+   *
+   * The safe counterpart to deleting the account. An admin who wants a scholar
+   * out of a family now has an action that removes the relationship and leaves
+   * the login, its diagnostic history and its mastery record intact — before
+   * this, the only control on that row which did anything was Delete.
+   */
+  @Post('unlink')
+  @HttpCode(200)
+  @Roles(Role.ORG_ADMIN, Role.SUPER_ADMIN)
+  async unlink(
+    @Body() body: LinkParentStudentDto,
+  ): Promise<{ success: true; data: Awaited<ReturnType<ParentExperienceService['unlinkParentFromStudent']>> }> {
+    const data = await this.parentExperienceService.unlinkParentFromStudent(
       body.parentId,
       body.studentId,
     );

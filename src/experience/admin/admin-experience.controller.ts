@@ -33,6 +33,21 @@ export class AdminExperienceController {
     return { success: true, data };
   }
 
+  /**
+   * Parent accounts an admin can attach an orphan scholar to.
+   *
+   * Separate from `users?role=PARENT` because the picker needs each parent's
+   * plan state beside their name — attaching a child to the wrong Sterling is
+   * exactly the class of mistake this change exists to prevent.
+   */
+  @Get('parents')
+  async parents(
+    @Query('search') search?: string,
+  ): Promise<{ success: true; data: Awaited<ReturnType<AdminExperienceService['listLinkableParents']>> }> {
+    const data = await this.adminExperienceService.listLinkableParents(search);
+    return { success: true, data };
+  }
+
   @Get('organizations')
   async organizations(): Promise<{ success: true; data: Awaited<ReturnType<AdminExperienceService['getOrganizations']>> }> {
     const data = await this.adminExperienceService.getOrganizations();

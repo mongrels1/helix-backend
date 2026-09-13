@@ -26,6 +26,33 @@ export function isBillingExempt(role: string | null | undefined): boolean {
 }
 
 /**
+ * Is this row's own subscription live right now?
+ *
+ * The one test for "is this plan active", because there were two. The admin
+ * user list asked `planStatus === 'active'` and stopped there; EntitlementService
+ * asked the same thing *and* checked that the paid period had not run out. So a
+ * subscription that lapsed without Stripe having sent the closing webhook read
+ * as Paid in the admin list while the product itself had already locked the
+ * family out. Both now call this.
+ *
+ * A null `planRenewsAt` means "no known end date" and stays active — that is how
+ * every row behaved before this function existed, and an institutional or comped
+ * grant legitimately has no renewal date at all.
+ *
+ * Note this answers only "does THIS row hold a live plan". A scholar covered by
+ * a parent's subscription is false here and entitled anyway; that question
+ * belongs to `common/family/family.ts`.
+ */
+export function isPlanActive(
+  planStatus: string | null | undefined,
+  planRenewsAt: Date | null | undefined,
+): boolean {
+  if ((planStatus ?? '').toLowerCase() !== 'active') return false;
+  if (planRenewsAt == null) return true;
+  return planRenewsAt.getTime() > Date.now();
+}
+
+/**
  * The owner account. Stripe must never write a plan status onto it: the owner's
  * email can appear on a test, personal or legacy subscription, and a single
  * `past_due` webhook would then mark the platform's own account delinquent.

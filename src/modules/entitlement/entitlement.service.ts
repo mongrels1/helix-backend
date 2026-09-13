@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isBillingExempt } from '../../common/billing/billing';
+import { isBillingExempt, isPlanActive } from '../../common/billing/billing';
+import { coveringParent, loadFamilyLinksFor } from '../../common/family/family';
 
 /**
  * Decides whether a user may access the PAID learning features (AI Tutor,
@@ -10,15 +11,15 @@ import { isBillingExempt } from '../../common/billing/billing';
  *  - their own subscription is active (planStatus = 'active' and not past renewal), OR
  *  - (for a child STUDENT) a linked PARENT's subscription is active — family plans
  *    cover every child linked via ParentStudentLink.
+ *
+ * The two tests it applies — `isPlanActive` and `coveringParent` — are now
+ * shared with the admin user list rather than private to this file. That is the
+ * whole point of the change: the list rendered "No plan" and an enabled delete
+ * button on the very scholars this service was already treating as paid.
  */
 @Injectable()
 export class EntitlementService {
   constructor(private readonly prisma: PrismaService) {}
-
-  private isActive(planStatus: string | null, planRenewsAt: Date | null): boolean {
-    if (planStatus !== 'active') return false;
-    return planRenewsAt === null || planRenewsAt.getTime() > Date.now();
-  }
 
   async isEntitled(userId: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({
@@ -30,14 +31,11 @@ export class EntitlementService {
     // planStatus happens to say. Without this a stray Stripe webhook against
     // the owner's email would revoke the owner's own access.
     if (isBillingExempt(user.role)) return true;
-    if (this.isActive(user.planStatus, user.planRenewsAt)) return true;
+    if (isPlanActive(user.planStatus, user.planRenewsAt)) return true;
 
     if (user.role === 'STUDENT') {
-      const links = await this.prisma.parentStudentLink.findMany({
-        where: { studentId: userId },
-        select: { parent: { select: { planStatus: true, planRenewsAt: true } } },
-      });
-      return links.some((l) => this.isActive(l.parent.planStatus, l.parent.planRenewsAt));
+      const links = await loadFamilyLinksFor(this.prisma, userId);
+      return coveringParent(links) !== null;
     }
     return false;
   }

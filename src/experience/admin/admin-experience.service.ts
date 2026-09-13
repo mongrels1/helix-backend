@@ -9,7 +9,42 @@ import {
 } from '@prisma/client';
 import Redis from 'ioredis';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isBillingExempt, isOwnerAccount } from '../../common/billing/billing';
+import { isBillingExempt, isOwnerAccount, isPlanActive } from '../../common/billing/billing';
+import {
+  DEFAULT_FAMILY_SEATS,
+  familyDeleteBlock,
+  loadFamilyLinks,
+  resolvePlan,
+  type FamilyMember,
+} from '../../common/family/family';
+
+/** What a linked relative looks like on the wire. Dates are serialised by Nest. */
+interface FamilyRef {
+  id: string;
+  name: string;
+  email: string;
+  plan: string | null;
+  planStatus: string | null;
+  planActive: boolean;
+}
+
+/** A parent offered in the admin link picker, with their seat allowance. */
+interface LinkableParent extends FamilyRef {
+  seats: number;
+  seatsUsed: number;
+  seatsFull: boolean;
+}
+
+function toRef(member: FamilyMember): FamilyRef {
+  return {
+    id: member.id,
+    name: member.name,
+    email: member.email,
+    plan: member.plan,
+    planStatus: member.planStatus,
+    planActive: member.planActive,
+  };
+}
 
 @Injectable()
 export class AdminExperienceService {
@@ -109,11 +144,13 @@ export class AdminExperienceService {
     ]);
 
     const ids = users.map((u) => u.id);
-    const [enr, sub, cls, ic] = await Promise.all([
+    const [enr, sub, cls, ic, families] = await Promise.all([
       this.prisma.enrollment.findMany({ where: { studentId: { in: ids } }, select: { studentId: true } }),
       this.prisma.submission.findMany({ where: { studentId: { in: ids } }, select: { studentId: true } }),
       this.prisma.classroom.findMany({ where: { teacherId: { in: ids } }, select: { teacherId: true } }),
       this.prisma.instructorContent.findMany({ where: { teacherId: { in: ids } }, select: { teacherId: true } }),
+      // Two extra queries for the whole page, not two per row.
+      loadFamilyLinks(this.prisma, ids),
     ]);
     const activeIds = new Set<string>();
     for (const r of enr) activeIds.add(r.studentId);
@@ -123,8 +160,29 @@ export class AdminExperienceService {
 
     return {
       users: users.map((user) => {
-        const isPaid = (user.planStatus ?? '').toLowerCase() === 'active';
+        const family = families.get(user.id) ?? { parents: [], children: [] };
+        // isPlanActive, not `=== 'active'`: a lapsed period is not a live plan,
+        // and the product already stopped honouring it.
+        const isPaid = isPlanActive(user.planStatus, user.planRenewsAt);
         const hasActivity = activeIds.has(user.id);
+        const plan = resolvePlan(user, family);
+        const familyBlock = familyDeleteBlock(user.role, family);
+
+        // One ordered answer to "why is delete off?", because the old tooltip
+        // said "has activity or a plan" for every reason including ownership,
+        // and said nothing at all for the reason that actually mattered here.
+        let deleteBlockedReason: string | null = null;
+        if (isOwnerAccount(user.role)) {
+          deleteBlockedReason = 'The owner account cannot be deleted.';
+        } else if (familyBlock) {
+          deleteBlockedReason = familyBlock;
+        } else if (isPaid) {
+          deleteBlockedReason = 'This account holds an active paid subscription — pause it instead.';
+        } else if (hasActivity) {
+          deleteBlockedReason =
+            'This account has enrollments, submissions or taught classrooms — pause it instead.';
+        }
+
         return {
           id: user.id,
           email: user.email,
@@ -136,15 +194,95 @@ export class AdminExperienceService {
           suspendedAt: user.suspendedAt,
           plan: user.plan,
           planStatus: user.planStatus,
+          planRenewsAt: user.planRenewsAt,
           // Staff and the owner are not billed, so any planStatus on those rows
           // is stale noise - the client renders "not billed" instead of a
           // billing state, and no billing rule may act on it.
           billingExempt: isBillingExempt(user.role),
           status: user.suspendedAt ? 'paused' : 'active',
-          canDelete: !isPaid && !hasActivity && !isOwnerAccount(user.role),
+
+          // --- Household. A scholar created through a paying parent's "Add a
+          // child" button carries no plan of their own, so without these fields
+          // the row reads as an abandoned free signup and invites deletion.
+          linkedParents: family.parents.map(toRef),
+          linkedChildren: family.children.map(toRef),
+          /** The parent actually paying for this scholar, per EntitlementService. */
+          coveredBy: plan.source === 'parent' && plan.via ? toRef(plan.via) : null,
+          /** Product name to print. Null on a paid row means no label was ever recorded. */
+          planLabel: plan.label,
+          /** 'own' | 'parent' | 'none' — where the entitlement comes from. */
+          planSourceKind: plan.source,
+
+          canDelete: !isPaid && !hasActivity && !isOwnerAccount(user.role) && !familyBlock,
+          deleteBlockedReason,
         };
       }),
       meta: { page: normalizedPage, limit: normalizedLimit, total },
+    };
+  }
+
+  /**
+   * Attach an existing scholar to an existing parent, or detach them.
+   *
+   * The repair half of the same defect: showing the link is no use on a family
+   * whose link was never created — a scholar who signed up at /register rather
+   * than through the parent's "Add a child" button has no ParentStudentLink at
+   * all, is not entitled through the parent's plan, and looks exactly like a
+   * bot signup in this list.
+   *
+   * Creation lives on `POST /api/v1/experience/parent/link`, which is already
+   * admin-scoped; this is the matching removal, kept here so both ends of the
+   * admin-facing operation are reachable from the admin surface.
+   */
+  async listLinkableParents(search?: string): Promise<{ parents: LinkableParent[] }> {
+    const term = search?.trim();
+    const parents = await this.prisma.user.findMany({
+      where: {
+        role: Role.PARENT,
+        deletedAt: null,
+        ...(term
+          ? {
+              OR: [
+                { email: { contains: term, mode: 'insensitive' } },
+                { profile: { is: { firstName: { contains: term, mode: 'insensitive' } } } },
+                { profile: { is: { lastName: { contains: term, mode: 'insensitive' } } } },
+              ],
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        email: true,
+        plan: true,
+        planStatus: true,
+        planRenewsAt: true,
+        maxStudents: true,
+        profile: { select: { firstName: true, lastName: true } },
+        // Seats in use, so the picker can show "2 of 3" before the admin
+        // commits rather than after the server refuses.
+        _count: { select: { parentLinks: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+    });
+
+    return {
+      parents: parents.map((p) => {
+        const name = `${p.profile?.firstName ?? ''} ${p.profile?.lastName ?? ''}`.trim();
+        const seats = p.maxStudents ?? DEFAULT_FAMILY_SEATS;
+        const seatsUsed = p._count.parentLinks;
+        return {
+          id: p.id,
+          name: name || p.email,
+          email: p.email,
+          plan: p.plan,
+          planStatus: p.planStatus,
+          planActive: isPlanActive(p.planStatus, p.planRenewsAt),
+          seats,
+          seatsUsed,
+          seatsFull: seatsUsed >= seats,
+        };
+      }),
     };
   }
 

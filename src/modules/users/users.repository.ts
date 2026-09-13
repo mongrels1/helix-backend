@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserEntity } from './entities/user.entity';
+import { loadFamilyLinksFor, type FamilyLinks } from '../../common/family/family';
 
 /**
  * Canonical email form so one person maps to exactly ONE account regardless of
@@ -231,6 +232,22 @@ export class UsersRepository {
         this.prisma.instructorContent.count({ where: { teacherId: id } }),
       ]);
     return { enrollments, submissions, taughtClassrooms, instructorContent };
+  }
+
+  /**
+   * Household membership, for the delete guard.
+   *
+   * Not folded into `countActivity` on purpose: a count cannot produce a message
+   * that names the relative, and "you are about to delete Marsha Sterling's son"
+   * is the only form of this warning that would have stopped the near-miss that
+   * prompted the change.
+   *
+   * This matters more than the other relations it sits beside, because nothing
+   * else stops it: `hardDelete` below explicitly `deleteMany`s ParentStudentLink,
+   * so the foreign key never fires and the delete succeeds silently.
+   */
+  async findFamily(id: string): Promise<FamilyLinks> {
+    return loadFamilyLinksFor(this.prisma, id);
   }
 
   /**

@@ -8,7 +8,8 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserEntity } from './entities/user.entity';
 import { UsersRepository } from './users.repository';
-import { isOwnerAccount } from '../../common/billing/billing';
+import { isOwnerAccount, isPlanActive } from '../../common/billing/billing';
+import { familyDeleteBlock } from '../../common/family/family';
 
 const SALT_ROUNDS = 12;
 
@@ -77,8 +78,19 @@ export class UsersService {
     if (isOwnerAccount(user.role)) {
       throw new BadRequestException('The owner account cannot be deleted.');
     }
+    // Household next. A scholar added through a paying parent's "Add a child"
+    // button has no plan and no activity of their own on day one, so both tests
+    // below pass and the account deletes cleanly — taking the ParentStudentLink
+    // with it, because hardDelete() deleteMany's that row before the user row.
+    // The admin UI greys the button; this is what makes it actually impossible.
+    const family = await this.usersRepository.findFamily(id);
+    const familyBlock = familyDeleteBlock(user.role, family);
+    if (familyBlock) {
+      throw new BadRequestException(familyBlock);
+    }
+
     const activity = await this.usersRepository.countActivity(id);
-    const isPaid = (user.planStatus ?? '').toLowerCase() === 'active';
+    const isPaid = isPlanActive(user.planStatus, user.planRenewsAt);
     const hasActivity =
       activity.enrollments > 0 ||
       activity.submissions > 0 ||
