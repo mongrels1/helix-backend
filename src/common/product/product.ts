@@ -52,6 +52,8 @@ export type ProductId =
   | 'FELLOWS'
   | 'INSTITUTIONAL'
   | 'STAFF'
+  /** Actively paying, but we cannot tell which product. See `resolveProductId`. */
+  | 'PAID_UNKNOWN'
   | 'NONE';
 
 /** The publicly purchasable products, in the order a comparison table shows them. */
@@ -85,6 +87,9 @@ const ALL_PAID: ProductId[] = [
   // Staff are billing-exempt and fully entitled. Without them here the ribbon
   // told the owner of the platform he was on the free tier.
   'STAFF',
+  // Paid, tier unknown. They get everything a paid account gets — we simply
+  // cannot name which product they bought.
+  'PAID_UNKNOWN',
 ];
 const EVERYONE: ProductId[] = [...ALL_PAID, 'NONE'];
 
@@ -176,7 +181,13 @@ const DEFINITIONS: Record<ProductId, Omit<ProductDefinition, 'id'>> = {
     price: '$24.99/mo',
     summary: 'Unlimited AI math tutoring for one child, on the Georgia standards.',
     seats: 1,
-    stripePriceIds: [],
+    // Live-mode, read from the Stripe dashboard 13 Sept 2026. Both ids are kept:
+    // the Jun 28 price still has subscriptions on it, and an old price id is what
+    // an existing customer's renewal actually carries.
+    stripePriceIds: [
+      'price_1TsCbiI1PrvNiO59GOAlqopj', // $24.99/mo, created 11 Jul — 2 active
+      'price_1TnRN9I1PrvNiO59gSkTbnuM', // $24.99/mo, created 28 Jun
+    ],
     invitationOnly: false,
   },
   ABOVE_GRADE: {
@@ -184,7 +195,10 @@ const DEFINITIONS: Record<ProductId, Omit<ProductDefinition, 'id'>> = {
     price: '$39.99/mo',
     summary: 'For a student already working beyond their enrolled grade.',
     seats: 1,
-    stripePriceIds: [],
+    stripePriceIds: [
+      'price_1TsCbEI1PrvNiO59SvW4AedF', // $39.99/mo, created 11 Jul — 1 active
+      'price_1TnROXI1PrvNiO59vrZL0LpQ', // $39.99/mo, created 28 Jun
+    ],
     invitationOnly: false,
   },
   LEGACY: {
@@ -192,7 +206,14 @@ const DEFINITIONS: Record<ProductId, Omit<ProductDefinition, 'id'>> = {
     price: '$19.99/mo',
     summary: 'The invitation rate, for up to three children in one household.',
     seats: 3,
-    stripePriceIds: [],
+    // Two of these are named "EdKairos Founding Family" in Stripe — the older
+    // label for the same product. They map here, which is the point: the price
+    // id is stable, the marketing name was not.
+    stripePriceIds: [
+      'price_1U4RDHI1PrvNiO59DXEC9aTm', // $19.99/mo, created 14 Aug
+      'price_1TsCaaI1PrvNiO59pmecMXSa', // $19.99/mo, created 11 Jul (Founding Family)
+      'price_1TnRQ1I1PrvNiO595N3NpTmO', // $19.99/mo, created 28 Jun (Founding Family) — 1 active
+    ],
     invitationOnly: true,
   },
   FELLOWS: {
@@ -203,7 +224,13 @@ const DEFINITIONS: Record<ProductId, Omit<ProductDefinition, 'id'>> = {
     price: '$399/mo × 4, or $1,499 in full',
     summary: 'Admissions-based. Eight places, four months, grades 6–8.',
     seats: 1,
-    stripePriceIds: [],
+    // The $395 prices predate the 7 Sept correction to $399 and carry no
+    // subscriptions; kept so a historical row still resolves to Fellows.
+    stripePriceIds: [
+      'price_1UD7XKI1PrvNiO59z5CJ1Jr2', // $399/mo, created 7 Sep
+      'price_1U6EkAI1PrvNiO59McJv1Vlp', // $395/mo, created 19 Aug
+      'price_1U6EVzI1PrvNiO59iPdzMhrb', // $395/mo, created 19 Aug
+    ],
     invitationOnly: true,
   },
   INSTITUTIONAL: {
@@ -221,6 +248,17 @@ const DEFINITIONS: Record<ProductId, Omit<ProductDefinition, 'id'>> = {
     seats: null,
     stripePriceIds: [],
     invitationOnly: true,
+  },
+  PAID_UNKNOWN: {
+    // Reads sensibly in both places it appears: a family sees that their plan is
+    // active, and an admin sees a row whose product we could not determine —
+    // which is exactly the row that needs a human to look at it.
+    name: 'Active plan',
+    price: null,
+    summary: 'Your subscription is active. Full access, no daily limits.',
+    seats: null,
+    stripePriceIds: [],
+    invitationOnly: false,
   },
   NONE: {
     name: 'Free',
@@ -264,10 +302,18 @@ export function resolveProductId(
   if (p.includes('legacy') || p.includes('founding') || p.includes('family')) return 'LEGACY';
   if (p.includes('standard')) return 'STANDARD';
 
-  // An unrecognised label on a genuinely paid row is still a paid row. Call it
-  // Standard rather than Free: under-reporting an account somebody is paying for
-  // is how a scholar ends up looking deletable.
-  if (p.trim().length > 0 && hasActivePlan) return 'STANDARD';
+  // ★ A paid row is a paid row, label or no label.
+  //
+  // This branch used to require a non-empty label, so an account with
+  // planStatus 'active' and `plan` null — a real one exists, bought before the
+  // product records did — fell through to NONE and was shown "Free" on its own
+  // dashboard. Under-reporting somebody who is paying is the failure this whole
+  // module exists to prevent.
+  //
+  // It does NOT guess a tier. Naming the wrong product is worse than admitting
+  // we cannot name it, which is the lesson of the Sterling account: a value can
+  // be confidently displayed and still be false.
+  if (hasActivePlan) return 'PAID_UNKNOWN';
   return 'NONE';
 }
 

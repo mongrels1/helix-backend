@@ -15,10 +15,26 @@ const ACTIVATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const DEFAULT_PERIOD_MS = 31 * 24 * 60 * 60 * 1000; // ~1 month if GHL sends no renewal date
 
 // Fallback plan label when the GHL webhook omits a product field, so a paid
-// account is never left with a null plan. NOTE: this only fixes the *label* —
-// family/tier detection (PARENT role + seat count) still needs GHL to send
-// `product`; without it we assume the default single-student plan.
-const DEFAULT_PLAN_LABEL = 'EdKairos Standard';
+// account is never left with a null plan.
+//
+// ★ This used to read 'EdKairos Standard', and that was a silent falsehood
+// written to the database. When GHL sent no product field we stamped a real
+// tier name on the row as though we knew it — and `resolveProductId` then
+// matched it correctly, so every downstream screen confidently showed a tier
+// nobody had bought. An Above-Grade customer reported exactly this on 13 Sept
+// 2026. The display layer was never at fault; the data was.
+//
+// The marker below is deliberately chosen NOT to match any branch of
+// `resolveProductId`: no 'standard', 'above', 'fellow', 'legacy', 'founding',
+// 'family' or 'institutional'. A paid row carrying it resolves to PAID_UNKNOWN
+// and renders as "Active plan" — full entitlement, no invented tier. The row
+// heals itself on the next Stripe subscription event, because `planLabel()`
+// writes our canonical catalogue name once the price-id join matches.
+//
+// NOTE: this only fixes the *label* — family/tier detection (PARENT role +
+// seat count) still needs GHL to send `product`; without it we assume the
+// default single-student plan, which may under-seat a family purchase.
+const DEFAULT_PLAN_LABEL = 'Paid - tier unknown';
 
 /** Loosely-typed GHL purchase webhook payload (field names vary by workflow). */
 type GhlPayload = Record<string, unknown> & {
@@ -86,6 +102,17 @@ export class ProvisioningService {
     // Active payment — a new purchase OR a renewal. Grants/extends access.
     const { firstName, lastName } = this.pickName(payload);
     const product = this.pickProduct(payload);
+    if (!product) {
+      // Loud on purpose. A purchase arriving with no product field means a GHL
+      // workflow is not sending one, and every account it creates will carry an
+      // unknown tier until a Stripe event repairs it. That is a configuration
+      // fault worth fixing at the source, not a condition to absorb silently.
+      this.logger.warn(
+        `GHL purchase webhook carried no product field. Account will be marked ` +
+          `"${DEFAULT_PLAN_LABEL}" until a Stripe subscription event names the tier. ` +
+          `Check the GHL workflow's payload mapping.`,
+      );
+    }
     const config = this.planConfig(product);
     const renewsAt = this.pickRenewsAt(payload) ?? new Date(Date.now() + DEFAULT_PERIOD_MS);
 
