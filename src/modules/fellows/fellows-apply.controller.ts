@@ -24,7 +24,7 @@ import { verify as verifyEvidence } from './evidence-token';
 // ── The field contract ────────────────────────────────────────────────────────
 const RAW_FIELDS = [
   'parent_name', 'parent_email', 'parent_mobile', 'sms_consent', 'sms_consent_at',
-  'child_first_name', 'grade', 'ga',
+  'child_first_name', 'grade', 'state', 'ga',
   // Ring 1 eligibility — five routes, "any one of", matching the landing page.
   'elig_ek',
   'elig_gifted', 'elig_gifted_detail',
@@ -113,6 +113,11 @@ export class FellowsApplyController {
 
     const raw: Record<string, string> = {};
     for (const k of RAW_FIELDS) raw[k] = clean(body[k]);
+    // State replaced the Georgia yes/no on 16 Sept 2026. It is recorded to choose which
+    // standards and published criteria the pathway is built against — never to gate.
+    // `ga` is still derived so existing GHL fields and reports keep working.
+    raw.state = raw.state.toUpperCase().slice(0, 3);
+    if (raw.state) raw.ga = raw.state === 'GA' ? '1' : '0';
 
     if (!EMAIL_RE.test(raw.parent_email)) {
       return res.status(400).type('text/plain').send(

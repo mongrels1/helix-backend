@@ -183,13 +183,12 @@ export function score(
   const ek: EkEvidence = opts?.ek ?? { verified: false, level: null };
 
   const grade = gradeOf(raw.grade);
-  const inGeorgia = item(raw.ga) === 1;
-
   const { claimed, met, notes } = evaluateRoutes(raw, ek, grade);
 
   // ── RING 1 · THE GATE ───────────────────────────────────────────────────────
-  // Grades 6-8, Georgia, and at least one eligibility route actually satisfied.
-  const gate = grade !== null && inGeorgia && met.length > 0;
+  // Grades 6-8 and at least one eligibility route actually satisfied. Not state-gated since
+  // 16 Sept 2026: the state chooses the standards the pathway is built against, not who may apply.
+  const gate = grade !== null && met.length > 0;
 
   const a1 = item(raw.a1), a2 = item(raw.a2), a3 = item(raw.a3), a4 = item(raw.a4),
         a5 = item(raw.a5), a6 = item(raw.a6), a7 = item(raw.a7),
