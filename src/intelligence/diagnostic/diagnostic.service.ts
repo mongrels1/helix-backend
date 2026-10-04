@@ -170,7 +170,14 @@ export class DiagnosticService {
     let fellowsApplyUrl: string | undefined;
     try {
       const level = Number((dto.profile as { level?: unknown } | undefined)?.level);
-      if (Number.isFinite(level)) {
+      const gradeNum = Number(dto.grade);
+      // Offer the Fellows link ONLY when this result would actually meet the `ek` route:
+      // grade 6-8 and at least one level above grade — the same test fellows-scoring.ts
+      // applies. Until 4 Oct 2026 every finished diagnostic got the invite, including a
+      // 20% result, which upsold Fellows to exactly the families it must never be shown to.
+      const meetsFellowsBar =
+        Number.isFinite(level) && Number.isInteger(gradeNum) && gradeNum >= 6 && gradeNum <= 8 && level - gradeNum >= 1;
+      if (meetsFellowsBar) {
         fellowsApplyUrl =
           fellowsApplyLink({
             level,
