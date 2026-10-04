@@ -138,15 +138,23 @@ export class ProvisioningService {
       await this.prisma.user.update({
         where: { id: userId },
         data: {
-          // Record a plan label even if GHL didn't send a product, so the
-          // account is never left with a null plan (see DEFAULT_PLAN_LABEL).
-          plan: product ?? DEFAULT_PLAN_LABEL,
+          // The product name and seat count are written ONLY when GHL actually
+          // names a product, or when the account has no label at all yet.
+          //
+          // The GHL workflow carried a fixed "Edkairos Standard" for every sale, so
+          // on 4 Oct 2026 a Legacy purchase was relabelled Standard at $24.99 with
+          // one child login. With the fixed text removed GHL sends no product, and
+          // this webhook must then leave alone whatever the Stripe subscription
+          // event recorded: Stripe knows what was charged, GHL here does not.
+          ...(product
+            ? { plan: product, maxStudents: config.maxStudents }
+            : existing?.plan
+              ? {}
+              : { plan: DEFAULT_PLAN_LABEL, maxStudents: config.maxStudents }),
           planStatus: 'active',
           planRenewsAt: renewsAt,
           // This account's access was bought, so Stripe owns its plan status.
           planSource: 'STRIPE',
-          // Seat limit tracks the resolved plan (null = single-student default).
-          maxStudents: config.maxStudents,
         },
       });
     } catch (err) {

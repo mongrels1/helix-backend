@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type Stripe from 'stripe';
 import { isOwnerAccount, isStripeWritable } from '../../common/billing/billing';
-import { priceIdMappingConfigured, resolveProductByPriceId } from '../../common/product/product';
+import { priceIdMappingConfigured, productFor, resolveProductByPriceId } from '../../common/product/product';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '@modules/email/email.service';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -390,6 +390,8 @@ export class StripeService {
       return true;
     }
 
+    const seatsForLabel = planLabel ? productFor(planLabel, 'STRIPE', true).seats : null;
+
     if (matchedBy === 'email') {
       this.logger.warn(
         `Stripe webhook: matched ${user.id} by EMAIL for sub ${subscriptionId}. ` +
@@ -406,6 +408,11 @@ export class StripeService {
         // label: a GHL-provisioned row already carries the right product name,
         // and an un-expanded price on one event must not erase it.
         ...(planLabel ? { plan: planLabel } : {}),
+        // The child-login allowance follows the product Stripe actually charged for.
+        // Until 4 Oct 2026 only the GHL purchase webhook set it, from a product name
+        // typed into the workflow ("Edkairos Standard" for every sale), so a Legacy
+        // family was held to one child while paying for three.
+        ...(seatsForLabel != null ? { maxStudents: seatsForLabel } : {}),
         // First Stripe write on this row establishes provenance, so a later
         // institutional grant cannot be mistaken for a purchase and vice versa.
         ...(user.planSource == null ? { planSource: 'STRIPE' as const } : {}),
