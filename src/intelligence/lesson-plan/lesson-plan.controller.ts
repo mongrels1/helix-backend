@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   Post,
+  Put,
   Body,
   StreamableFile,
   Res,
@@ -19,6 +20,8 @@ import { Roles } from '@common/decorators/roles.decorator';
 import { LessonPlanService } from './lesson-plan.service';
 import { GeneratePlanDto } from './dto/generate-plan.dto';
 import { LessonPlanAllowanceService } from './lesson-plan.allowance';
+import { LessonPlanContextService } from './lesson-plan.context';
+import { SaveContextDto } from './dto/save-context.dto';
 
 type AuthenticatedUser = { userId: string; role: Role };
 
@@ -34,7 +37,19 @@ export class LessonPlanController {
   constructor(
     private readonly service: LessonPlanService,
     private readonly allowance: LessonPlanAllowanceService,
+    private readonly context: LessonPlanContextService,
   ) {}
+
+  /** The teacher's saved context sheet, or null if they have never saved one. */
+  @Get('context')
+  async getContext(@CurrentUser() user: AuthenticatedUser) {
+    return { success: true, data: await this.context.get(user.userId) };
+  }
+
+  @Put('context')
+  async saveContext(@Body() dto: SaveContextDto, @CurrentUser() user: AuthenticatedUser) {
+    return { success: true, data: await this.context.save(user.userId, dto) };
+  }
 
   @Post('jobs')
   createJob(

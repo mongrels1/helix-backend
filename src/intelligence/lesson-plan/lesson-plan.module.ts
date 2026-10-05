@@ -3,6 +3,7 @@ import { LessonPlanController } from './lesson-plan.controller';
 import { LessonPlanService } from './lesson-plan.service';
 import { LessonPlanSidecarService } from './lesson-plan.sidecar';
 import { LessonPlanAllowanceService } from './lesson-plan.allowance';
+import { LessonPlanContextService } from './lesson-plan.context';
 
 /**
  * AIRouterService is provided by the @Global() AIRouterModule, so it does not
@@ -10,7 +11,7 @@ import { LessonPlanAllowanceService } from './lesson-plan.allowance';
  */
 @Module({
   controllers: [LessonPlanController],
-  providers: [LessonPlanService, LessonPlanSidecarService, LessonPlanAllowanceService],
+  providers: [LessonPlanService, LessonPlanSidecarService, LessonPlanAllowanceService, LessonPlanContextService],
   exports: [LessonPlanService],
 })
 export class LessonPlanModule {}

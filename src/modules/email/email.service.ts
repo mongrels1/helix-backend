@@ -10,13 +10,13 @@ export class EmailService {
     const displayName = firstName?.trim() || 'there';
     await this.sendEmail({
       to,
-      subject: 'Welcome to Helix',
+      subject: 'Welcome to EdKairos',
       html: `
         <p>Hi ${this.escapeHtml(displayName)},</p>
-        <p>Welcome to Helix Intelligence System. Your account is ready.</p>
-        <p><a href="${frontendUrl}">Open Helix</a></p>
+        <p>Welcome to EdKairos. Your account is ready.</p>
+        <p><a href="${frontendUrl}">Open EdKairos</a></p>
       `,
-      text: `Hi ${displayName}, welcome to Helix Intelligence System. Open Helix: ${frontendUrl}`,
+      text: `Hi ${displayName}, welcome to EdKairos. Open EdKairos: ${frontendUrl}`,
     });
   }
   async sendActivationEmail(to: string, activationUrl: string, firstName?: string): Promise<void> {
@@ -53,13 +53,13 @@ export class EmailService {
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
     await this.sendEmail({
       to,
-      subject: 'Reset your Helix password',
+      subject: 'Reset your EdKairos password',
       html: `
-        <p>We received a request to reset your Helix password.</p>
+        <p>We received a request to reset your EdKairos password.</p>
         <p><a href="${resetUrl}">Reset your password</a></p>
         <p>This link expires in 1 hour. If you did not request this, you can ignore this email.</p>
       `,
-      text: `Reset your Helix password: ${resetUrl}\n\nThis link expires in 1 hour. If you did not request this, you can ignore this email.`,
+      text: `Reset your EdKairos password: ${resetUrl}\n\nThis link expires in 1 hour. If you did not request this, you can ignore this email.`,
     });
   }
   async sendAdminAlert(subject: string, text: string): Promise<void> {

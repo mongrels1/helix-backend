@@ -1027,3 +1027,12 @@ model KairosPointReport {
   @@index([status, createdAt])
   @@index([studentId, createdAt])
 }
+
+/// A teacher's saved Lesson Plan Maker context sheet: the fields that stay the
+/// same week to week. One row per teacher. Read and written with raw SQL in
+/// lesson-plan.context.ts; deliberately no relation to User.
+model LessonPlanContext {
+  userId    String   @id
+  data      Json
+  updatedAt DateTime @default(now())
+}

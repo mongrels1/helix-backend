@@ -38,17 +38,31 @@ export function teacherSignupDomains(env: NodeJS.ProcessEnv = process.env): stri
 }
 
 /**
- * True when the address is on an approved school domain. Exact domain match
+ * True when the address is on an approved school domain, or is itself listed
+ * in TEACHER_SIGNUP_EMAILS. Exact domain match
  * only: `x@mail.dekalbschoolsga.org` and `x@notdekalbschoolsga.org` both fail.
  */
 export function isApprovedTeacherEmail(
   email: string,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const at = email.lastIndexOf('@');
+  const address = email.trim().toLowerCase();
+  const at = address.lastIndexOf('@');
   if (at < 1) return false;
-  const domain = email.slice(at + 1).trim().toLowerCase();
-  return teacherSignupDomains(env).includes(domain);
+  if (teacherSignupEmails(env).includes(address)) return true;
+  return teacherSignupDomains(env).includes(address.slice(at + 1));
+}
+
+/**
+ * Individually approved addresses, lower-cased. TEACHER_SIGNUP_EMAILS is a
+ * comma list of exact addresses: one teacher at a school whose domain is not
+ * approved, or a test inbox. Empty by default.
+ */
+export function teacherSignupEmails(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.TEACHER_SIGNUP_EMAILS ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 /** True for a teacher who registered themselves (not admin-created staff). */
