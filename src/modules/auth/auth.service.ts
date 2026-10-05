@@ -17,6 +17,7 @@ import { AuthRepository } from './auth.repository';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
+import { isApprovedTeacherEmail } from '../../common/teacher/teacher-signup';
 
 const SALT_ROUNDS = 12;
 
@@ -79,7 +80,22 @@ export class AuthService {
     // Hard guard: a self-signup can ONLY become a Student or Parent. Any other
     // requested role (incl. a crafted TEACHER/ORG_ADMIN/SUPER_ADMIN) is forced to
     // STUDENT. Teachers/admins are created through the org/admin paths, not here.
-    const safeRole = dto.role && SELF_SERVE_ROLES.has(dto.role) ? dto.role : Role.STUDENT;
+    //
+    // One exception: a TEACHER may self-register when the address is on an
+    // approved school domain (common/teacher/teacher-signup.ts). The account is
+    // still only minted after the emailed link is opened, so the person has to
+    // own that school inbox. An unapproved address is refused outright rather
+    // than quietly downgraded to STUDENT - a teacher who lands on a student
+    // dashboard has no way to know why.
+    let safeRole: Role = dto.role && SELF_SERVE_ROLES.has(dto.role) ? dto.role : Role.STUDENT;
+    if (dto.role === Role.TEACHER) {
+      if (!isApprovedTeacherEmail(email)) {
+        throw new BadRequestException(
+          'Free teacher accounts need a school email from an approved district. Use your school address, or write to support@edkairos.com to have your school added.',
+        );
+      }
+      safeRole = Role.TEACHER;
+    }
 
     const token = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + PENDING_TTL_HOURS * 60 * 60 * 1000);
@@ -139,6 +155,12 @@ export class AuthService {
       pending.passwordHash,
     );
     await this.authRepository.deletePendingById(pending.id);
+    // A teacher who came through public signup is marked as self-serve, which
+    // is what the lesson-plan allowance reads. Admin-created teachers never
+    // pass through here and so are never marked.
+    if (pending.role === Role.TEACHER) {
+      await this.authRepository.markSelfServeTeacher(user.id);
+    }
 
     const tokens = await this.generateTokens(user);
     await this.emailService.sendWelcomeEmail(user.email, user.profile?.firstName);

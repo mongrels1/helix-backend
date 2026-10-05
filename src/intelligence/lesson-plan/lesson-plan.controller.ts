@@ -18,6 +18,7 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { LessonPlanService } from './lesson-plan.service';
 import { GeneratePlanDto } from './dto/generate-plan.dto';
+import { LessonPlanAllowanceService } from './lesson-plan.allowance';
 
 type AuthenticatedUser = { userId: string; role: Role };
 
@@ -30,7 +31,10 @@ interface MulterFile {
 @Controller('api/v1/lesson-plan')
 @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
 export class LessonPlanController {
-  constructor(private readonly service: LessonPlanService) {}
+  constructor(
+    private readonly service: LessonPlanService,
+    private readonly allowance: LessonPlanAllowanceService,
+  ) {}
 
   @Post('jobs')
   createJob(
@@ -69,7 +73,12 @@ export class LessonPlanController {
     @Body() dto: GeneratePlanDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
+    // Self-serve teachers have a daily allowance; everyone else passes through.
+    await this.allowance.assertCanGenerate(user.userId);
     const data = await this.service.generate(id, user.userId, dto);
+    // Charged only once a plan exists. A failure to count must never cost the
+    // teacher the plan they just waited for.
+    await this.allowance.record(user.userId).catch(() => undefined);
     return { success: true, data };
   }
 

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PasswordResetToken, PendingSignup, RefreshToken, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SELF_SERVE_TEACHER_PLAN } from '../../common/teacher/teacher-signup';
 
 @Injectable()
 export class AuthRepository {
@@ -91,6 +92,14 @@ export class AuthRepository {
         token: data.token,
         expiresAt: data.expiresAt,
       },
+    });
+  }
+
+  /** Marks a freshly-verified public signup as a self-serve teacher. */
+  async markSelfServeTeacher(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { plan: SELF_SERVE_TEACHER_PLAN },
     });
   }
 
