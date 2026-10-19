@@ -61,6 +61,12 @@ interface LiveSession {
   participants: Participant[];
   boards: Map<string, LiveBoard>;
   hands: Set<string>;
+  /** Last time anyone drew, joined, changed something or asked to keep it open (ms). */
+  lastActivity: number;
+  /** When the tutor's last connection closed, if the tutor is away (ms). */
+  tutorAwaySince: number | null;
+  /** True while students and tutor have been told it is about to close. */
+  closingWarned: boolean;
 }
 
 export interface BoardView {
@@ -323,6 +329,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
       dirty: false,
     };
     s.boards.set(created.id, board);
+    this.touch(s);
     const view = this.boardsFor(s, s.state.tutorId).find((b) => b.id === created.id) ?? null;
     return { sessionId: row.id, added: view };
   }
@@ -526,7 +533,18 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     });
     if (!row) throw new NotFoundException('Session not found');
     if (row.tutorId !== userId) throw new ForbiddenException();
+    return this.closeSession(sessionId, row.status);
+  }
+
+  /** Close a session (tutor's End button, or the inactivity timer). Saves everything first. */
+  async closeSession(sessionId: string, status?: string): Promise<SessionView> {
+    if (status === undefined) {
+      const row = await this.prisma.whiteboardSession.findUnique({ where: { id: sessionId }, select: { status: true } });
+      if (!row) throw new NotFoundException('Session not found');
+      status = row.status;
+    }
     const s = await this.ensureLive(sessionId, false);
+    const row = { status };
     if (row.status !== 'ACTIVE') return this.sessionView(s);
     s.state.status = 'ENDED'; // stops new ops at once; then save what is in memory
     s.state.presentedBoardId = null;
@@ -579,6 +597,9 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
       state: this.stateOf(row),
       participants,
       hands: new Set(),
+      lastActivity: Date.now(),
+      tutorAwaySince: null,
+      closingWarned: false,
       boards: new Map(
         row.boards.map((b) => [
           b.id,
@@ -686,6 +707,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     const result = applyOp(board.doc, op, userId, isTutor(userId, s.state));
     board.points = board.doc.strokes.reduce((n, x) => n + x.points.length, 0);
     if (!result.changed || !result.applied) return null;
+    this.touch(s);
     board.version += 1;
     board.dirty = true;
     return { op: result.applied, version: board.version };
@@ -699,6 +721,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     payload: { studentId?: string; boardId?: string; mode?: string; question?: unknown },
   ): Promise<{ changed: boolean; boardIds?: string[] }> {
     if (!isTutor(userId, s.state)) throw new OpError('tutor only');
+    this.touch(s);
     const st = s.state;
     const students = s.participants.filter((p) => p.role === 'STUDENT').map((p) => p.userId);
     const isStudent = (id?: string): id is string => !!id && students.includes(id);
@@ -834,6 +857,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     const me = s.participants.find((p) => p.userId === userId);
     const label = tutor ? input.label?.trim() || undefined : `${me?.name ?? 'Student'}'s question`;
     await this.putQuestion(targets, uploadQuestion(asset.id, width, height, label));
+    this.touch(s);
     return targets.map((b) => b.ref.id);
   }
 
@@ -866,8 +890,39 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     return { mime: asset.mime, data: asset.data };
   }
 
+  /** Something happened in the session: restart its inactivity clock. */
+  touch(s: LiveSession): void {
+    s.lastActivity = Date.now();
+  }
+
+  /**
+   * Sessions still marked ACTIVE in the database that nobody is connected to and
+   * nobody has touched for `idleMs` (tutor signed out, tabs closed, the API restarted).
+   * They are closed so their code stops working. Work was saved as it happened.
+   */
+  async closeAbandoned(idleMs: number): Promise<string[]> {
+    const cutoff = new Date(Date.now() - idleMs);
+    const rows = await this.prisma.whiteboardSession.findMany({
+      where: {
+        status: 'ACTIVE',
+        updatedAt: { lt: cutoff },
+        boards: { none: { updatedAt: { gte: cutoff } } },
+      },
+      select: { id: true },
+      take: 200,
+    });
+    const ids = rows.map((r) => r.id).filter((id) => !this.live.has(id));
+    if (ids.length === 0) return [];
+    await this.prisma.whiteboardSession.updateMany({
+      where: { id: { in: ids }, status: 'ACTIVE' },
+      data: { status: 'ENDED', endedAt: new Date(), presentedBoardId: null, mode: SESSION_MODE.MONITOR, focusStudentId: null },
+    });
+    return ids;
+  }
+
   setHand(s: LiveSession, userId: string, up: boolean): void {
     if (isTutor(userId, s.state)) return;
+    this.touch(s);
     if (up) s.hands.add(userId);
     else s.hands.delete(userId);
   }

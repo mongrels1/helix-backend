@@ -38,6 +38,14 @@ interface SocketData {
 
 /** How often idle sessions are saved and dropped from memory. */
 const SWEEP_MS = 5 * 60 * 1000;
+/**
+ * A session closes after this long with no activity, or with the tutor gone: 5 minutes.
+ * (WHITEBOARD_IDLE_CLOSE_MS exists only so tests don't have to wait 5 minutes.)
+ */
+export const IDLE_CLOSE_MS = Number(process.env.WHITEBOARD_IDLE_CLOSE_MS) || 5 * 60 * 1000;
+/** Everyone is warned this long before it closes (1 minute). */
+const IDLE_WARN_MS = Math.min(60 * 1000, IDLE_CLOSE_MS / 5);
+const IDLE_CHECK_MS = Math.min(15 * 1000, IDLE_CLOSE_MS / 10);
 
 const sRoom = (sid: string) => `s:${sid}`;
 const tRoom = (sid: string) => `t:${sid}`;
@@ -75,15 +83,83 @@ export class WhiteboardGateway
   ) {}
 
   private sweepTimer: NodeJS.Timeout | null = null;
+  private idleTimer: NodeJS.Timeout | null = null;
+  private idleChecking = false;
 
   onModuleInit(): void {
     // Save and drop sessions nobody is connected to (e.g. a tutor who closed the tab).
     this.sweepTimer = setInterval(() => void this.sweep(), SWEEP_MS);
     this.sweepTimer.unref?.();
+    // Close sessions after 5 minutes without activity, or 5 minutes without the tutor.
+    this.idleTimer = setInterval(() => void this.checkIdle(), IDLE_CHECK_MS);
+    this.idleTimer.unref?.();
   }
 
   onModuleDestroy(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
+    if (this.idleTimer) clearInterval(this.idleTimer);
+  }
+
+  /**
+   * The inactivity timer. A live session closes when nobody has drawn, joined or
+   * changed anything for 5 minutes, or the tutor has been away for 5 minutes (signed
+   * out, closed the tab, lost connection). Everyone gets a one-minute warning; the
+   * tutor can keep it open. Sessions nobody is even connected to are closed from the
+   * database. Work is saved before anything closes.
+   */
+  async checkIdle(now = Date.now()): Promise<void> {
+    if (this.idleChecking) return;
+    this.idleChecking = true;
+    try {
+      for (const id of this.service.liveSessionIds()) {
+        const s = this.service.getLive(id);
+        if (!s || s.state.status !== 'ACTIVE') continue;
+        const tutorHere = (await this.server.in(tRoom(id)).fetchSockets()).length > 0;
+        s.tutorAwaySince = tutorHere ? null : (s.tutorAwaySince ?? now);
+        const idleFor = now - s.lastActivity;
+        const awayFor = s.tutorAwaySince ? now - s.tutorAwaySince : 0;
+        const left = IDLE_CLOSE_MS - Math.max(idleFor, awayFor);
+        if (left <= 0) {
+          const view = await this.service.closeSession(id);
+          await this.sessionEnded(id, view, awayFor >= idleFor ? 'tutor-away' : 'inactive');
+          this.logger.log(`whiteboard session ${id} closed after inactivity`);
+        } else if (left <= IDLE_WARN_MS) {
+          s.closingWarned = true;
+          this.server.to(sRoom(id)).emit('wb:closing', {
+            seconds: Math.ceil(left / 1000),
+            reason: awayFor >= idleFor ? 'tutor-away' : 'inactive',
+          });
+        } else if (s.closingWarned) {
+          s.closingWarned = false;
+          this.server.to(sRoom(id)).emit('wb:closing', { seconds: null });
+        }
+      }
+      const closed = await this.service.closeAbandoned(IDLE_CLOSE_MS);
+      if (closed.length) this.logger.log(`closed ${closed.length} abandoned whiteboard session(s)`);
+    } catch (err) {
+      this.logger.error(`whiteboard idle check failed: ${(err as Error).message}`);
+    } finally {
+      this.idleChecking = false;
+    }
+  }
+
+  /** The tutor clicked "Keep it open" (or is clearly present): restart the clock. */
+  @SubscribeMessage('wb:keepalive')
+  async keepalive(@ConnectedSocket() client: Socket) {
+    const data = client.data as SocketData;
+    await data.ready;
+    try {
+      const s = await this.liveFor(data);
+      if (s.state.tutorId !== data.userId) throw new OpError('tutor only');
+      this.service.touch(s);
+      if (s.closingWarned) {
+        s.closingWarned = false;
+        this.server.to(sRoom(s.id)).emit('wb:closing', { seconds: null });
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: message(err) };
+    }
   }
 
   async handleConnection(client: Socket): Promise<void> {
@@ -138,6 +214,7 @@ export class WhiteboardGateway
     try {
       if (!data.userId || typeof body?.sessionId !== 'string') throw new OpError('bad request');
       const s = await this.service.joinCheck(body.sessionId, data.userId);
+      this.service.touch(s);
       // One session per socket: leave anything joined before.
       for (const room of client.rooms) if (room !== client.id) await client.leave(room);
       data.sessionId = s.id;
@@ -266,10 +343,10 @@ export class WhiteboardGateway
   }
 
   /** Called by the controller when the tutor ends the session over REST. */
-  async sessionEnded(sessionId: string, session: unknown): Promise<void> {
+  async sessionEnded(sessionId: string, session: unknown, reason: 'tutor' | 'inactive' | 'tutor-away' = 'tutor'): Promise<void> {
     const sockets = await this.server.in(sRoom(sessionId)).fetchSockets();
     for (const sock of sockets) {
-      sock.emit('wb:ended', session);
+      sock.emit('wb:ended', { ...(session as object), endedReason: reason });
       for (const room of sock.rooms) if (room !== sock.id) sock.leave(room);
       (sock.data as SocketData).sessionId = undefined;
     }
