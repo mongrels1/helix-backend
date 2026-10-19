@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { Role } from '@prisma/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserEntity } from './entities/user.entity';
@@ -20,12 +21,14 @@ export class UsersService {
   async findAll(
     page = 1,
     limit = 20,
+    filter: { role?: Role; search?: string } = {},
   ): Promise<{ data: UserEntity[]; meta: { page: number; limit: number; total: number } }> {
     const normalizedPage = Math.max(page, 1);
     const normalizedLimit = Math.min(Math.max(limit, 1), 100);
     const [users, total] = await this.usersRepository.findAll(
       normalizedPage,
       normalizedLimit,
+      filter,
     );
 
     return {

@@ -42,9 +42,30 @@ const userSelect = {
 export class UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(page: number, limit: number): Promise<[UserEntity[], number]> {
+  async findAll(
+    page: number,
+    limit: number,
+    filter: { role?: Role; search?: string } = {},
+  ): Promise<[UserEntity[], number]> {
     const skip = (page - 1) * limit;
-    const where = { deletedAt: null };
+    const words = (filter.search ?? '').split(/\s+/).filter(Boolean).slice(0, 4);
+    // Every word must match a first name, last name or email: "Sterling", "kai sterling"
+    // and "marsha+kai" all find the same child.
+    const where: Prisma.UserWhereInput = {
+      deletedAt: null,
+      ...(filter.role ? { role: filter.role } : {}),
+      ...(words.length
+        ? {
+            AND: words.map((w) => ({
+              OR: [
+                { email: { contains: w, mode: 'insensitive' as const } },
+                { profile: { firstName: { contains: w, mode: 'insensitive' as const } } },
+                { profile: { lastName: { contains: w, mode: 'insensitive' as const } } },
+              ],
+            })),
+          }
+        : {}),
+    };
 
     const [users, total] = await this.prisma.$transaction([
       this.prisma.user.findMany({

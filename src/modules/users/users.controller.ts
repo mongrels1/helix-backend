@@ -46,16 +46,39 @@ export class UsersController {
     return { success: true, data };
   }
 
+  /**
+   * User search. Used by "Enroll Student" (teachers) and admin screens.
+   * Before 19 Oct 2026 this ignored `role` and `search` and returned the newest users
+   * of every role to any signed-in account, so a student older than the newest ten
+   * could never be found and anyone could list everyone. Now:
+   *  - only teachers and admins may call it;
+   *  - `search` matches first name, last name or email (case-insensitive);
+   *  - a teacher only ever gets STUDENT accounts, and must type at least 2 characters.
+   */
   @Get()
+  @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async findAll(
+    @CurrentUser() caller: AuthenticatedUser,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('role') role?: string,
+    @Query('search') search?: string,
   ): Promise<{
     success: true;
     data: UserEntity[];
     meta: { page: number; limit: number; total: number };
   }> {
-    const result = await this.usersService.findAll(page, limit);
+    const term = typeof search === 'string' ? search.trim().slice(0, 100) : '';
+    const isTeacher = caller?.role === Role.TEACHER;
+    const wantedRole = isTeacher
+      ? Role.STUDENT
+      : (Object.values(Role) as string[]).includes(String(role))
+        ? (role as Role)
+        : undefined;
+    if (isTeacher && term.length < 2) {
+      return { success: true, data: [], meta: { page: 1, limit, total: 0 } };
+    }
+    const result = await this.usersService.findAll(page, limit, { role: wantedRole, search: term || undefined });
     return { success: true, ...result };
   }
 
