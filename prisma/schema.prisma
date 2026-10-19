@@ -1043,8 +1043,12 @@ model LessonPlanContext {
 /// client (or a restarted API) recovers the room exactly as the tutor left it.
 model WhiteboardSession {
   id               String            @id @default(uuid())
-  classroomId      String
+  /// Null for a quick session started from the tutor's dashboard (no classroom).
+  classroomId      String?
   tutorId          String
+  /// Six-character code students type or open as a link to join. Unique among ACTIVE
+  /// sessions (partial index in the migration); a code stops working when the session ends.
+  joinCode         String?
   title            String            @default("Live session")
   status           String            @default("ACTIVE")
   mode             String            @default("MONITOR")

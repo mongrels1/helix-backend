@@ -8,6 +8,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   applyOp,
@@ -50,7 +51,8 @@ interface LiveBoard {
 
 interface LiveSession {
   id: string;
-  classroomId: string;
+  classroomId: string | null;
+  joinCode: string | null;
   title: string;
   startedAt: Date;
   state: SessionState;
@@ -71,7 +73,8 @@ export interface BoardView {
 
 export interface SessionView {
   id: string;
-  classroomId: string;
+  classroomId: string | null;
+  joinCode: string | null;
   title: string;
   status: string;
   mode: string;
@@ -90,6 +93,19 @@ const STALE_MS = 12 * 60 * 60 * 1000;
 
 export type Requester = { userId: string; role: string; orgId?: string };
 const FLUSH_MS = 2000;
+/** Where students open a shared link. */
+const APP_URL = (process.env.APP_URL ?? 'https://app.edkairos.com').replace(/\/$/, '');
+
+/** No 0/O, 1/I/L: easy to read aloud and to type from a screen. */
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function makeJoinCode(): string {
+  const bytes = randomBytes(6);
+  return [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+}
+export function normalizeJoinCode(raw: string): string | null {
+  const code = String(raw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return /^[A-HJ-NP-Z2-9]{6}$/.test(code) ? code : null;
+}
 
 @Injectable()
 export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
@@ -115,46 +131,58 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
   // Sessions (REST)
   // ---------------------------------------------------------------------------
 
-  /** Start a session for a classroom, or return the one already running. */
+  /**
+   * Start a session, or return the one already running.
+   * With a classroomId: every enrolled student gets a board up front.
+   * Without one (a quick session): the session starts with only the group board and
+   * students join with the code; their boards are added as they arrive.
+   */
   async startSession(
     tutorId: string,
-    input: { classroomId: string; title?: string; question?: unknown; questions?: Record<string, unknown> },
+    input: { classroomId?: string; title?: string; question?: unknown; questions?: Record<string, unknown> },
   ): Promise<SessionView> {
-    const classroom = await this.prisma.classroom.findFirst({
-      where: { id: input.classroomId, deletedAt: null },
-      select: { id: true, teacherId: true },
-    });
-    if (!classroom) throw new NotFoundException('Classroom not found');
-    if (classroom.teacherId !== tutorId) {
-      throw new ForbiddenException('Only the classroom teacher can start a live session');
+    let classroomId: string | null = null;
+    let studentIds: string[] = [];
+    if (input.classroomId) {
+      const classroom = await this.prisma.classroom.findFirst({
+        where: { id: input.classroomId, deletedAt: null },
+        select: { id: true, teacherId: true },
+      });
+      if (!classroom) throw new NotFoundException('Classroom not found');
+      if (classroom.teacherId !== tutorId) {
+        throw new ForbiddenException('Only the classroom teacher can start a live session');
+      }
+      classroomId = classroom.id;
     }
 
-    const existing = await this.prisma.whiteboardSession.findFirst({
-      where: { classroomId: classroom.id, status: 'ACTIVE' },
-      select: { id: true, updatedAt: true, startedAt: true },
-    });
+    const existing = await this.findRunning(tutorId, classroomId);
     if (existing) {
       // A session left running from an earlier day is closed (work kept) rather than resumed.
       const stale = Date.now() - existing.startedAt.getTime() > STALE_MS;
       if (!stale) return this.sessionView(await this.ensureLive(existing.id));
-      await this.endSession(existing.id, tutorId);
+      await this.endSession(existing.id, existing.tutorId === tutorId ? tutorId : existing.tutorId);
     }
 
-    const enrollments = await this.prisma.enrollment.findMany({
-      where: { classroomId: classroom.id, student: { deletedAt: null } },
-      select: { studentId: true },
-      orderBy: { enrolledAt: 'asc' },
-      take: MAX_STUDENTS,
-    });
-    if (enrollments.length === 0) {
-      throw new BadRequestException('Add students to this classroom before starting a live session');
+    if (classroomId) {
+      const enrollments = await this.prisma.enrollment.findMany({
+        where: { classroomId, student: { deletedAt: null } },
+        select: { studentId: true },
+        orderBy: { enrolledAt: 'asc' },
+        take: MAX_STUDENTS,
+      });
+      studentIds = enrollments.map((e) => e.studentId);
+      if (studentIds.length === 0) {
+        throw new BadRequestException(
+          'Add students to this classroom first, or start a quick whiteboard from your dashboard and share the code.',
+        );
+      }
     }
 
     let common: BoardQuestion | null;
     const perStudent = new Map<string, BoardQuestion | null>();
     try {
       common = sanitizeQuestion(input.question);
-      const enrolled = new Set(enrollments.map((e) => e.studentId));
+      const enrolled = new Set(studentIds);
       for (const [studentId, q] of Object.entries(input.questions ?? {})) {
         if (enrolled.has(studentId)) perStudent.set(studentId, sanitizeQuestion(q));
       }
@@ -166,38 +194,220 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     const asJson = (q: BoardQuestion | null) =>
       q ? (q as unknown as Prisma.InputJsonValue) : Prisma.JsonNull;
 
-    let session: { id: string };
-    try {
-      session = await this.prisma.whiteboardSession.create({
-      data: {
-        classroomId: classroom.id,
-        tutorId,
-        title: (input.title ?? '').trim().slice(0, 120) || 'Live session',
-        boards: {
-          create: [
-            { kind: BOARD_KIND.GROUP, ownerId: null, question: asJson(common), pages: empty },
-            ...enrollments.map((e) => ({
-              kind: BOARD_KIND.PRIVATE,
-              ownerId: e.studentId,
-              question: asJson(perStudent.get(e.studentId) ?? common),
-              pages: empty,
-            })),
-          ],
-        },
-      },
-      select: { id: true },
-      });
-    } catch (err) {
-      // Two starts at once: the unique "one ACTIVE per classroom" index lets one win.
-      if ((err as { code?: string }).code !== 'P2002') throw err;
-      const winner = await this.prisma.whiteboardSession.findFirst({
-        where: { classroomId: classroom.id, status: 'ACTIVE' },
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        const session = await this.prisma.whiteboardSession.create({
+          data: {
+            classroomId,
+            tutorId,
+            joinCode: makeJoinCode(),
+            title: (input.title ?? '').trim().slice(0, 120) || (classroomId ? 'Live session' : 'Quick session'),
+            boards: {
+              create: [
+                { kind: BOARD_KIND.GROUP, ownerId: null, question: asJson(common), pages: empty },
+                ...studentIds.map((id) => ({
+                  kind: BOARD_KIND.PRIVATE,
+                  ownerId: id,
+                  question: asJson(perStudent.get(id) ?? common),
+                  pages: empty,
+                })),
+              ],
+            },
+          },
+          select: { id: true },
+        });
+        return this.sessionView(await this.ensureLive(session.id));
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'P2002') throw err;
+        // Another start won the race (one ACTIVE per classroom / per tutor), or the
+        // random code collided with a live one: resume the winner, or try a new code.
+        const winner = await this.findRunning(tutorId, classroomId);
+        if (winner) return this.sessionView(await this.ensureLive(winner.id));
+      }
+    }
+    throw new BadRequestException('Could not start the session. Please try again.');
+  }
+
+  private findRunning(tutorId: string, classroomId: string | null) {
+    return this.prisma.whiteboardSession.findFirst({
+      where: classroomId
+        ? { classroomId, status: 'ACTIVE' }
+        : { tutorId, classroomId: null, status: 'ACTIVE' },
+      select: { id: true, startedAt: true, tutorId: true },
+    });
+  }
+
+  /**
+   * A student joins with a code (typed, or from a shared link). They get their own
+   * board at once, with the group question on it, and the tutor's screen updates live.
+   */
+  async joinByCode(studentId: string, rawCode: string): Promise<{ sessionId: string; added: BoardView | null }> {
+    const code = normalizeJoinCode(rawCode);
+    if (!code) throw new BadRequestException('That code is not right. Check it with your tutor.');
+    const row = await this.prisma.whiteboardSession.findFirst({
+      where: { joinCode: code, status: 'ACTIVE' },
+      select: { id: true, classroomId: true, tutorId: true },
+    });
+    if (!row) throw new NotFoundException('No live session with that code. It may have ended — check with your tutor.');
+    if (row.tutorId === studentId) throw new BadRequestException('This is your own session.');
+    if (row.classroomId) {
+      // Classroom sessions stay with the class roster.
+      const enrolled = await this.prisma.enrollment.findFirst({
+        where: { classroomId: row.classroomId, studentId },
         select: { id: true },
       });
-      if (!winner) throw err;
-      session = winner;
+      if (!enrolled) throw new ForbiddenException('This session is for a class you are not in.');
     }
-    return this.sessionView(await this.ensureLive(session.id));
+
+    const s = await this.ensureLive(row.id);
+    if (s.participants.some((p) => p.userId === studentId)) return { sessionId: row.id, added: null };
+    const students = s.participants.filter((p) => p.role === 'STUDENT').length;
+    if (students >= MAX_STUDENTS) throw new BadRequestException('This session is full.');
+
+    const group = [...s.boards.values()].find((b) => b.ref.kind === BOARD_KIND.GROUP);
+    const question = group?.question ?? null;
+    const created = await this.prisma.whiteboardBoard.create({
+      data: {
+        sessionId: row.id,
+        kind: BOARD_KIND.PRIVATE,
+        ownerId: studentId,
+        question: question ? (question as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+        pages: emptyDoc() as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    // Two quick taps could add the student twice; keep the first board.
+    if (s.participants.some((p) => p.userId === studentId)) {
+      await this.prisma.whiteboardBoard.delete({ where: { id: created.id } });
+      return { sessionId: row.id, added: null };
+    }
+    const names = await this.names([studentId]);
+    s.participants.push({
+      userId: studentId,
+      name: names.get(studentId) ?? 'Student',
+      role: 'STUDENT',
+      color: STUDENT_COLORS[students % STUDENT_COLORS.length],
+    });
+    const board: LiveBoard = {
+      ref: { id: created.id, kind: BOARD_KIND.PRIVATE, ownerId: studentId },
+      doc: emptyDoc(),
+      points: 0,
+      question,
+      version: 0,
+      dirty: false,
+    };
+    s.boards.set(created.id, board);
+    const view = this.boardsFor(s, s.state.tutorId).find((b) => b.id === created.id) ?? null;
+    return { sessionId: row.id, added: view };
+  }
+
+  /** The tutor's own students: anyone in their classes or in their past sessions. */
+  async myStudents(tutorId: string, query: string) {
+    const [enrolled, past] = await Promise.all([
+      this.prisma.enrollment.findMany({
+        where: { classroom: { teacherId: tutorId, deletedAt: null } },
+        select: { studentId: true },
+      }),
+      this.prisma.whiteboardBoard.findMany({
+        where: { kind: BOARD_KIND.PRIVATE, ownerId: { not: null }, session: { tutorId } },
+        select: { ownerId: true },
+        distinct: ['ownerId'],
+        take: 500,
+      }),
+    ]);
+    const ids = [...new Set([...enrolled.map((e) => e.studentId), ...past.map((b) => b.ownerId as string)])];
+    if (ids.length === 0) return [];
+    const q = query.trim().slice(0, 60);
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: { in: ids },
+        deletedAt: null,
+        role: 'STUDENT',
+        ...(q
+          ? {
+              OR: [
+                { profile: { firstName: { startsWith: q, mode: 'insensitive' as const } } },
+                { profile: { lastName: { startsWith: q, mode: 'insensitive' as const } } },
+              ],
+            }
+          : {}),
+      },
+      select: { id: true, profile: { select: { firstName: true, lastName: true } } },
+      orderBy: { profile: { firstName: 'asc' } },
+      take: 25,
+    });
+    return users.map((u) => ({
+      id: u.id,
+      name: u.profile ? `${u.profile.firstName} ${u.profile.lastName}`.trim() : 'Student',
+    }));
+  }
+
+  /**
+   * Send the join link to some of the tutor's own students through EdKairos Messages.
+   * Reuses one "Live whiteboard" thread per tutor-student pair so inboxes stay tidy.
+   */
+  async invite(sessionId: string, tutorId: string, studentIds: string[]): Promise<{ sent: number }> {
+    const row = await this.prisma.whiteboardSession.findUnique({
+      where: { id: sessionId },
+      select: { tutorId: true, status: true, joinCode: true, title: true },
+    });
+    if (!row) throw new NotFoundException('Session not found');
+    if (row.tutorId !== tutorId) throw new ForbiddenException();
+    if (row.status !== 'ACTIVE' || !row.joinCode) throw new BadRequestException('This session has ended.');
+    const allowed = new Set((await this.myStudents(tutorId, '')).map((s) => s.id));
+    // myStudents caps at 25 for the picker; check the rest directly.
+    const wanted = [...new Set(studentIds)].slice(0, MAX_STUDENTS);
+    const permitted: string[] = [];
+    for (const id of wanted) {
+      if (allowed.has(id) || (await this.isMyStudent(tutorId, id))) permitted.push(id);
+    }
+    if (permitted.length === 0) throw new BadRequestException('Choose students from your classes or past sessions.');
+
+    const tutorName = (await this.names([tutorId])).get(tutorId) ?? 'Your tutor';
+    const link = `${APP_URL}/live/${row.joinCode}`;
+    const content = `${tutorName} invited you to a live whiteboard: ${link}\nOr open Live session and type the code ${row.joinCode}.`;
+    const subject = 'Live whiteboard';
+    for (const studentId of permitted) {
+      let thread = await this.prisma.thread.findFirst({
+        where: {
+          subject,
+          AND: [{ participants: { some: { userId: tutorId } } }, { participants: { some: { userId: studentId } } }],
+        },
+        select: { id: true },
+      });
+      if (!thread) {
+        thread = await this.prisma.thread.create({
+          data: { subject, participants: { create: [{ userId: tutorId }, { userId: studentId }] } },
+          select: { id: true },
+        });
+      }
+      await this.prisma.message.create({ data: { threadId: thread.id, senderId: tutorId, content } });
+    }
+    return { sent: permitted.length };
+  }
+
+  private async isMyStudent(tutorId: string, studentId: string): Promise<boolean> {
+    const [enr, board] = await Promise.all([
+      this.prisma.enrollment.findFirst({
+        where: { studentId, classroom: { teacherId: tutorId, deletedAt: null } },
+        select: { id: true },
+      }),
+      this.prisma.whiteboardBoard.findFirst({
+        where: { ownerId: studentId, session: { tutorId } },
+        select: { id: true },
+      }),
+    ]);
+    return !!(enr || board);
+  }
+
+  /** The tutor's own sessions, newest first (quick and classroom). */
+  async listMine(tutorId: string) {
+    return this.prisma.whiteboardSession.findMany({
+      where: { tutorId },
+      select: { id: true, title: true, status: true, startedAt: true, endedAt: true, classroomId: true, joinCode: true },
+      orderBy: { startedAt: 'desc' },
+      take: 50,
+    });
   }
 
   /** Active sessions in classrooms this student is enrolled in. */
@@ -244,11 +454,12 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     const userId = user.userId;
     const row = await this.prisma.whiteboardSession.findUnique({
       where: { id: sessionId },
-      include: { boards: { orderBy: { createdAt: 'asc' } } },
+      include: { boards: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     });
     if (!row) throw new NotFoundException('Session not found');
     let admin = false;
-    if (user.role === 'SUPER_ADMIN' || user.role === 'ORG_ADMIN') {
+    if (user.role === 'SUPER_ADMIN') admin = true;
+    else if (user.role === 'ORG_ADMIN' && row.classroomId) {
       const classroom = await this.prisma.classroom.findFirst({
         where: { id: row.classroomId },
         select: { organizationId: true },
@@ -315,7 +526,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     if (cached) return cached;
     const row = await this.prisma.whiteboardSession.findUnique({
       where: { id: sessionId },
-      include: { boards: { orderBy: { createdAt: 'asc' } } },
+      include: { boards: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     });
     if (!row) throw new NotFoundException('Session not found');
 
@@ -323,9 +534,6 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
       .filter((b) => b.kind === BOARD_KIND.PRIVATE && b.ownerId)
       .map((b) => b.ownerId as string);
     const names = await this.names([row.tutorId, ...studentIds]);
-    // Alphabetical, with the id as a tie-break: the same order (and so the same ink
-    // colors) every time the session loads, including after an API restart.
-    studentIds.sort((a, b) => (names.get(a) ?? '').localeCompare(names.get(b) ?? '') || a.localeCompare(b));
     const participants: Participant[] = [
       { userId: row.tutorId, name: names.get(row.tutorId) ?? 'Tutor', role: 'TUTOR', color: TUTOR_COLOR },
       ...studentIds.map((id, i) => ({
@@ -339,6 +547,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     const live: LiveSession = {
       id: row.id,
       classroomId: row.classroomId,
+      joinCode: row.joinCode,
       title: row.title,
       startedAt: row.startedAt,
       state: this.stateOf(row),
@@ -371,7 +580,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     if (s.state.status !== 'ACTIVE') throw new ForbiddenException('This session has ended');
     const me = s.participants.find((p) => p.userId === userId);
     if (!me) throw new ForbiddenException();
-    if (me.role === 'STUDENT') {
+    if (me.role === 'STUDENT' && s.classroomId) {
       // Still enrolled? A student removed from the class mid-session loses access.
       const enrolled = await this.prisma.enrollment.findFirst({
         where: { classroomId: s.classroomId, studentId: userId },
@@ -568,6 +777,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     return {
       id: s.id,
       classroomId: s.classroomId,
+      joinCode: s.state.status === 'ACTIVE' ? s.joinCode : null,
       title: s.title,
       status: s.state.status,
       mode: s.state.mode,

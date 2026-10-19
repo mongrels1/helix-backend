@@ -247,6 +247,11 @@ export class WhiteboardGateway
     }
   }
 
+  /** A student joined by code: give the tutor their new board and refresh everyone. */
+  async studentAdded(sessionId: string): Promise<void> {
+    await this.resyncRooms(sessionId);
+  }
+
   /** Called by the controller when the tutor ends the session over REST. */
   async sessionEnded(sessionId: string, session: unknown): Promise<void> {
     const sockets = await this.server.in(sRoom(sessionId)).fetchSockets();
