@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
+import { EmailModule } from '../modules/email/email.module';
 import { AdminExperienceController } from './admin/admin-experience.controller';
 import { AdminExperienceService } from './admin/admin-experience.service';
 import { MeExperienceController } from './me/me.controller';
@@ -11,7 +12,7 @@ import { TeacherExperienceController } from './teacher/teacher-experience.contro
 import { TeacherExperienceService } from './teacher/teacher-experience.service';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, EmailModule],
   providers: [
     TeacherExperienceService,
     StudentExperienceService,

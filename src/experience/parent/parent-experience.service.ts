@@ -9,6 +9,7 @@ import {
 import { AttendanceStatus, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EmailService } from '../../modules/email/email.service';
 // Seats moved to common/family so the admin surface can show the same number
 // this service enforces. Re-exported below; nothing that imported it from here
 // needs to change.
@@ -22,7 +23,10 @@ export { DEFAULT_FAMILY_SEATS };
 export class ParentExperienceService {
   private readonly logger = new Logger(ParentExperienceService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+  ) {}
 
   /**
    * A parent creates a child's login and links it, in one step.
@@ -49,7 +53,7 @@ export class ParentExperienceService {
   ) {
     const parent = await this.prisma.user.findUnique({
       where: { id: parentId },
-      select: { id: true, role: true, email: true, maxStudents: true },
+      select: { id: true, role: true, email: true, maxStudents: true, profile: { select: { firstName: true } } },
     });
     if (!parent || parent.role !== Role.PARENT) {
       throw new ForbiddenException('Only a parent account can add a child');
@@ -74,7 +78,7 @@ export class ParentExperienceService {
 
     const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
 
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const student = await tx.user.create({
         data: {
           email,
@@ -93,6 +97,37 @@ export class ParentExperienceService {
       await tx.parentStudentLink.create({ data: { parentId, studentId: student.id } });
       return { id: student.id, email: student.email, seatsUsed: used + 1, seats };
     });
+
+    // The login is shown once on screen; this puts it in the parent's inbox too.
+    // A mail failure must never undo or fail the child that was just created.
+    try {
+      await this.email.sendChildLoginEmail(
+        parent.email,
+        input.firstName,
+        created.email,
+        parent.profile?.firstName ?? undefined,
+      );
+    } catch (err) {
+      this.logger.warn(`Child login email to ${parent.email} failed: ${String(err)}`);
+    }
+    return created;
+  }
+
+  /**
+   * A parent sets a new password for one of their own children. The child is
+   * matched through ParentStudentLink, so a parent can never reach a scholar who
+   * is not linked to them.
+   */
+  async resetChildPassword(parentId: string, studentId: string, password: string) {
+    const link = await this.prisma.parentStudentLink.findUnique({
+      where: { parentId_studentId: { parentId, studentId } },
+    });
+    if (!link) {
+      throw new NotFoundException('That child is not on your account');
+    }
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    await this.prisma.user.update({ where: { id: studentId }, data: { passwordHash } });
+    return { studentId, reset: true as const };
   }
 
   /**

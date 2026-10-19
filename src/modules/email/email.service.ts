@@ -93,6 +93,36 @@ export class EmailService {
     });
   }
 
+  /**
+   * Sent to the PARENT right after they add a child, so the child's login is
+   * written down somewhere other than a panel that is shown once. The password
+   * is never included: the parent chose it a moment ago, and mail is not a safe
+   * place to keep it.
+   */
+  async sendChildLoginEmail(
+    to: string,
+    childFirstName: string,
+    childLogin: string,
+    parentFirstName?: string,
+  ): Promise<void> {
+    const frontendUrl = this.config.get<string>('app.frontendUrl') ?? 'https://app.edkairos.com';
+    const loginUrl = `${frontendUrl.replace(/\/$/, '')}/login`;
+    const parent = parentFirstName?.trim() || 'there';
+    const child = childFirstName.trim() || 'Your child';
+    await this.sendEmail({
+      to,
+      subject: `${child}'s EdKairos login`,
+      html: `
+        <p>Hi ${this.escapeHtml(parent)},</p>
+        <p>${this.escapeHtml(child)} now has their own EdKairos login. Keep this email.</p>
+        <p><strong>Username:</strong> ${this.escapeHtml(childLogin)}<br><strong>Password:</strong> the one you chose when you added ${this.escapeHtml(child)}.</p>
+        <p>${this.escapeHtml(child)} signs in here: <a href="${loginUrl}">${this.escapeHtml(loginUrl)}</a></p>
+        <p>Their check-up scores, learning plan and tutor stay in their own account, not yours. Forgot the password? Open My Children in your account and choose Reset password.</p>
+      `,
+      text: `Hi ${parent}, ${child} now has their own EdKairos login. Keep this email.\n\nUsername: ${childLogin}\nPassword: the one you chose when you added ${child}.\n\n${child} signs in here: ${loginUrl}\n\nTheir scores, learning plan and tutor stay in their own account. Forgot the password? Open My Children in your account and choose Reset password.`,
+    });
+  }
+
   async sendTrialEndingEmail(to: string, firstName?: string, upgradeUrl?: string): Promise<void> {
     const url = upgradeUrl?.trim() || this.config.get<string>('app.upgradeUrl') || 'https://go.edkairos.com';
     const displayName = firstName?.trim() || 'there';

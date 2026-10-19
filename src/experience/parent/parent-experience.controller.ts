@@ -64,6 +64,13 @@ class AddChildDto {
   password!: string;
 }
 
+class ResetChildPasswordDto {
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  password!: string;
+}
+
 @Controller('api/v1/experience/parent')
 @Roles(Role.PARENT)
 export class ParentExperienceController {
@@ -81,6 +88,22 @@ export class ParentExperienceController {
     @Body() body: AddChildDto,
   ): Promise<{ success: true; data: Awaited<ReturnType<ParentExperienceService['addChild']>> }> {
     const data = await this.parentExperienceService.addChild(user.userId, body);
+    return { success: true, data };
+  }
+
+  /** A parent sets a new password for one of their own children. */
+  @Post('children/:studentId/password')
+  @HttpCode(200)
+  async resetChildPassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('studentId') studentId: string,
+    @Body() body: ResetChildPasswordDto,
+  ): Promise<{ success: true; data: { studentId: string; reset: true } }> {
+    const data = await this.parentExperienceService.resetChildPassword(
+      user.userId,
+      studentId,
+      body.password,
+    );
     return { success: true, data };
   }
 
