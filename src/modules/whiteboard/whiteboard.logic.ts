@@ -270,13 +270,46 @@ export function applyOp(doc: BoardDoc, op: BoardOp, userId: string, tutor: boole
 // ---- questions ---------------------------------------------------------------
 
 export interface BoardQuestion {
-  source: 'bank' | 'custom';
+  source: 'bank' | 'custom' | 'upload';
   itemId?: string;
   label?: string;
   stem: string;
   options?: string[];
   figure?: unknown;
+  /** https://*.edkairos.com/…, or `asset:<id>` for an uploaded picture (set by the server only). */
   imageUrl?: string;
+  /** Picture size in pixels, so the layout is reserved before it loads and ink stays aligned. */
+  imageW?: number;
+  imageH?: number;
+}
+
+/** The question for an uploaded picture. Built on the server; never accepted from a client. */
+export function uploadQuestion(assetId: string, w: number, h: number, label?: string): BoardQuestion {
+  return {
+    source: 'upload',
+    stem: '',
+    imageUrl: `asset:${assetId}`,
+    imageW: w,
+    imageH: h,
+    ...(label ? { label: label.slice(0, 120) } : {}),
+  };
+}
+
+/**
+ * Ink a student or tutor may pick on a private board. Green is left out: it is the
+ * tutor's ink, so a student's marks can never be mistaken for the tutor's.
+ */
+export const PALETTE = ['#1d4ed8', '#16271b', '#dc2626', '#7e22ce', '#ea580c'];
+
+/**
+ * The color a stroke is stored with. On the shared group board everyone writes in
+ * their own fixed color (that is how marks are told apart). On a private board the
+ * writer may also use a palette color.
+ */
+export function inkFor(requested: string, identity: string, boardKind: string): string {
+  if (boardKind === BOARD_KIND.GROUP) return identity;
+  const c = requested.toLowerCase();
+  return c === identity.toLowerCase() || PALETTE.includes(c) ? c : identity;
 }
 
 /** Clean a question coming from the tutor (custom text or an item copied from the bank). */

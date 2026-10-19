@@ -4,12 +4,14 @@ import {
   canView,
   canWrite,
   emptyDoc,
+  inkFor,
   isOwnImageHost,
   OpError,
   RateLimiter,
   sanitizeOp,
   sanitizeQuestion,
   sanitizeStroke,
+  uploadQuestion,
   SessionState,
 } from './whiteboard.logic';
 
@@ -179,5 +181,22 @@ describe('safety limits', () => {
   it('caps a single stroke', () => {
     const big = { ...stroke('big'), points: new Array(2002).fill(1) };
     expect(() => sanitizeStroke(big, MAYA)).toThrow(OpError);
+  });
+});
+
+describe('ink colors', () => {
+  it('on the group board everyone keeps their own color', () => {
+    expect(inkFor('#dc2626', '#1d4ed8', 'GROUP')).toBe('#1d4ed8');
+  });
+  it('on a private board the palette is allowed', () => {
+    expect(inkFor('#DC2626', '#1d4ed8', 'PRIVATE')).toBe('#dc2626');
+  });
+  it("nobody can pick the tutor's green or an arbitrary color", () => {
+    expect(inkFor('#007a00', '#1d4ed8', 'PRIVATE')).toBe('#1d4ed8');
+    expect(inkFor('#123456', '#1d4ed8', 'PRIVATE')).toBe('#1d4ed8');
+  });
+  it('picture questions are built by the server and never accepted from a client', () => {
+    expect(uploadQuestion('abc', 800, 600).imageUrl).toBe('asset:abc');
+    expect(sanitizeQuestion({ stem: 'x', imageUrl: 'asset:abc' })?.imageUrl).toBeUndefined();
   });
 });

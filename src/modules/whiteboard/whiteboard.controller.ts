@@ -9,7 +9,9 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -98,6 +100,43 @@ export class WhiteboardController {
       : [];
     if (ids.length === 0) throw new BadRequestException('Choose at least one student.');
     return { success: true, data: await this.service.invite(id, user.userId, ids) };
+  }
+
+  /**
+   * Make a picture the question: a student's photo of their own homework, or the
+   * tutor's picture for one board or all boards. The browser shrinks it first.
+   */
+  @Post('sessions/:id/question-picture')
+  async questionPicture(
+    @CurrentUser() user: Requester,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { boardId?: string; all?: boolean; image?: string; width?: number; height?: number; label?: string },
+  ) {
+    if (typeof body?.image !== 'string') throw new BadRequestException('Choose a picture.');
+    const boardIds = await this.service.questionFromPicture(id, user.userId, {
+      boardId: typeof body.boardId === 'string' ? body.boardId : undefined,
+      all: body.all === true,
+      image: body.image,
+      width: Number(body.width),
+      height: Number(body.height),
+      label: typeof body.label === 'string' ? body.label : undefined,
+    });
+    await this.gateway.questionsChanged(id, boardIds);
+    return { success: true, data: { boardIds } };
+  }
+
+  /** A question picture, for people in the session who can see it. */
+  @Get('assets/:assetId')
+  async asset(
+    @CurrentUser() user: Requester,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
+    @Res() res: Response,
+  ) {
+    const { mime, data } = await this.service.readAsset(assetId, user);
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(Buffer.from(data));
   }
 
   /** A student's running sessions (the "Join live session" banner). */

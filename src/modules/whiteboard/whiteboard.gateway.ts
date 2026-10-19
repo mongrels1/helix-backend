@@ -247,6 +247,19 @@ export class WhiteboardGateway
     }
   }
 
+  /** New questions on some boards: send fresh copies to everyone who can see them. */
+  async questionsChanged(sessionId: string, boardIds: string[]): Promise<void> {
+    const s = this.service.getLive(sessionId);
+    if (!s) return;
+    for (const id of boardIds) {
+      const sockets = await this.server.in(bRoom(id)).fetchSockets();
+      for (const sock of sockets) {
+        const view = this.service.boardsFor(s, (sock.data as SocketData).userId as string).find((b) => b.id === id);
+        if (view) sock.emit('wb:board', view);
+      }
+    }
+  }
+
   /** A student joined by code: give the tutor their new board and refresh everyone. */
   async studentAdded(sessionId: string): Promise<void> {
     await this.resyncRooms(sessionId);

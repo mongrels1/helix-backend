@@ -1082,3 +1082,20 @@ model WhiteboardBoard {
 
   @@index([sessionId])
 }
+
+/// A picture put on a board as the question (a photo of homework, a screenshot, a
+/// PDF page). Stored in the database so it never leaves EdKairos; served only to
+/// people in that session who can see a board showing it.
+model WhiteboardAsset {
+  id         String   @id @default(uuid())
+  sessionId  String
+  uploaderId String
+  mime       String
+  data       Bytes
+  size       Int
+  width      Int
+  height     Int
+  createdAt  DateTime @default(now())
+
+  @@index([sessionId])
+}

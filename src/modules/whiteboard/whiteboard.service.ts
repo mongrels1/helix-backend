@@ -20,8 +20,10 @@ import {
   canView,
   canWrite,
   emptyDoc,
+  inkFor,
   isTutor,
   LIMITS,
+  uploadQuestion,
   normalizeDoc,
   OpError,
   sanitizeOp,
@@ -88,6 +90,30 @@ export interface SessionView {
 
 /** Students one session can hold. A group of four is the model; this is the safety cap. */
 const MAX_STUDENTS = 30;
+/** Pictures one session may hold (about 1–2 MB each after the browser shrinks them). */
+const MAX_ASSETS = 60;
+const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
+
+/** Read a data URL from the browser and check it really is a JPEG, PNG or WebP picture. */
+function decodePicture(dataUrl: string): { mime: string; bytes: Buffer } {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? ''));
+  if (!m) throw new BadRequestException('Use a photo, a screenshot or a PDF page (JPEG, PNG or WebP).');
+  const bytes = Buffer.from(m[2], 'base64');
+  if (bytes.length === 0 || bytes.length > MAX_PICTURE_BYTES) {
+    throw new BadRequestException('That picture is too large. Try a smaller one.');
+  }
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isPng = bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isWebp = bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  const mime = isJpeg ? 'image/jpeg' : isPng ? 'image/png' : isWebp ? 'image/webp' : null;
+  if (!mime) throw new BadRequestException('That file is not a picture.');
+  return { mime, bytes };
+}
+
+function clampInt(n: unknown, lo: number, hi: number): number {
+  const v = Math.round(Number(n));
+  return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : lo;
+}
 /** A session older than this is closed (work kept) instead of resumed. */
 const STALE_MS = 12 * 60 * 60 * 1000;
 
@@ -650,9 +676,9 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     if (!canWrite(userId, s.state, board.ref)) throw new OpError('not allowed');
     const op = sanitizeOp(rawOp, userId);
     if (op.type === 'add') {
-      // Ink color is identity: everyone's marks are always in their own color.
+      // Group board: everyone's marks are in their own color. Private board: own color or the palette.
       const me = s.participants.find((p) => p.userId === userId);
-      if (me) op.stroke.color = me.color;
+      if (me) op.stroke.color = inkFor(op.stroke.color, me.color, board.ref.kind);
     }
     if (op.type === 'add' && board.points + op.stroke.points.length > LIMITS.maxPointsPerBoard) {
       throw new OpError('This board is full. Add a page or clear some work.');
@@ -726,26 +752,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
           ? [s.boards.get(payload.boardId)].filter((b): b is LiveBoard => !!b)
           : [...s.boards.values()];
         if (targets.length === 0) throw new OpError('no such board');
-        for (const b of targets) {
-          b.question = q;
-          // Ink drawn on the old question no longer lines up with anything: clear it.
-          b.doc.strokes = b.doc.strokes.filter((x) => x.layer !== 'q');
-          b.points = b.doc.strokes.reduce((n, x) => n + x.points.length, 0);
-          b.version += 1;
-        }
-        await this.prisma.$transaction(
-          targets.map((b) =>
-            this.prisma.whiteboardBoard.update({
-              where: { id: b.ref.id },
-              data: {
-                question: q ? (q as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
-                pages: b.doc as unknown as Prisma.InputJsonValue,
-                version: b.version,
-              },
-            }),
-          ),
-        );
-        for (const b of targets) b.dirty = false;
+        await this.putQuestion(targets, q);
         return { changed: true, boardIds: targets.map((b) => b.ref.id) };
       }
       case 'clearHand':
@@ -765,6 +772,98 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
       },
     });
     return { changed: true };
+  }
+
+  /** Put a question on boards: clears ink drawn on the old question (it no longer lines up), then saves. */
+  private async putQuestion(targets: LiveBoard[], q: BoardQuestion | null): Promise<void> {
+    for (const b of targets) {
+      b.question = q;
+      b.doc.strokes = b.doc.strokes.filter((x) => x.layer !== 'q');
+      b.points = b.doc.strokes.reduce((n, x) => n + x.points.length, 0);
+      b.version += 1;
+    }
+    await this.prisma.$transaction(
+      targets.map((b) =>
+        this.prisma.whiteboardBoard.update({
+          where: { id: b.ref.id },
+          data: {
+            question: q ? (q as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+            pages: b.doc as unknown as Prisma.InputJsonValue,
+            version: b.version,
+          },
+        }),
+      ),
+    );
+    for (const b of targets) b.dirty = false;
+  }
+
+  /**
+   * A picture becomes the question: a student's photo of their homework on their own
+   * board, or the tutor's picture on one board or every board. Returns the boards changed.
+   */
+  async questionFromPicture(
+    sessionId: string,
+    userId: string,
+    input: { boardId?: string; all?: boolean; image: string; width: number; height: number; label?: string },
+  ): Promise<string[]> {
+    const s = await this.liveOrLoad(sessionId);
+    if (!s) throw new BadRequestException('This session has ended.');
+    const tutor = isTutor(userId, s.state);
+    let targets: LiveBoard[];
+    if (tutor && input.all) {
+      targets = [...s.boards.values()];
+    } else {
+      const b = input.boardId ? s.boards.get(input.boardId) : undefined;
+      if (!b) throw new NotFoundException('Board not found');
+      if (!tutor && (b.ref.kind !== BOARD_KIND.PRIVATE || b.ref.ownerId !== userId)) {
+        throw new ForbiddenException('You can add a picture to your own board.');
+      }
+      if (!canWrite(userId, s.state, b.ref)) throw new ForbiddenException('Writing is paused on this board.');
+      targets = [b];
+    }
+    const pic = decodePicture(input.image);
+    const width = clampInt(input.width, 1, 10000);
+    const height = clampInt(input.height, 1, 10000);
+    const count = await this.prisma.whiteboardAsset.count({ where: { sessionId } });
+    if (count >= MAX_ASSETS) throw new BadRequestException('This session has too many pictures. Start a new session.');
+
+    const asset = await this.prisma.whiteboardAsset.create({
+      data: { sessionId, uploaderId: userId, mime: pic.mime, data: new Uint8Array(pic.bytes), size: pic.bytes.length, width, height },
+      select: { id: true },
+    });
+    const me = s.participants.find((p) => p.userId === userId);
+    const label = tutor ? input.label?.trim() || undefined : `${me?.name ?? 'Student'}'s question`;
+    await this.putQuestion(targets, uploadQuestion(asset.id, width, height, label));
+    return targets.map((b) => b.ref.id);
+  }
+
+  /** Serve a question picture to someone allowed to see a board that shows it. */
+  async readAsset(assetId: string, user: Requester): Promise<{ mime: string; data: Uint8Array }> {
+    const asset = await this.prisma.whiteboardAsset.findUnique({ where: { id: assetId } });
+    if (!asset) throw new NotFoundException();
+    if (user.role === 'SUPER_ADMIN') return { mime: asset.mime, data: asset.data };
+    const live = this.live.get(asset.sessionId);
+    let state: SessionState;
+    let boards: { ref: BoardRef; question: BoardQuestion | null }[];
+    if (live) {
+      state = live.state;
+      boards = [...live.boards.values()];
+    } else {
+      const row = await this.prisma.whiteboardSession.findUnique({
+        where: { id: asset.sessionId },
+        include: { boards: { select: { id: true, kind: true, ownerId: true, question: true } } },
+      });
+      if (!row) throw new NotFoundException();
+      state = this.stateOf(row);
+      boards = row.boards.map((b) => ({ ref: { id: b.id, kind: b.kind, ownerId: b.ownerId }, question: b.question as BoardQuestion | null }));
+    }
+    if (state.status !== 'ACTIVE') state = { ...state, presentedBoardId: null };
+    if (isTutor(user.userId, state)) return { mime: asset.mime, data: asset.data };
+    const ref = `asset:${asset.id}`;
+    const allowed = boards.some((b) => b.question?.imageUrl === ref && canView(user.userId, state, b.ref));
+    // The uploader can always see their own picture (e.g. after the tutor changed the question).
+    if (!allowed && asset.uploaderId !== user.userId) throw new ForbiddenException();
+    return { mime: asset.mime, data: asset.data };
   }
 
   setHand(s: LiveSession, userId: string, up: boolean): void {
