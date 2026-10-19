@@ -1036,3 +1036,45 @@ model LessonPlanContext {
   data      Json
   updatedAt DateTime @default(now())
 }
+
+/// Live tutoring whiteboard (one tutor, a small group of students).
+/// One ACTIVE session per classroom at a time. `mode` is MONITOR | GROUP | ONE_ON_ONE.
+/// Locks, the presented board and the 1:1 focus live here so a reconnecting
+/// client (or a restarted API) recovers the room exactly as the tutor left it.
+model WhiteboardSession {
+  id               String            @id @default(uuid())
+  classroomId      String
+  tutorId          String
+  title            String            @default("Live session")
+  status           String            @default("ACTIVE")
+  mode             String            @default("MONITOR")
+  focusStudentId   String?
+  presentedBoardId String?
+  lockedStudentIds String[]          @default([])
+  startedAt        DateTime          @default(now())
+  endedAt          DateTime?
+  updatedAt        DateTime          @default(now()) @updatedAt
+  boards           WhiteboardBoard[]
+
+  @@index([classroomId, status])
+  @@index([tutorId])
+}
+
+/// A board inside a session. kind = GROUP (shared) or PRIVATE (one student, ownerId).
+/// `question` is the content shown beside the board (copied in, never retyped by the
+/// student); `pages` holds every stroke as JSON: { pages: [{ id, strokes: [...] }],
+/// annotations: [...] } where annotations sit on the question itself.
+model WhiteboardBoard {
+  id        String            @id @default(uuid())
+  sessionId String
+  session   WhiteboardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind      String
+  ownerId   String?
+  question  Json?
+  pages     Json
+  version   Int               @default(0)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @default(now()) @updatedAt
+
+  @@index([sessionId])
+}

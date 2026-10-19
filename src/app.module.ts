@@ -54,6 +54,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { RosterModule } from '@modules/roster/roster.module';
 import { InstitutionalEnrollmentModule } from './modules/institutional-enrollment/institutional-enrollment.module';
 import { KSportsModule } from '@modules/ksports/ksports.module';
+import { WhiteboardModule } from '@modules/whiteboard/whiteboard.module';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import { KSportsModule } from '@modules/ksports/ksports.module';
     EventsModule,
     AttendanceModule,
     KSportsModule,
+    WhiteboardModule,
     AuthModule,
     ProvisioningModule,
     AssignmentsModule,
