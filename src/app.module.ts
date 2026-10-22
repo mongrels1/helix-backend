@@ -31,6 +31,7 @@ import { ProvisioningModule } from '@modules/provisioning/provisioning.module';
 import { ReferralModule } from '@modules/referral/referral.module';
 import { FellowsModule } from '@modules/fellows/fellows.module';
 import { StripeModule } from '@modules/stripe/stripe.module';
+import { BillingModule } from '@modules/billing/billing.module';
 import { UsageModule } from '@modules/usage/usage.module';
 import { AssignmentsModule } from '@modules/assignments/assignments.module';
 import { ClassroomsModule } from '@modules/classrooms/classrooms.module';
@@ -91,6 +92,7 @@ import { WhiteboardModule } from '@modules/whiteboard/whiteboard.module';
     ReferralModule,
     FellowsModule,
     StripeModule,
+    BillingModule,
     ReportsModule,
     AIRouterModule,
     AssistantModule,

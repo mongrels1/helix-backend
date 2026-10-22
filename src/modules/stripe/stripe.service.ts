@@ -57,6 +57,32 @@ export class StripeService {
     return { applied: false, reason: 'no_active_subscription' };
   }
 
+  // ============ Customer portal: the parent manages their own card ============
+
+  /** True when the server can open Stripe's hosted billing page at all. */
+  get portalEnabled(): boolean {
+    return this.stripe !== null;
+  }
+
+  /**
+   * A one-time link to Stripe's hosted customer portal for ONE customer, where
+   * they can update their card, see invoices and (per the portal settings in the
+   * Stripe Dashboard) cancel. The link is single-use and expires quickly, so it is
+   * created on click, never stored or emailed.
+   *
+   * The customer id must come from the signed-in user's own row - never from the
+   * request - which is BillingService's job. Throws if Stripe is disabled or the
+   * portal has no saved configuration in the Dashboard.
+   */
+  async createPortalSession(customerId: string, returnUrl: string): Promise<string> {
+    if (!this.stripe) throw new Error('stripe_disabled');
+    const session = await this.stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: returnUrl,
+    });
+    return session.url;
+  }
+
   // ============ Stripe webhook: keep app access in sync with billing ============
 
   /**
