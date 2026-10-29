@@ -213,6 +213,13 @@ model Organization {
   enrollmentToken         String? @unique
   enrollmentCap           Int?
   enrollmentsUsed         Int     @default(0)
+  // Per-student access codes (Redan, 29 Oct 2026). When true, the shared token
+  // alone no longer enrolls anyone: each family must also redeem a single-use
+  // code from the flyer their child brought home, and the free access then runs
+  // for the code's freeMonths before lapsing to the free tier. Off by default,
+  // so every other school behaves exactly as before.
+  requireAccessCode       Boolean @default(false)
+  accessCodes             EnrollmentAccessCode[]
   memberships Membership[]
   classrooms  Classroom[]
   createdAt   DateTime     @default(now())
@@ -941,6 +948,26 @@ model EnrollmentConsent {
   signedAt             DateTime @default(now())
 
   @@index([organizationId, signedAt])
+}
+
+/// One printed, single-use code per student (the Redan flyers). Only a SHA-256
+/// fingerprint of the normalised code is stored — never the code itself — so a
+/// database read cannot reprint the flyers, and the codes never enter the
+/// (public) repository: they arrive through an environment variable at seed
+/// time. Redemption is a conditional update on redeemedAt IS NULL inside the
+/// enrollment transaction, so two families cannot both win one code.
+model EnrollmentAccessCode {
+  id                 String       @id @default(uuid())
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id])
+  codeHash           String       @unique
+  freeMonths         Int          @default(10)
+  redeemedAt         DateTime?
+  redeemedByParentId String?
+  redeemedStudentId  String?
+  createdAt          DateTime     @default(now())
+
+  @@index([organizationId, redeemedAt])
 }
 
 /// One row per user per day per metered feature. The free tier is a daily

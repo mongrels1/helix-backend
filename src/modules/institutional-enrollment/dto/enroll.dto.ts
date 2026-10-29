@@ -38,6 +38,10 @@ export class EnrollDto {
   /** The exact wording rendered to the parent, stored verbatim. */
   @IsString() @IsNotEmpty() @MaxLength(20000) consentText!: string;
 
+  // --- per-student access code (required when the school requires one) -----
+  /** The single-use code printed on the child's flyer, e.g. RDN-2NY4-97EQ. */
+  @IsOptional() @IsString() @MaxLength(40) accessCode?: string;
+
   // --- anti-abuse ----------------------------------------------------------
   @IsOptional() @IsString() captchaToken?: string;
   /** Honeypot — hidden from humans; a filled value is a bot. */

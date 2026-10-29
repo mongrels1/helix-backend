@@ -8,8 +8,11 @@ import { randomBytes, randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { EnrollDto } from './dto/enroll.dto';
+import { addMonths, hashAccessCode, isPlausibleAccessCode } from './access-code';
 
 const SALT_ROUNDS = 12;
+/** One message for missing, unknown and already-used codes, so the endpoint cannot be used to test which codes exist. */
+const BAD_CODE = 'That access code is not valid or has already been used. Please check the code on your flyer, or ask your teacher.';
 const SET_PASSWORD_TTL_DAYS = 30;
 
 /**
@@ -49,6 +52,8 @@ export class InstitutionalEnrollmentService {
       slug: org.slug,
       seatsRemaining:
         org.enrollmentCap === null ? null : Math.max(0, org.enrollmentCap - org.enrollmentsUsed),
+      // The page shows the code field (prefilled from ?code=) only when true.
+      requiresAccessCode: org.requireAccessCode,
     };
   }
 
@@ -65,6 +70,15 @@ export class InstitutionalEnrollmentService {
     }
 
     const org = await this.findOpenOrg(token);
+    // A school that hands out per-student codes cannot be enrolled with the
+    // shared token alone — the token is in the public repository. Reject a
+    // missing or malformed code before any account work or lookup.
+    const codeHash = org.requireAccessCode
+      ? (isPlausibleAccessCode(dto.accessCode) ? hashAccessCode(dto.accessCode as string) : null)
+      : null;
+    if (org.requireAccessCode && !codeHash) {
+      throw new BadRequestException(BAD_CODE);
+    }
     const parentEmail = dto.parentEmail.trim().toLowerCase();
 
     const existing = await this.prisma.user.findUnique({
@@ -108,16 +122,41 @@ export class InstitutionalEnrollmentService {
         );
       }
 
+      // Claim the code. The conditional update on redeemedAt IS NULL is the
+      // single-use guarantee: of two simultaneous submits with one code, exactly
+      // one updates a row. Any throw below rolls the claim back with everything
+      // else, so a failed enrollment never burns a family's code.
+      let freeUntil: Date | null = null;
+      let codeId: string | null = null;
+      if (codeHash) {
+        const code = await tx.enrollmentAccessCode.findFirst({
+          where: { codeHash, organizationId: org.id, redeemedAt: null },
+          select: { id: true, freeMonths: true },
+        });
+        if (!code) throw new BadRequestException(BAD_CODE);
+        const now = new Date();
+        const claimed = await tx.enrollmentAccessCode.updateMany({
+          where: { id: code.id, redeemedAt: null },
+          data: { redeemedAt: now },
+        });
+        if (claimed.count !== 1) throw new BadRequestException(BAD_CODE);
+        codeId = code.id;
+        freeUntil = addMonths(now, code.freeMonths);
+      }
+
       const parent = await tx.user.create({
         data: {
           email: parentEmail,
           passwordHash: parentHash,
           role: Role.PARENT,
-          // The entitlement itself. No Stripe customer, no subscription, and
-          // planRenewsAt null so isActive() never ages out.
+          // The entitlement itself. No Stripe customer, no subscription.
+          // Without a code, planRenewsAt is null so isPlanActive() never ages
+          // out. With a code, it is the end of the free period: isPlanActive()
+          // turns false on that date and the family drops to the free tier.
+          // Nothing is ever charged — no Stripe object exists to charge.
           plan,
           planStatus: 'active',
-          planRenewsAt: null,
+          planRenewsAt: freeUntil,
           // Provenance, so the Stripe webhook can refuse to touch this row. The
           // comment above used to argue Stripe "never knows these" emails - true
           // until a Redan parent buys anything personally, after which one
@@ -197,7 +236,14 @@ export class InstitutionalEnrollmentService {
         data: { enrollmentsUsed: { increment: 1 } },
       });
 
-      return { parentId: parent.id, studentId: student.id };
+      if (codeId) {
+        await tx.enrollmentAccessCode.update({
+          where: { id: codeId },
+          data: { redeemedByParentId: parent.id, redeemedStudentId: student.id },
+        });
+      }
+
+      return { parentId: parent.id, studentId: student.id, freeUntil };
     });
 
     // The child's account has no usable password; the parent sets it.
@@ -228,6 +274,8 @@ export class InstitutionalEnrollmentService {
       enrolled: true,
       studentLoginEmail: studentEmail,
       studentSetPasswordUrl,
+      // ISO date the free access ends, or null when it does not expire.
+      freeAccessEndsAt: result.freeUntil ? result.freeUntil.toISOString() : null,
     };
   }
 
@@ -236,7 +284,7 @@ export class InstitutionalEnrollmentService {
       where: { enrollmentToken: token, publicEnrollmentEnabled: true, deletedAt: null },
       select: {
         id: true, name: true, slug: true,
-        enrollmentCap: true, enrollmentsUsed: true,
+        enrollmentCap: true, enrollmentsUsed: true, requireAccessCode: true,
       },
     });
     // One shape for "wrong token" and "switched off" so the endpoint cannot be
