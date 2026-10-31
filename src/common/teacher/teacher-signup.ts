@@ -21,11 +21,19 @@ const DEFAULT_TEACHER_DOMAINS = ['dekalbschoolsga.org'];
 /** Stored in User.plan to mark a teacher who registered themselves. */
 export const SELF_SERVE_TEACHER_PLAN = 'teacher-self-serve';
 
-/** DailyUsage.kind for a generated lesson plan. */
-export const LESSON_PLAN_USAGE_KIND = 'LESSON_PLAN';
+/**
+ * DailyUsage.kind for a generated lesson plan. The row's `day` holds the
+ * Monday of the week (see lessonPlanWeekKey), so one row counts a whole week.
+ * A new kind, so the old per-day 'LESSON_PLAN' rows are never read as weeks.
+ */
+export const LESSON_PLAN_USAGE_KIND = 'LESSON_PLAN_WEEK';
 
-/** Lesson plans a self-serve teacher may generate per day, unless overridden. */
-const DEFAULT_DAILY_LESSON_PLANS = 5;
+/**
+ * Lesson plans a self-serve teacher may generate per week, unless overridden.
+ * One plan covers a full teaching week, so one is a week of planning
+ * (John, 31 Oct 2026). It was 5 a day.
+ */
+const DEFAULT_WEEKLY_LESSON_PLANS = 1;
 
 /** Approved domains, lower-cased. TEACHER_SIGNUP_DOMAINS is a comma list. */
 export function teacherSignupDomains(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -41,6 +49,11 @@ export function teacherSignupDomains(env: NodeJS.ProcessEnv = process.env): stri
  * True when the address is on an approved school domain, or is itself listed
  * in TEACHER_SIGNUP_EMAILS. Exact domain match
  * only: `x@mail.dekalbschoolsga.org` and `x@notdekalbschoolsga.org` both fail.
+ *
+ * A `+` in the name part is refused on approved domains: school mail delivers
+ * `name+anything@` to `name@`, so one teacher could open unlimited free
+ * accounts. An exact address in TEACHER_SIGNUP_EMAILS (a test inbox) still
+ * passes.
  */
 export function isApprovedTeacherEmail(
   email: string,
@@ -50,6 +63,7 @@ export function isApprovedTeacherEmail(
   const at = address.lastIndexOf('@');
   if (at < 1) return false;
   if (teacherSignupEmails(env).includes(address)) return true;
+  if (address.slice(0, at).includes('+')) return false;
   return teacherSignupDomains(env).includes(address.slice(at + 1));
 }
 
@@ -73,10 +87,20 @@ export function isSelfServeTeacher(
   return role === 'TEACHER' && plan === SELF_SERVE_TEACHER_PLAN;
 }
 
-/** Daily lesson-plan allowance for a self-serve teacher. */
-export function dailyLessonPlanAllowance(env: NodeJS.ProcessEnv = process.env): number {
-  const n = Number.parseInt(env.TEACHER_FREE_DAILY_LESSON_PLANS ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_DAILY_LESSON_PLANS;
+/** Weekly lesson-plan allowance for a self-serve teacher. */
+export function weeklyLessonPlanAllowance(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number.parseInt(env.TEACHER_FREE_WEEKLY_LESSON_PLANS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_WEEKLY_LESSON_PLANS;
 }
 
-export { dayKey as lessonPlanDayKey };
+/**
+ * 'YYYY-MM-DD' of the Monday that starts this week, in the business timezone.
+ * The week resets at midnight Eastern going into Monday.
+ */
+export function lessonPlanWeekKey(at: Date = new Date()): string {
+  const [y, m, d] = dayKey(at).split('-').map(Number);
+  const local = new Date(Date.UTC(y, m - 1, d));
+  const sinceMonday = (local.getUTCDay() + 6) % 7;
+  local.setUTCDate(local.getUTCDate() - sinceMonday);
+  return local.toISOString().slice(0, 10);
+}

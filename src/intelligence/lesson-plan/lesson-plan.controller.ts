@@ -88,7 +88,7 @@ export class LessonPlanController {
     @Body() dto: GeneratePlanDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    // Self-serve teachers have a daily allowance; everyone else passes through.
+    // Self-serve teachers have a weekly allowance; everyone else passes through.
     await this.allowance.assertCanGenerate(user.userId);
     const data = await this.service.generate(id, user.userId, dto);
     // Charged only once a plan exists. A failure to count must never cost the
