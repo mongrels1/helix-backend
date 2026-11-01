@@ -221,6 +221,8 @@ export class LessonPlanService {
     const cacheMin = Number(this.config.get<string>('lessonPlan.cacheMinTokens') ?? 4096) || 4096;
     const sharedTokens = Math.ceil((shared.length + LESSON_PLAN_SYSTEM.length) / 3.5);
     const callable = resolved.filter((r) => r.status !== 'no_school');
+    // The week's Small Group section is written by the first class day only.
+    const firstClass = resolved.findIndex((r) => r.status !== 'no_school' && r.status !== 'ild');
     const useCache = callable.length >= 2 && sharedTokens >= cacheMin;
 
     const draftOne = async (r: ResolvedDay, i: number): Promise<DayDraft> => {
@@ -240,22 +242,37 @@ export class LessonPlanService {
             weekOverview: overview,
             statusNote: statusNote(r),
             ...roles[i],
+            includeSmallGroup: i === firstClass,
           });
-      const ai = await this.ai.chat({
-        prompt,
-        sharedPrefix: shared,
-        cachePrefix: useCache,
-        systemPrompt: LESSON_PLAN_SYSTEM,
-        preferredProvider: 'claude',
-        claudeModel: qualityModel,
-        // One day of segments is ~1500-2500 tokens, plus ~600 for the notes
-        // page fields. 6000 is headroom, and well inside the SDK non-streaming
-        // ceiling whatever the model. An ILD reply is a fraction of that.
-        maxTokens: isIld ? 2500 : 6000,
-        temperature: 0.4,
-        timeoutMs: 120000,
-      });
-      const tokens = ai.tokensUsed ?? 0;
+      const ask = (p: string) =>
+        this.ai.chat({
+          prompt: p,
+          sharedPrefix: shared,
+          cachePrefix: useCache,
+          systemPrompt: LESSON_PLAN_SYSTEM,
+          preferredProvider: 'claude',
+          claudeModel: qualityModel,
+          maxTokens: isIld ? 2500 : 6000,
+          temperature: 0.4,
+          timeoutMs: 120000,
+        });
+      const usable = (text: string) => {
+        const pj = extractJson(text) as (IldDraft & { days?: unknown }) | null;
+        return isIld ? ildUsable(pj) : Array.isArray(pj?.days) && (pj?.days as unknown[]).length > 0;
+      };
+      // A complete reply that is not valid JSON loses the whole day, so ask
+      // once more. This costs a second call only on the rare day that fails.
+      let ai = await ask(prompt);
+      let retried = 0;
+      if (!usable(ai.text) && ai.stopReason !== 'max_tokens') {
+        this.logger.warn(`lesson plan day "${r.name}" unreadable (chars=${(ai.text ?? '').length}); retrying once`);
+        const first = ai;
+        ai = await ask(
+          `${prompt}\n\nIMPORTANT: your previous reply could not be parsed as JSON. Return ONLY the JSON object, strictly valid: escape every double quote inside a string as \\", no line breaks inside strings, no trailing commas, no code fences.`,
+        );
+        retried = first.tokensUsed ?? 0;
+      }
+      const tokens = (ai.tokensUsed ?? 0) + retried;
       const cache = { cacheRead: ai.cacheReadTokens ?? 0, cacheWrite: ai.cacheWriteTokens ?? 0 };
       const parsed = extractJson(ai.text) as (IldDraft & { days?: unknown; small_group?: unknown }) | null;
 

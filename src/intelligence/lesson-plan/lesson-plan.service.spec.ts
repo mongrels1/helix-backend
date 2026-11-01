@@ -228,4 +228,33 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     expect(plan.days[0].teacher_notes.where_this_fits).toBe('fits');
     expect(plan.days[0].teacher_notes.checks).toEqual(['5 ÷ 8 = 0.6 (we get 0.625)']);
   });
+
+  it('a day whose reply is unreadable is asked once more, and only that day', async () => {
+    const seen: Record<string, number> = {};
+    const chat = jest.fn(async ({ prompt }: { prompt: string }) => {
+      const name = WEEK.find((d) => prompt.includes(`["${d}"]`))!;
+      seen[name] = (seen[name] ?? 0) + 1;
+      if (name === 'Wednesday' && seen[name] === 1) return { text: '{"days": [ {"name": broken', provider: 'claude', tokensUsed: 50, stopReason: 'end_turn' };
+      return { text: teachReply(name), provider: 'claude', tokensUsed: 10 };
+    });
+    const { svc, sidecar } = makeService(chat);
+    const id = await jobWithTemplate(svc);
+    const out = await svc.generate(id, 't1', { ...base } as never);
+    expect(seen).toEqual({ Monday: 1, Tuesday: 1, Wednesday: 2, Thursday: 1, Friday: 1 });
+    expect(chat.mock.calls[5]?.[0]?.prompt ?? chat.mock.calls.map((c) => c[0].prompt).find((p: string) => p.includes('could not be parsed'))).toContain('could not be parsed');
+    expect(sidecar.fill.mock.calls[0][0].plan.days[2].learning_target).toBe('target for Wednesday');
+    expect(out.tokensUsed).toBe(50 + 5 * 10);
+  });
+
+  it('only the first class day is asked for the Small Group section', async () => {
+    const chat = jest.fn(async ({ prompt }: { prompt: string }) => {
+      const name = WEEK.find((d) => prompt.includes(`["${d}"]`))!;
+      expect(prompt.includes('"small_group"')).toBe(name === 'Monday');
+      return { text: teachReply(name), provider: 'claude', tokensUsed: 1 };
+    });
+    const { svc } = makeService(chat);
+    const id = await jobWithTemplate(svc);
+    await svc.generate(id, 't1', { ...base } as never);
+    expect(chat).toHaveBeenCalledTimes(5);
+  });
 });

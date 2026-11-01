@@ -62,6 +62,12 @@ export interface DayContext {
   /** What the day before and the day after are (status, and the teacher's note). */
   before?: string;
   after?: string;
+  /**
+   * The Small Group section is one per WEEK, so only the first class day
+   * writes it. Every day used to write it and all but one copy was thrown
+   * away, which made each reply longer and more likely to break.
+   */
+  includeSmallGroup?: boolean;
 }
 
 /**
@@ -125,11 +131,15 @@ export function buildLessonDayPrompt(config: PlanConfig, day?: DayContext): stri
      "assessment_strategies": "how understanding is checked this phase",
      "differentiation": { ${diffSchema} }
    }]
- }],
+ }]${
+   day?.includeSmallGroup === false
+     ? ''
+     : `,
  "small_group": [{
    "rationale": "data point driving this group", "identifier": "e.g. Tier 2",
    "skill": "target skill", "strategy": "approach", "activity": "the task"
- }]
+ }]`
+ }
 }`;
 
   const pos = day?.position;
@@ -155,6 +165,8 @@ export function buildLessonDayPrompt(config: PlanConfig, day?: DayContext): stri
     `- EXACTLY ${config.segments_per_day} segments, in a sensible phase order for this day's job.`,
     '- Do not include minute counts; pacing is computed separately.',
     '- Ground every standard/target in the resources.',
+    ...(day?.includeSmallGroup === false ? ['- Do not write a small_group section (another day writes it).'] : []),
+    '- Output strictly valid JSON: escape any double quote inside a string as \\" (or use single quotes), no line breaks inside strings, no trailing commas.',
     "- watch_for: exactly 2 misconceptions specific to today's standard, each with how it shows up and the teacher's response.",
     '- worked_example: one fully solved problem. practice: exactly 3 problems ordered easy to hard, each with its answer.',
     "- Solve every worked example and practice problem step by step before writing it; each answer must match your working. Write numeric answers as 'expression = value' where it helps (e.g. '3 ÷ 12 = 0.25').",
@@ -283,6 +295,52 @@ function repairTruncatedJson(src: string): string | null {
   return head + closers.join('');
 }
 
+/**
+ * Fix the slips models make inside JSON strings: an unescaped double quote
+ * (a quote is taken as the string's end only when the next non-space
+ * character is , } ] or :), raw line breaks and tabs, and trailing commas.
+ */
+export function repairJsonSlips(src: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (!inString) {
+      if (c === '"') inString = true;
+      out += c;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+      out += c;
+      continue;
+    }
+    if (c === '\\') {
+      escaped = true;
+      out += c;
+      continue;
+    }
+    if (c === '\n') { out += '\\n'; continue; }
+    if (c === '\r') { continue; }
+    if (c === '\t') { out += '\\t'; continue; }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < src.length && /\s/.test(src[j])) j++;
+      const next = src[j];
+      if (next === undefined || next === ',' || next === '}' || next === ']' || next === ':') {
+        inString = false;
+        out += c;
+      } else {
+        out += '\\"';
+      }
+      continue;
+    }
+    out += c;
+  }
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
 /** Extract the first JSON object from a model response. */
 export function extractJson(text: string): Record<string, unknown> | null {
   let trimmed = (text ?? '').trim();
@@ -297,6 +355,19 @@ export function extractJson(text: string): Record<string, unknown> | null {
     if (!cand) continue;
     try {
       return JSON.parse(cand) as Record<string, unknown>;
+    } catch {
+      /* try next */
+    }
+  }
+
+  // Common model slips in long replies: a double quote inside a string left
+  // unescaped, a raw line break inside a string, a trailing comma. Seen on
+  // 1 Nov 2026: complete replies (stop_reason end_turn) of 14-20k characters
+  // rejected whole, losing the day.
+  for (const cand of candidates) {
+    if (!cand) continue;
+    try {
+      return JSON.parse(repairJsonSlips(cand)) as Record<string, unknown>;
     } catch {
       /* try next */
     }
