@@ -1,5 +1,5 @@
 import { resolveDays } from './lesson-plan.days';
-import { checkArithmetic, checkUnitFacts, evalArithmetic, ildNotes, isAdapted, normaliseClassDay, numbersIn, resourceNumbers, unsupportedNumbers, weekRoles } from './lesson-plan.quality';
+import { checkArithmetic, checkUnitFacts, evalArithmetic, ildNotes, inventedFigures, isAdapted, normaliseClassDay, numbersIn, resourceNumbers, unsupportedNumbers, weekRoles } from './lesson-plan.quality';
 
 const WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -201,5 +201,16 @@ describe('LP12: figures that are not in the uploads are not used (Nov 9-13, FILL
     ) as { teacher_notes: { practice: { source: string }[]; checks: string[] } };
     expect(out.teacher_notes.practice.map((p) => p.source)).toEqual(['2a Diagnostic']);
     expect(out.teacher_notes.checks[0]).toMatch(/^2 practice problems removed/);
+  });
+});
+
+describe('LP12b: figures in the lesson itself that are not in the uploads (FILLED_8 lesson text)', () => {
+  const src = resourceNumbers('It takes 76 gallons of water to produce 4 ounces of oatmeal. 2 | 38. 304 gallons. 2080. 10 servings.');
+  it('flags an invented figure and skips working, counts, times and labels', () => {
+    const lesson =
+      "Guide students: 76 gallons ÷ 4 ounces = 19 gallons per ounce. Model w = 19(10) = 190 gallons. Ask: 'The constant is 19.' " +
+      'Give students 15 minutes in groups of 4. Use question 12 on page 14 at 10:30. ' +
+      'Pose: a protein with a water footprint of 1,430 gallons per serving. What does the 1,430 represent?';
+    expect(inventedFigures(lesson, src)).toEqual(['1,430']);
   });
 });

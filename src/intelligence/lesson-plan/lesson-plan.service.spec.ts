@@ -281,4 +281,23 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     expect(plan.days[1].teacher_notes.checks[0]).toContain('"2 ounces = 1 pound"');
     expect(out.tokensUsed).toBe(30 + 10 + 30 + 30 + 3 * 10);
   });
+
+  it('LP12b: a day whose lesson uses a figure not in the uploads is redrafted once, then flagged', async () => {
+    const seen: Record<string, number> = {};
+    const invented = (name: string) =>
+      JSON.stringify({ days: [{ name, learning_target: `bad ${name}`, segments: [{ teacher_actions: 'A protein uses 1,430 gallons per serving.' }] }] });
+    const chat = jest.fn(async ({ prompt }: { prompt: string }) => {
+      const name = WEEK.find((d) => prompt.includes(`["${d}"]`))!;
+      seen[name] = (seen[name] ?? 0) + 1;
+      if (name === 'Thursday') return { text: invented(name), provider: 'claude', tokensUsed: 20 };
+      return { text: teachReply(name), provider: 'claude', tokensUsed: 10 };
+    });
+    const { svc, sidecar } = makeService(chat);
+    const id = await jobWithTemplate(svc);
+    await svc.generate(id, 't1', { ...base } as never);
+    expect(seen.Thursday).toBe(2);
+    expect(chat.mock.calls.map((c) => c[0].prompt as string).find((p) => p.includes('do not appear in the uploads'))).toContain('"1,430"');
+    const plan = sidecar.fill.mock.calls[0][0].plan;
+    expect(plan.days[3].teacher_notes.checks[0]).toContain('"1,430"');
+  });
 });

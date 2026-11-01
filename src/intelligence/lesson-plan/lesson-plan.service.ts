@@ -22,7 +22,7 @@ import {
   PlanConfig,
   RESOURCE_CHAR_LIMIT,
 } from './lesson-plan.prompt';
-import { checkUnitFacts, ildNotes, normaliseClassDay, resourceNumbers, weekRoles } from './lesson-plan.quality';
+import { checkUnitFacts, ildNotes, inventedFigures, normaliseClassDay, resourceNumbers, weekRoles } from './lesson-plan.quality';
 import {
   DaySuggestion,
   failedDay,
@@ -273,33 +273,56 @@ export class LessonPlanService {
         );
         retried = first.tokensUsed ?? 0;
       }
-      // LP11: a wrong unit fact ("2 ounces = 1 pound") spreads through the
-      // whole day, so the day is asked for once more with the correction. This
+      // LP11/LP12: a wrong unit fact ("2 ounces = 1 pound") or a figure that is
+      // in neither the uploads nor the day's own working (Nov 9-13: "1,430
+      // gallons per serving") spreads through the whole day, lesson text
+      // included, so the day is asked for once more with the correction. This
       // costs a second call only on a day that has one.
-      const unitErrors = (text: string) => {
+      const issues = (text: string) => {
         const pj = extractJson(text);
-        return pj ? [...new Set(checkUnitFacts(JSON.stringify(pj)).map((e) => e.replace(/ \(wrong unit fact\)$/, '')))] : [];
+        if (!pj) return { units: [] as string[], figures: [] as string[] };
+        const flat = JSON.stringify(pj);
+        // Worked example and practice are checked one by one later (a bad one is
+        // left out), so figures are looked for in the lesson itself.
+        const lesson = JSON.stringify(pj, (k, v) => (k === 'worked_example' || k === 'practice' ? undefined : v));
+        return {
+          units: [...new Set(checkUnitFacts(flat).map((e) => e.replace(/ \(wrong unit fact\)$/, '')))],
+          figures: inventedFigures(lesson, sourceNums),
+        };
       };
-      let factErrors = usable(ai.text) ? unitErrors(ai.text) : [];
-      if (factErrors.length) {
-        this.logger.warn(`lesson plan day "${r.name}" has wrong unit facts (${factErrors.join('; ')}); redrafting once`);
-        const again = await ask(
-          `${prompt}\n\nIMPORTANT: your previous draft said ${factErrors.map((e) => `"${e}"`).join(', ')}. That is wrong. ` +
-            'Standard unit facts are fixed: 16 ounces = 1 pound, 12 inches = 1 foot, 3 feet = 1 yard, 2 cups = 1 pint, 4 quarts = 1 gallon, 60 minutes = 1 hour. ' +
-            'Re-read the resource table carefully and use the correct relationship everywhere in the day.',
+      const count = (x: { units: string[]; figures: string[] }) => x.units.length + x.figures.length;
+      let found = usable(ai.text) ? issues(ai.text) : { units: [], figures: [] };
+      if (count(found)) {
+        this.logger.warn(
+          `lesson plan day "${r.name}" redrafting once: unit facts [${found.units.join('; ')}] figures not in uploads [${found.figures.join('; ')}]`,
         );
-        const left = usable(again.text) ? unitErrors(again.text) : null;
-        if (left !== null && left.length < factErrors.length) {
+        const fix: string[] = [];
+        if (found.units.length)
+          fix.push(
+            `your previous draft said ${found.units.map((e) => `"${e}"`).join(', ')}. That is wrong. Standard unit facts are fixed: 16 ounces = 1 pound, 12 inches = 1 foot, 3 feet = 1 yard, 2 cups = 1 pint, 4 quarts = 1 gallon, 60 minutes = 1 hour. Re-read the resource table carefully and use the correct relationship everywhere in the day.`,
+          );
+        if (found.figures.length)
+          fix.push(
+            `your previous draft used ${found.figures.map((e) => `"${e}"`).join(', ')}, which do not appear in the uploads. Use only figures from the resources; where a task needs data the uploads do not contain, leave a blank for the teacher (___).`,
+          );
+        const again = await ask(`${prompt}\n\nIMPORTANT: ${fix.join(' Also, ')}`);
+        const left = usable(again.text) ? issues(again.text) : null;
+        if (left !== null && count(left) < count(found)) {
           retried += ai.tokensUsed ?? 0;
           ai = again;
-          factErrors = left;
+          found = left;
         } else {
           retried += again.tokensUsed ?? 0;
         }
       }
-      const factNote = factErrors.length
-        ? [`This day's lesson text says ${factErrors.map((e) => `"${e}"`).join(', ')}, which is not the standard conversion. Fix it before printing.`]
-        : [];
+      const factNote = [
+        ...(found.units.length
+          ? [`This day's lesson text says ${found.units.map((e) => `"${e}"`).join(', ')}, which is not the standard conversion. Fix it before printing.`]
+          : []),
+        ...(found.figures.length
+          ? [`This day's lesson text uses ${found.figures.map((e) => `"${e}"`).join(', ')}, which is not in your uploads. Check it before printing.`]
+          : []),
+      ];
       const tokens = (ai.tokensUsed ?? 0) + retried;
       const cache = { cacheRead: ai.cacheReadTokens ?? 0, cacheWrite: ai.cacheWriteTokens ?? 0 };
       const parsed = extractJson(ai.text) as (IldDraft & { days?: unknown; small_group?: unknown }) | null;

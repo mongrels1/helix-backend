@@ -80,6 +80,78 @@ def _row(cells):
     return " | ".join(out).strip()
 
 
+_FRAC_PART = re.compile(r"^[-−]?[\w.]{1,6}$")
+
+
+def _bars(page):
+    """Short horizontal rules: the bars of built-up fractions."""
+    out = []
+    for o in list(page.lines) + list(page.rects):
+        if abs(o["bottom"] - o["top"]) < 2 and 0 < (o["x1"] - o["x0"]) < 60:
+            out.append(o)
+    return out
+
+
+def _stacked_fractions(words, bars):
+    """
+    Pairs of words stacked over a fraction bar (numerator, denominator), as in
+    a worksheet that typesets "1/2" as a built-up fraction in running text.
+    A bar is required, so a column of numbers is never joined by mistake.
+    """
+    pairs = []
+    used = set()
+    cand = [w for w in words if _FRAC_PART.match(w["text"])]
+    for i, n in enumerate(cand):
+        if i in used:
+            continue
+        ncx = (n["x0"] + n["x1"]) / 2
+        h = n["bottom"] - n["top"]
+        for j, d in enumerate(cand):
+            if j == i or j in used:
+                continue
+            gap = d["top"] - n["bottom"]
+            if not (-1 < gap < max(6, 0.8 * h)):
+                continue
+            if abs((d["x0"] + d["x1"]) / 2 - ncx) > max(6, 0.6 * (n["x1"] - n["x0"] + d["x1"] - d["x0"])):
+                continue
+            if not any(n["bottom"] - 2 <= b["top"] <= d["top"] + 2
+                       and b["x0"] <= max(n["x1"], d["x1"]) and b["x1"] >= min(n["x0"], d["x0"])
+                       for b in bars):
+                continue
+            pairs.append((n, d))
+            used.update((i, j))
+            break
+    return pairs
+
+
+def _text_with_fractions(page):
+    """
+    Page text in reading order, with built-up fractions written as "a/b".
+    Pages without them keep pdfplumber's own text.
+    """
+    words = page.extract_words()
+    pairs = _stacked_fractions(words, _bars(page))
+    if not pairs:
+        return page.extract_text() or ""
+    drop = {id(w) for p in pairs for w in p}
+    items = [w for w in words if id(w) not in drop]
+    for n, d in pairs:
+        items.append({"text": f"{n['text']}/{d['text']}", "x0": min(n["x0"], d["x0"]),
+                      "top": (n["top"] + d["bottom"]) / 2 - (n["bottom"] - n["top"]) / 2})
+    items.sort(key=lambda w: (w["top"], w["x0"]))
+    lines, cur, top = [], [], None
+    for w in items:
+        if top is None or abs(w["top"] - top) <= 3:
+            cur.append(w)
+            top = w["top"] if top is None else top
+        else:
+            lines.append(cur)
+            cur, top = [w], w["top"]
+    if cur:
+        lines.append(cur)
+    return "\n".join(" ".join(w["text"] for w in sorted(l, key=lambda w: w["x0"])) for l in lines)
+
+
 def _boilerplate(pages_text):
     """Lines that repeat on 3+ pages (headers, footers, licence lines)."""
     seen = Counter()
@@ -116,7 +188,7 @@ def _pdf(path):
                     cells = [_cell(c) for c in row]
                     if any(cells):
                         rows.append(_row(cells))
-            text = body.extract_text() or ""
+            text = _text_with_fractions(body)
             if rows:
                 text = f"{text}\n[table]\n" + "\n".join(rows) + "\n[/table]"
             pages.append(text)

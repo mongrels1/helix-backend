@@ -217,6 +217,32 @@ export function unsupportedNumbers(problem: string, source: Set<string>): string
   return numbersIn(problem).filter((n) => !source.has(n));
 }
 
+/**
+ * LP12b: figures (10 or more) in a drafted day that are in neither the uploads
+ * nor the day's own working. Skipped: numbers inside arithmetic ("76 ÷ 4 = 19"
+ * and anything after "="), counts and times ("10 minutes", "4 groups"),
+ * and labels ("question 12", "page 14", "grade 7").
+ */
+export function inventedFigures(text: string, source: Set<string>): string[] {
+  const NUMBER = /(?<![\d.\/])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?![\d\/])/g;
+  const worked = new Set(
+    [...text.matchAll(/=\s*\(?\s*(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)/g)].map((m) => m[1].replace(/,/g, '')),
+  );
+  const out = new Set<string>();
+  for (const m of text.matchAll(NUMBER)) {
+    const n = m[1].replace(/,/g, '');
+    if (Number(n) < 10 || source.has(n) || worked.has(n)) continue;
+    const i = m.index ?? 0;
+    const before = text.slice(Math.max(0, i - 14), i);
+    const after = text.slice(i + m[1].length, i + m[1].length + 16);
+    if (/[×x÷=+\-−*\/(:]\s*$/.test(before) || /^\s*[×x÷=+\-−*\/):]/.test(after)) continue;
+    if (/^\s*(min|minutes?|sec|seconds?|hours?|students?|groups?|pairs?|%|percent|pages?|questions?|problems?|stations?|items?|points?|cards?|rows?|columns?)\b/i.test(after)) continue;
+    if (/(question|problem|page|#|\bq|grade|unit|lesson|day|step|part|task|standard|\.)\s*$/i.test(before)) continue;
+    out.add(m[1]);
+  }
+  return [...out];
+}
+
 /** A source the model marked as its own variation, not the teacher's resource. */
 export function isAdapted(source: string): boolean {
   return /\badapt(ed|ation)?\b|\binspired by\b|\bbased on\b/i.test(source);
