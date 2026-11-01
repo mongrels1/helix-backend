@@ -22,7 +22,77 @@
  */
 import { CROSSWALK } from './mgse-ga-crosswalk';
 import { figureIsSane, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
-import { judgeItem } from './item-judge';
+import { judgeItem, type JudgeResult } from './item-judge';
+
+/* ---------- honest verification (Phase 0, 1 Nov 2026) ----------------------
+   Before this, an item whose answer the re-solver could not read ('unsupported')
+   counted as clean, figure mismatches were warnings that could not turn the page
+   red, and the page never said how much it had actually checked. Every
+   serveable item is now one of:
+     verified  - answer independently re-solved AND no figure problem found;
+     failed    - any blocker, or a figure the checks find unsound/unrenderable;
+     unchecked - nothing wrong found, but the answer was NOT independently
+                 re-solved, so the page cannot vouch for it.
+   "Ready" now also requires the unchecked share to be at or under a limit
+   (INTEGRITY_MAX_UNCHECKED_PCT, default 5).
+   NOT YET CHECKED by any rule: figure VALUES against the question (labels vs
+   numbers, lines vs equations, table rates, bar values). That is Phase 1; see
+   src/quality/golden for the recorded gaps. */
+export type VerificationStatus = 'verified' | 'failed' | 'unchecked';
+
+const FIGURE_FAIL_WARNINGS = new Set(['figure_unsound', 'figure_unrenderable']);
+
+export function verificationOf(j: JudgeResult): VerificationStatus {
+  if (j.blockers.length > 0 || j.warnings.some((w) => FIGURE_FAIL_WARNINGS.has(w.id))) return 'failed';
+  return j.answerCheck === 'confirmed' ? 'verified' : 'unchecked';
+}
+
+export interface VerificationSummary {
+  total: number;
+  verified: number;
+  failed: number;
+  unchecked: number;
+  verifiedPct: number;
+  uncheckedPct: number;
+  maxUncheckedPct: number;
+}
+
+export const DEFAULT_MAX_UNCHECKED_PCT = 5;
+
+function summarise(statuses: VerificationStatus[], maxUncheckedPct: number): VerificationSummary {
+  const total = statuses.length;
+  const count = (s: VerificationStatus) => statuses.filter((x) => x === s).length;
+  const pct = (n: number) => (total ? Math.round((n / total) * 1000) / 10 : 0);
+  const verified = count('verified');
+  const unchecked = count('unchecked');
+  return { total, verified, failed: count('failed'), unchecked, verifiedPct: pct(verified), uncheckedPct: pct(unchecked), maxUncheckedPct };
+}
+
+function verificationLine(v: VerificationSummary): string {
+  return `Verified ${v.verifiedPct}% (${v.verified} of ${v.total}) · ${v.failed} failed · ${v.unchecked} not independently checked (${v.uncheckedPct}%).`;
+}
+
+/** Defect groups every bank gets from the verification pass. */
+function verificationDefects(v: VerificationSummary, uncheckedIds: string[], noun: string): DefectGroup[] {
+  const out: DefectGroup[] = [];
+  if (v.unchecked > 0) {
+    const over = v.uncheckedPct > v.maxUncheckedPct;
+    out.push(group(
+      'answer_not_checked',
+      over ? 'blocker' : 'warning',
+      `${v.unchecked} of ${v.total} ${noun} (${v.uncheckedPct}%) were never independently checked: the re-solver could not read their wording or type, so this page cannot vouch for their answers. Limit for "ready": ${v.maxUncheckedPct}%.`,
+      uncheckedIds,
+    ));
+  }
+  out.push({
+    id: 'figure_values_not_compared',
+    severity: 'info',
+    message: 'Not checked yet by any rule: figure values against the question (labels vs drawn numbers, lines vs stated equations, table rates, bar values). Recorded as gaps in the golden error suite.',
+    count: 0,
+    sampleIds: [],
+  });
+  return out;
+}
 
 export const ALL_STATUSES = ['draft', 'validated', 'field_test', 'operational', 'rejected'] as const;
 export const SERVEABLE_STATUSES = ['draft', 'validated', 'field_test', 'operational'] as const;
@@ -104,6 +174,7 @@ export interface BankSection {
   coverage: CoverageRow[];
   tags: { skill: { tag: string; count: number }[]; misconception: { tag: string; count: number }[] } | null;
   defects: DefectGroup[];
+  verification: VerificationSummary;
   verdict: { ready: boolean; blockers: number; warnings: number; summary: string };
 }
 
@@ -112,6 +183,7 @@ export interface IntegrityReport {
   combined: {
     totalQuestions: number;
     banks: { key: string; label: string; total: number; serveable: number }[];
+    verification: VerificationSummary;
     ready: boolean;
     summary: string;
   };
@@ -165,7 +237,7 @@ const TITLE_BY_GA = new Map(CROSSWALK.map((e) => [e.ga.toUpperCase(), e.title]))
 
 // ---- generated practice bank (DraftItem) -----------------------------------
 
-function buildGeneratedSection(rows: BankRow[]): BankSection {
+function buildGeneratedSection(rows: BankRow[], maxUncheckedPct: number): BankSection {
   const serveable = rows.filter((r) => SERVEABLE.has(r.status));
 
   const byStatus: Record<string, number> = {};
@@ -215,6 +287,8 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   const untagged: string[] = [], notMgse: string[] = [], noCluster: string[] = [];
   const badFigure: string[] = [], missingFig: string[] = [], leakedSolution: string[] = [], notSelfContained: string[] = [];
   const misKeyed: string[] = [], noCorrectOpt: string[] = [], figIncomplete: string[] = [];
+  const unrenderable: string[] = [], uncheckedIds: string[] = [];
+  const statuses: VerificationStatus[] = [];
   const stemBuckets = new Map<string, string[]>();
 
   for (const r of serveable) {
@@ -223,7 +297,14 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
     // report can never disagree with what actually gets blocked. We read its
     // correctness + figure blockers here; the structural counts below stay as the
     // report's own coverage tallies.
-    const jb = new Set(judgeItem({ stem: r.stem, options: r.options, answer: r.answer, figure: r.figure, standard: r.standard }, 'practice').blockers.map((b) => b.id));
+    // `solution` is passed so the judge sees the whole item (it was omitted, which
+    // made the judge report "no worked solution" on every practice item).
+    const j = judgeItem({ stem: r.stem, options: r.options, answer: r.answer, solution: r.solution, figure: r.figure, standard: r.standard }, 'practice');
+    const jb = new Set(j.blockers.map((b) => b.id));
+    const status = verificationOf(j);
+    statuses.push(status);
+    if (status === 'unchecked') uncheckedIds.push(r.id);
+    if (j.warnings.some((w) => w.id === 'figure_unrenderable')) unrenderable.push(r.id);
     if (jb.has('mis_keyed')) misKeyed.push(r.id);
     if (jb.has('no_correct_option')) noCorrectOpt.push(r.id);
     if (jb.has('figure_incomplete')) figIncomplete.push(r.id);
@@ -263,19 +344,25 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
   if (notMgse.length) defects.push(group('standard_not_mgse', 'warning', 'Serveable items whose standard is not MGSE-format — targeted practice cannot route these', notMgse));
   if (noCluster.length) defects.push(group('missing_ga_cluster', 'warning', 'Serveable items missing a GA cluster', noCluster));
   if (dupIds.length) defects.push(group('duplicate_stems', 'warning', `Duplicate stems across ${dupGroups} group(s) — extra copies beyond the first`, dupIds));
-  if (badFigure.length) defects.push(group('figure_unsound', 'warning', 'Serveable items with a malformed or mismatched figure (bad coordinates, or numbers absent from the item text)', badFigure));
+  // Phase 0: a figure that does not match its question is a BLOCKER on this page
+  // (it was a warning, so it could never make the page say "not ready").
+  if (badFigure.length) defects.push(group('figure_unsound', 'blocker', 'Serveable items with a malformed or mismatched figure (bad coordinates, or numbers absent from the item text)', badFigure));
+  if (unrenderable.length) defects.push(group('figure_unrenderable', 'blocker', 'Serveable items whose figure matches no renderer — students see a blank box', unrenderable));
   if (missingFig.length) defects.push(group('figure_missing_referenced', 'blocker', 'Serveable items whose stem references a figure that is not attached', missingFig));
   if (leakedSolution.length) defects.push(group('solution_leaked', 'warning', 'Serveable items whose worked solution rambles or leaks reasoning (not a clean solution)', leakedSolution));
   if (notSelfContained.length) defects.push(group('stem_not_self_contained', 'warning', 'Serveable items whose stem refers to earlier context the student cannot see (e.g. "look at the spinner again")', notSelfContained));
 
+  const verification = summarise(statuses, maxUncheckedPct);
+  defects.push(...verificationDefects(verification, uncheckedIds, 'serveable practice items'));
+
   const blockers = defects.filter((d) => d.severity === 'blocker').length;
   const warnings = defects.filter((d) => d.severity === 'warning').length;
   const ready = blockers === 0;
-  const summary = ready
+  const summary = `${verificationLine(verification)} ` + (ready
     ? warnings === 0
-      ? `Clean: ${serveable.length} serveable item(s), no defects.`
+      ? `No defects found in ${serveable.length} serveable item(s).`
       : `No blocking defects. ${warnings} warning type(s) to review.`
-    : `${blockers} blocking defect type(s) reach students via practice — Reject them in the generator before sales.`;
+    : `${blockers} blocking defect type(s) reach students via practice — Reject them in the generator before sales.`);
 
   return {
     key: 'generated',
@@ -294,6 +381,7 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
       misconception: tally(serveable, (r) => r.misconceptionTags ?? []),
     },
     defects,
+    verification,
     verdict: { ready, blockers, warnings, summary },
   };
 }
@@ -306,7 +394,7 @@ function buildGeneratedSection(rows: BankRow[]): BankSection {
 const DIAG_SERVEABLE = new Set<string>(['validated', 'published']);
 const DIAG_STATUSES = ['draft', 'validated', 'published', 'rejected'] as const;
 
-function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
+function buildDiagnosticSection(items: DiagnosticRow[], maxUncheckedPct: number): BankSection {
   const isServe = (it: DiagnosticRow) => DIAG_SERVEABLE.has(String(it.status ?? ''));
   const serveableItems = items.filter(isServe);
 
@@ -337,6 +425,8 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
   const noStem: string[] = [], badCorrect: string[] = [], fewOptions: string[] = [], emptyText: string[] = [];
   const noStrand: string[] = [], noKc: string[] = [], noB: string[] = [], noDok: string[] = [], noStandard: string[] = [], dupId: string[] = [];
   const misKeyed: string[] = [], noCorrectOpt: string[] = [], figIncomplete: string[] = [], figMissing: string[] = [];
+  const figUnsound: string[] = [], figUnrenderable: string[] = [], figInvalid: string[] = [], uncheckedIds: string[] = [];
+  const statuses: VerificationStatus[] = [];
   const stemBuckets = new Map<string, string[]>();
   const idsSeen = new Set<string>();
 
@@ -344,7 +434,15 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
     const opts = Array.isArray(it.options) ? it.options.map((o) => String(o ?? '')) : [];
     // Single judge on the SCORED bank (the moat) — identical verdict to the
     // scored write path (factCheck -> item-judge), so the report matches reality.
-    const jb = new Set(judgeItem({ stem: it.stem, options: it.options, correct: it.correct, figure: it.figure, standard: it.standard }, 'scored').blockers.map((b) => b.id));
+    const j = judgeItem({ stem: it.stem, options: it.options, correct: it.correct, figure: it.figure, standard: it.standard }, 'scored');
+    const jb = new Set(j.blockers.map((b) => b.id));
+    const status = verificationOf(j);
+    statuses.push(status);
+    if (status === 'unchecked') uncheckedIds.push(it.id);
+    // Phase 0: these were judged but never reported for the scored bank.
+    if (jb.has('figure_invalid')) figInvalid.push(it.id);
+    if (j.warnings.some((w) => w.id === 'figure_unsound')) figUnsound.push(it.id);
+    if (j.warnings.some((w) => w.id === 'figure_unrenderable')) figUnrenderable.push(it.id);
     if (jb.has('mis_keyed')) misKeyed.push(it.id);
     if (jb.has('no_correct_option')) noCorrectOpt.push(it.id);
     if (jb.has('figure_incomplete')) figIncomplete.push(it.id);
@@ -371,6 +469,9 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
   if (noCorrectOpt.length) defects.push(group('no_correct_option', 'blocker', 'Calibrated items where the computed answer matches none of the options', noCorrectOpt));
   if (figIncomplete.length) defects.push(group('figure_incomplete', 'blocker', 'Calibrated items whose figure does not match the shape the stem describes (e.g. one circle for two, a flat shape for a 3-D solid)', figIncomplete));
   if (figMissing.length) defects.push(group('figure_missing_referenced', 'blocker', 'Calibrated items whose stem describes a figure that is not attached', figMissing));
+  if (figInvalid.length) defects.push(group('figure_invalid', 'blocker', 'Calibrated items whose figure gives away the answer, uses off-grade coordinates, or names points that are not plotted', figInvalid));
+  if (figUnsound.length) defects.push(group('figure_unsound', 'blocker', 'Calibrated items with a malformed or mismatched figure (bad coordinates, or numbers absent from the item text)', figUnsound));
+  if (figUnrenderable.length) defects.push(group('figure_unrenderable', 'blocker', 'Calibrated items whose figure matches no renderer — students see a blank box', figUnrenderable));
   if (noStem.length) defects.push(group('has_stem', 'blocker', 'Items with no question stem', noStem));
   if (fewOptions.length) defects.push(group('min_options', 'blocker', 'Items with fewer than two options', fewOptions));
   if (badCorrect.length) defects.push(group('correct_index', 'blocker', 'Items whose correct index is out of range', badCorrect));
@@ -408,14 +509,17 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
     sampleIds: [],
   });
 
+  const verification = summarise(statuses, maxUncheckedPct);
+  defects.push(...verificationDefects(verification, uncheckedIds, 'calibrated items'));
+
   const blockers = defects.filter((d) => d.severity === 'blocker').length;
   const warnings = defects.filter((d) => d.severity === 'warning').length;
   const ready = blockers === 0;
-  const summary = ready
+  const summary = `${verificationLine(verification)} ` + (ready
     ? warnings === 0
-      ? `Clean: ${serveableItems.length} calibrated item(s), no defects.`
+      ? `No defects found in ${serveableItems.length} calibrated item(s).`
       : `No blocking defects. ${warnings} warning type(s) to review.`
-    : `${blockers} blocking defect type(s) in the scored bank — reject or fix them in the Diagnostic Bank before sales.`;
+    : `${blockers} blocking defect type(s) in the scored bank — reject or fix them in the Diagnostic Bank before sales.`);
 
   return {
     key: 'diagnostic',
@@ -431,29 +535,45 @@ function buildDiagnosticSection(items: DiagnosticRow[]): BankSection {
     coverage,
     tags: null,
     defects,
+    verification,
     verdict: { ready, blockers, warnings, summary },
   };
 }
 
 // ---- top-level -------------------------------------------------------------
 
-export function buildIntegrityReport(rows: BankRow[], diagnosticItems: DiagnosticRow[] = []): IntegrityReport {
-  const generated = buildGeneratedSection(rows);
-  const diagnostic = buildDiagnosticSection(diagnosticItems);
+export function buildIntegrityReport(
+  rows: BankRow[],
+  diagnosticItems: DiagnosticRow[] = [],
+  opts: { maxUncheckedPct?: number } = {},
+): IntegrityReport {
+  const max = Number.isFinite(opts.maxUncheckedPct) && (opts.maxUncheckedPct as number) >= 0
+    ? (opts.maxUncheckedPct as number)
+    : DEFAULT_MAX_UNCHECKED_PCT;
+  const generated = buildGeneratedSection(rows, max);
+  const diagnostic = buildDiagnosticSection(diagnosticItems, max);
   const banks = [diagnostic, generated];
 
   const totalQuestions = banks.reduce((n, b) => n + b.total, 0);
+  const sum = (k: 'total' | 'verified' | 'failed' | 'unchecked') => banks.reduce((n, b) => n + b.verification[k], 0);
+  const vTotal = sum('total');
+  const pct = (n: number) => (vTotal ? Math.round((n / vTotal) * 1000) / 10 : 0);
+  const verification: VerificationSummary = {
+    total: vTotal, verified: sum('verified'), failed: sum('failed'), unchecked: sum('unchecked'),
+    verifiedPct: pct(sum('verified')), uncheckedPct: pct(sum('unchecked')), maxUncheckedPct: max,
+  };
   const ready = banks.every((b) => b.verdict.ready);
   const notReady = banks.filter((b) => !b.verdict.ready).map((b) => b.label);
-  const summary = ready
+  const summary = `${verificationLine(verification)} ` + (ready
     ? `${totalQuestions} total questions across ${banks.length} banks — no blocking defects.`
-    : `${totalQuestions} total questions. Blocking defects in: ${notReady.join(', ')}.`;
+    : `${totalQuestions} total questions. Blocking defects in: ${notReady.join(', ')}.`);
 
   return {
     generatedAt: new Date().toISOString(),
     combined: {
       totalQuestions,
       banks: banks.map((b) => ({ key: b.key, label: b.label, total: b.total, serveable: b.serveable })),
+      verification,
       ready,
       summary,
     },

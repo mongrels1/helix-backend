@@ -905,7 +905,11 @@ export class ItemGenerationService {
         b: true, stem: true, options: true, correct: true, status: true, figure: true,
       },
     })) as unknown as DiagnosticRow[];
-    return buildIntegrityReport(rows, diagnostic);
+    // Share of serveable items allowed to be "not independently checked" before
+    // the page says NOT READY. Default 5; John sets INTEGRITY_MAX_UNCHECKED_PCT.
+    // (An unset or non-numeric value falls back to the default.)
+    const raw = process.env.INTEGRITY_MAX_UNCHECKED_PCT;
+    return buildIntegrityReport(rows, diagnostic, { maxUncheckedPct: raw ? Number(raw) : undefined });
   }
 
   /**

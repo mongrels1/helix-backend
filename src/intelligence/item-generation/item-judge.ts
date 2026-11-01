@@ -13,7 +13,7 @@
  * text/figure predicates are reused from reliability-gate.ts. Nothing re-solves
  * math in more than one place.
  */
-import { resolveItem, figureCompleteness, stemRequiresFigure, figureValidityGate } from './item-resolver';
+import { resolveItem, figureCompleteness, stemRequiresFigure, figureValidityGate, type Verdict } from './item-resolver';
 import { figureIsSane, solutionLeaksReasoning, stemNotSelfContained } from './reliability-gate';
 import { isRenderableFigure } from '../figures/figure-contract';
 
@@ -26,6 +26,10 @@ export interface JudgeResult {
   blockers: JudgeFinding[];
   warnings: JudgeFinding[];
   trueIndex: number | null;  // the option the re-solver believes is correct, when known
+  /** What the deterministic re-solve concluded. 'unsupported' means the answer
+   *  was NOT independently checked (the item's wording or type is not one the
+   *  re-solver understands). Reported, never treated as "verified". */
+  answerCheck: Verdict;
 }
 
 /** Permissive raw row — accepts a DraftItem (options {text,correct}) or a
@@ -133,5 +137,5 @@ export function judgeItem(raw: RawItem, bank: Bank): JudgeResult {
     if (!sane.ok) warn('figure_unsound', sane.reason ?? 'figure numbers do not match the item');
   }
 
-  return { ok: B.length === 0, blockers: B, warnings: W, trueIndex: rr.trueIndex };
+  return { ok: B.length === 0, blockers: B, warnings: W, trueIndex: rr.trueIndex, answerCheck: rr.verdict };
 }

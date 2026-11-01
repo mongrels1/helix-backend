@@ -16,6 +16,9 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:ci": "jest --ci --config ./jest.ci.config.js",
+    "test:quarantine": "node -e \"const q=require('./jest.ci.config.js').QUARANTINE;require('child_process').execSync('npx jest --ci '+q.join(' '),{stdio:'inherit'})\"",
+    "quality:scorecard": "ts-node --transpile-only src/quality/golden/scorecard.cli.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
   },

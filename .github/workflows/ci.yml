@@ -1,0 +1,89 @@
+# EdKairos backend CI: runs on every push and pull request.
+#
+# Railway deploys from main. Turn on "Wait for CI" for BOTH services
+# (positive-radiance and "helix-backend") so a push deploys only after this
+# workflow passes: Railway → service → Settings → "Wait for CI". The toggle
+# appears only after this file is on GitHub; Railway may first ask you to
+# accept updated GitHub permissions. A failed run skips the deploy.
+#
+# What must pass (blocking):
+#   - production build type-check (tsconfig.build.json)
+#   - every jest test file except the documented QUARANTINE (jest.ci.config.js),
+#     including the golden error suite (src/quality/golden)
+#   - the lesson-plan sidecar's pytest suite
+# What is reported but does not block:
+#   - the quarantined, already-broken test files (so the count stays visible)
+# The golden-suite scorecard is written to this run's Summary tab.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# No cancel-in-progress: Railway's "Wait for CI" can skip a deploy whose run was
+# cancelled, so every push's run is allowed to finish.
+
+jobs:
+  backend:
+    name: Backend (type-check, tests, golden suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Type-check (production build)
+        run: npx tsc --noEmit -p tsconfig.build.json
+
+      - name: Tests (all except quarantine; includes the golden error suite)
+        run: npm run test:ci
+
+      - name: Golden suite scorecard → run summary
+        if: always()
+        run: npm run -s quality:scorecard >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Quarantined tests (already broken before CI; non-blocking)
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "## Quarantined test files (non-blocking)"
+            echo ""
+            echo "Broken before CI existed. The list in jest.ci.config.js may only shrink."
+            echo ""
+            echo '```'
+            npm run -s test:quarantine 2>&1 | grep -E "^(FAIL|PASS|Tests:|Test Suites:)" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sidecar:
+    name: Lesson-plan sidecar (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: lesson-plan-svc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: lesson-plan-svc/requirements.txt
+
+      - name: Install
+        run: pip install -r requirements.txt pytest reportlab pillow
+
+      - name: Tests
+        run: python -m pytest -q
