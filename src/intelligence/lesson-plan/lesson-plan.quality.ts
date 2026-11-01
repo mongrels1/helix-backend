@@ -134,6 +134,15 @@ export function checkArithmetic(text: string): string[] {
   const out: string[] = [];
   const re = /((?:\(?-?\d[\d.,]*\)?\s*[+\-−×x*/÷]\s*)+\(?-?\d[\d.,]*\)?)\s*=\s*(-?\d[\d.,]*(?:\s*\/\s*\d+)?)/g;
   for (const m of text.matchAll(re)) {
+    // "12 × 20 = 8 × x" or "24/6 = 60/x" is an equation with an unknown, not
+    // a claimed result: the number after "=" is followed by an operator or a
+    // letter. Skip it (four false "Check:" lines on the Nov 9-13 plan).
+    const after = text.slice((m.index ?? 0) + m[0].length);
+    // An operator, or a single-letter unknown ("x", "8x"), not a unit word ("cups").
+    if (/^\s*([×*/÷+\-−(]|[a-z](?![a-z]))/i.test(after)) continue;
+    // Likewise when the left side continues an expression ("y + 3 × 4 = ...").
+    const before = text.slice(0, m.index ?? 0);
+    if (/[×*/÷+\-−]\s*$/.test(before)) continue;
     const lhs = evalArithmetic(m[1]);
     const rhs = parseValue(m[2]);
     if (lhs === null || rhs === null) continue;

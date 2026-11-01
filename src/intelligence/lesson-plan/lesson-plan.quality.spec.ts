@@ -111,3 +111,15 @@ describe('lesson quality (LP4 + LP5)', () => {
     expect(ildNotes('Answer key:\n1. 3 ÷ 12 = 0.25\n2. 2 ÷ 10 = 0.5').checks).toEqual(['2 ÷ 10 = 0.5 (we get 0.2)']);
   });
 });
+
+describe('answer check: equations with an unknown are not claimed results (Nov 9-13 plan)', () => {
+  it('skips cross-multiplication steps', () => {
+    expect(checkArithmetic('Cross-multiply: 12 × 20 = 8 × x. 240 = 8x. x = 240 ÷ 8 = 30 cups.')).toEqual([]);
+    expect(checkArithmetic('Proportion: 450/3 = x/7. Cross-multiply: 450 × 7 = 3 × x. 3150 = 3x.')).toEqual([]);
+    expect(checkArithmetic('Proportion: 24/6 = 60/x. 24x = 6 × 60 = 360.')).toEqual([]);
+    expect(checkArithmetic('Proportion: 2,400/5 = 7,200/x.')).toEqual([]);
+  });
+  it('still catches a real slip next to them', () => {
+    expect(checkArithmetic('12 × 20 = 8 × x, so 240 ÷ 8 = 32 cups')).toEqual(['240 ÷ 8 = 32 (we get 30)']);
+  });
+});
