@@ -200,6 +200,23 @@ export function checkUnitFacts(text: string): string[] {
   return out;
 }
 
+/** Numbers of 10 or more in a text, commas removed ("1,040" -> "1040"). */
+export function numbersIn(text: string): string[] {
+  return [...text.matchAll(/(?<![\d.\/])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\d.\/,])\d+(?:\.\d+)?/g)]
+    .map((m) => m[0].replace(/,/g, ''))
+    .filter((n) => Number(n) >= 10);
+}
+
+/** The numbers (10 or more) found anywhere in the teacher's uploads. */
+export function resourceNumbers(resources: string): Set<string> {
+  return new Set(numbersIn(resources));
+}
+
+/** Numbers in a problem that are not in the uploads. */
+export function unsupportedNumbers(problem: string, source: Set<string>): string[] {
+  return numbersIn(problem).filter((n) => !source.has(n));
+}
+
 /** A source the model marked as its own variation, not the teacher's resource. */
 export function isAdapted(source: string): boolean {
   return /\badapt(ed|ation)?\b|\binspired by\b|\bbased on\b/i.test(source);
@@ -241,7 +258,7 @@ function field(o: unknown, ...keys: string[]): string {
  *  - the four qualities are collected into `teacher_notes`;
  *  - answers are recomputed.
  */
-export function normaliseClassDay(day: Record<string, unknown>): Record<string, unknown> {
+export function normaliseClassDay(day: Record<string, unknown>, sourceNumbers?: Set<string>): Record<string, unknown> {
   const vocab = asText(day.academic_vocabulary);
   const writing = asText(day.writing_strategies);
   const segments = list(day.segments).map((s) => {
@@ -291,12 +308,16 @@ export function normaliseClassDay(day: Record<string, unknown>): Record<string, 
   // "adapted" (invented) item. A worked example that fails is replaced by the
   // first good practice item.
   const problems = (text: string) => [...checkArithmetic(text), ...checkUnitFacts(text)];
-  const good = (src: string, text: string) => !isAdapted(src) && problems(text).length === 0;
-  const practice = drafted.filter((p) => good(p.source, `${p.problem}\n${p.answer}`));
+  // LP12: a figure in a problem that appears nowhere in the uploads was made
+  // up (Nov 9-13: 1,040 / 1,430 / 27 gallons "from the Food Guide", which is a
+  // website). Checked on the problem only; answers compute new numbers.
+  const invented = (problem: string) => (sourceNumbers ? unsupportedNumbers(problem, sourceNumbers).length > 0 : false);
+  const good = (src: string, text: string, problem = '') => !isAdapted(src) && problems(text).length === 0 && !invented(problem);
+  const practice = drafted.filter((p) => good(p.source, `${p.problem}\n${p.answer}`, p.problem));
   const removed = drafted.length - practice.length;
 
   let workedOut = worked && (worked.problem || worked.solution) ? worked : null;
-  if (workedOut && !good(workedOut.source ?? '', `${workedOut.problem}\n${workedOut.solution}`)) {
+  if (workedOut && !good(workedOut.source ?? '', `${workedOut.problem}\n${workedOut.solution}`, workedOut.problem)) {
     const swap = practice.shift();
     workedOut = swap ? { problem: swap.problem, solution: swap.answer, source: swap.source } : null;
   }

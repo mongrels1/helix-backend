@@ -8,6 +8,7 @@ breaks the batch — it returns an error note instead.
 """
 from __future__ import annotations
 import os, re, io
+from collections import Counter
 
 def extract_text(path: str, filename: str = "") -> str:
     name = (filename or os.path.basename(path)).lower()
@@ -56,15 +57,77 @@ def _docx(path):
                 parts.append(" | ".join(cells))
     return "\n".join(parts)
 
-def _pdf(path):
-    import pdfplumber
+_FRACTION_CELL = re.compile(r"^\s*(-?\d+)\s*\n\s*(\d+)\s*$")
+
+
+def _cell(c):
+    """A table cell as one line. A stacked fraction ("1" over "2") becomes "1/2"."""
+    if not c:
+        return ""
+    m = _FRACTION_CELL.match(c)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+    return " ".join(c.split())
+
+
+def _row(cells):
+    """Cells joined with " | ", with runs of empty cells collapsed to one."""
     out = []
+    for c in cells:
+        if c == "" and out and out[-1] == "":
+            continue
+        out.append(c)
+    return " | ".join(out).strip()
+
+
+def _boilerplate(pages_text):
+    """Lines that repeat on 3+ pages (headers, footers, licence lines)."""
+    seen = Counter()
+    for t in pages_text:
+        for line in set(l.strip() for l in t.splitlines() if l.strip()):
+            seen[line] += 1
+    return {l for l, n in seen.items() if n >= 3 and len(l) < 160 and l not in ("[table]", "[/table]") and "|" not in l}
+
+
+def _pdf(path):
+    """
+    Page text with tables taken out of the running text and written as rows
+    ("Ounces | Pounds", "1/2 | ", "2 | 1/8"), so a stacked fraction is not
+    flattened into "1 2 1 8" (Nov 9-13: read as "2 ounces = 1 pound").
+    Running headers and footers are dropped so more of the teacher's
+    resources fit in the plan.
+    """
+    import pdfplumber
+    pages = []
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages[:40]:
-            out.append(page.extract_text() or "")
-            for tbl in (page.extract_tables() or []):
-                for row in tbl:
-                    out.append(" | ".join(c or "" for c in row))
+            try:
+                tables = page.find_tables()
+            except Exception:
+                tables = []
+            body = page
+            rows = []
+            for t in tables:
+                try:
+                    body = body.outside_bbox(t.bbox)
+                except Exception:
+                    pass
+                for row in t.extract() or []:
+                    cells = [_cell(c) for c in row]
+                    if any(cells):
+                        rows.append(_row(cells))
+            text = body.extract_text() or ""
+            if rows:
+                text = f"{text}\n[table]\n" + "\n".join(rows) + "\n[/table]"
+            pages.append(text)
+    drop = _boilerplate(pages)
+    out = []
+    for t in pages:
+        for line in t.splitlines():
+            s = line.strip()
+            if not s or s in drop or re.fullmatch(r"Page \d+ of \d+", s) or re.fullmatch(r"Name:\s*_+\s*Date:\s*_+", s):
+                continue
+            out.append(s)
     return "\n".join(out)
 
 def _xlsx(path):

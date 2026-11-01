@@ -14,7 +14,10 @@ export const DIFF_GROUPS = ['ESOL', 'Gifted', 'SWD'] as const;
  * tokens; at this size the shared block clears the cache minimum, so the
  * other days read it at a tenth of the price.
  */
-export const RESOURCE_CHAR_LIMIT = 40000;
+export const RESOURCE_CHAR_LIMIT = 60000;
+// LP12 (1 Nov): 40,000 cut the 2b files out of the Nov 9-13 plan, so Thursday
+// had nothing from 2b. The sidecar now drops repeated headers/footers, so the
+// four 2a/2b PDFs come to ~50k characters (was ~83k). ~15k tokens, cached.
 
 /**
  * Track LP2 (R6): no district is named here. The phases are the Lesson
@@ -175,7 +178,7 @@ export function buildLessonDayPrompt(config: PlanConfig, day?: DayContext): stri
     ...(day?.includeSmallGroup === false ? ['- Do not write a small_group section (another day writes it).'] : []),
     '- Output strictly valid JSON: escape any double quote inside a string as \\" (or use single quotes), no line breaks inside strings, no trailing commas.',
     "- USE THE TEACHER'S RESOURCES, not outside content. Every task, context, example and problem comes from the uploaded resources (their tasks, reproducibles, diagnostics, data talks, HMH practice). Do not introduce outside contexts (notebooks, widgets, gyms, cookies…) or real-world figures that are not in the resources.",
-    '- worked_example and practice: copy them from the resources, with the resource\'s OWN numbers and figures, and name the source (file and task/question). Do not change numbers, do not write "adapted" versions and do not make up figures (servings, gallons, prices) the resources do not state. Use the same figure everywhere it appears in the week. Standard unit facts are fixed (16 ounces = 1 pound, 12 inches = 1 foot, 4 quarts = 1 gallon, 60 minutes = 1 hour); if a resource table seems to say otherwise, you have misread it. practice: exactly 3 problems, easy to hard, each with its answer.',
+    '- worked_example and practice: copy them from the resources, with the resource\'s OWN numbers and figures, and name the source (file and task/question). Do not change numbers, do not write "adapted" versions and do not make up figures (servings, gallons, prices) the resources do not state. Use the same figure everywhere it appears in the week. If a task needs data that is NOT in the uploads (for example the Water Footprint Food Guide, which is a website), do not supply the number: leave a blank for the teacher to fill (e.g. \"gallons per serving of chicken, from the Food Guide: ___\"). Tables in the resources appear between [table] and [/table], one row per line, columns separated by |. Standard unit facts are fixed (16 ounces = 1 pound, 12 inches = 1 foot, 4 quarts = 1 gallon, 60 minutes = 1 hour); if a resource table seems to say otherwise, you have misread it. practice: exactly 3 problems, easy to hard, each with its answer.',
     "- watch_for: exactly 2 misconceptions about TODAY's skill, each stated in ONE plain sentence. Do not write example wrong work.",
     '- Do not repeat another day\'s opening task: use the part of the resources that fits THIS day\'s job.',
     "- Solve every worked example and practice problem step by step before writing it; each answer must match your working. Write numeric answers as 'expression = value' where it helps (e.g. '3 ÷ 12 = 0.25').",

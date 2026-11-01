@@ -22,7 +22,7 @@ import {
   PlanConfig,
   RESOURCE_CHAR_LIMIT,
 } from './lesson-plan.prompt';
-import { checkUnitFacts, ildNotes, normaliseClassDay, weekRoles } from './lesson-plan.quality';
+import { checkUnitFacts, ildNotes, normaliseClassDay, resourceNumbers, weekRoles } from './lesson-plan.quality';
 import {
   DaySuggestion,
   failedDay,
@@ -218,6 +218,7 @@ export class LessonPlanService {
     // with the 12,000-character resource limit on Haiku) nothing is cached and
     // every day runs at once, exactly as before.
     const shared = buildSharedContext(cfg, resourcesText);
+    const sourceNums = resourceNumbers(resourcesText.slice(0, RESOURCE_CHAR_LIMIT));
     const cacheMin = Number(this.config.get<string>('lessonPlan.cacheMinTokens') ?? 4096) || 4096;
     const sharedTokens = Math.ceil((shared.length + LESSON_PLAN_SYSTEM.length) / 3.5);
     const callable = resolved.filter((r) => r.status !== 'no_school');
@@ -333,7 +334,7 @@ export class LessonPlanService {
       }
       // One day asked for, one day kept, stamped with its status for the
       // sidecar, with the notes-page fields gathered and the answers checked.
-      const day = normaliseClassDay({ ...(days[0] as Record<string, unknown>), name: r.name, status: r.status });
+      const day = normaliseClassDay({ ...(days[0] as Record<string, unknown>), name: r.name, status: r.status }, sourceNums);
       const tn = day.teacher_notes as { checks: string[] };
       tn.checks = [...factNote, ...tn.checks];
       return { days: [day], smallGroup: parsed?.small_group, provider: ai.provider, tokens, ...cache };

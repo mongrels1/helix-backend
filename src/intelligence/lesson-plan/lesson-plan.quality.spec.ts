@@ -1,5 +1,5 @@
 import { resolveDays } from './lesson-plan.days';
-import { checkArithmetic, checkUnitFacts, evalArithmetic, ildNotes, isAdapted, normaliseClassDay, weekRoles } from './lesson-plan.quality';
+import { checkArithmetic, checkUnitFacts, evalArithmetic, ildNotes, isAdapted, normaliseClassDay, numbersIn, resourceNumbers, unsupportedNumbers, weekRoles } from './lesson-plan.quality';
 
 const WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -174,5 +174,32 @@ describe('LP11: nothing wrong or invented reaches the page (Nov 9-13, FILLED_7)'
     expect(out.teacher_notes.worked_example?.problem).toBe('How are the constants related?');
     expect(out.teacher_notes.practice).toEqual([]);
     expect(out.teacher_notes.checks).toEqual(['2 practice problems removed: wrong answer, wrong unit fact or not from your resources.']);
+  });
+});
+
+describe('LP12: figures that are not in the uploads are not used (Nov 9-13, FILLED_8)', () => {
+  const src = resourceNumbers('It takes 76 gallons of water to produce 4 ounces of oatmeal. 2 | 38, 4 | 76, 10 | , | 304. How many serving sizes of chicken will it take to create a water footprint of 2080? 10 servings of brown rice.');
+
+  it('reads numbers with commas and ignores small ones', () => {
+    expect(numbersIn('A protein item has 1,040 gallons per serving; 3 servings; 2.5 cups; 1/16')).toEqual(['1040']);
+    expect(unsupportedNumbers('76 gallons for 4 ounces; how many for 10 ounces?', src)).toEqual([]);
+    expect(unsupportedNumbers('If one serving has a water footprint of 1,430 gallons', src)).toEqual(['1430']);
+  });
+
+  it('drops a practice problem built on a made-up figure, keeps the resource ones', () => {
+    const out = normaliseClassDay(
+      {
+        name: 'Thursday',
+        segments: [],
+        practice: [
+          { source: '2a Diagnostic', problem: 'It takes 76 gallons of water to produce 4 ounces of oatmeal. How many for 10 ounces?', answer: '76 ÷ 4 = 19; 19 × 10 = 190' },
+          { source: '2a Meal Plan q6', problem: 'If one serving has a water footprint of 1,430 gallons, what after 3 days?', answer: '1430 × 3 = 4290' },
+          { source: '2a Meal Plan q8', problem: '10 servings of brown rice at 27 gallons each?', answer: '27 × 10 = 270' },
+        ],
+      },
+      src,
+    ) as { teacher_notes: { practice: { source: string }[]; checks: string[] } };
+    expect(out.teacher_notes.practice.map((p) => p.source)).toEqual(['2a Diagnostic']);
+    expect(out.teacher_notes.checks[0]).toMatch(/^2 practice problems removed/);
   });
 });
