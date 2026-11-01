@@ -208,32 +208,84 @@ export function failedDay(r: ResolvedDay, segmentsPerDay: number) {
   };
 }
 
+/**
+ * What the ILD call returns. Models often answer with lists where the schema
+ * asks for a string (seen on the first live ILD, 1 Nov 2026: the directions
+ * came back as an array and were printed comma-joined, and the assignment was
+ * lost), so every field is read through `asText`.
+ */
 export interface IldDraft {
-  standard?: string;
-  wida?: string;
-  learning_target?: string;
-  success_criteria?: string;
-  instructional_resources?: string;
-  student_directions?: string;
-  assignment?: string;
-  answer_key?: string;
+  standard?: unknown;
+  wida?: unknown;
+  learning_target?: unknown;
+  success_criteria?: unknown;
+  instructional_resources?: unknown;
+  student_directions?: unknown;
+  assignment?: unknown;
+  answer_key?: unknown;
+  [other: string]: unknown;
+}
+
+const NUMBERED = /^\s*(\d+[.)]|[a-z][.)]|[-•*])\s+/i;
+
+/**
+ * A string, list or object as plain text. Lists become one item per line,
+ * numbered "1." unless the items already carry their own numbers or bullets.
+ */
+export function asText(v: unknown): string {
+  if (v == null) return '';
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) {
+    const items = v.map((x) => asText(x)).filter(Boolean);
+    return items.map((x, i) => (NUMBERED.test(x) ? x : `${i + 1}. ${x}`)).join('\n');
+  }
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    // {"1": "...", "2": "..."} or {"problem": "...", "answer": "..."}
+    return Object.entries(o)
+      .map(([k, x]) => (/^\d+$/.test(k) ? `${k}. ${asText(x)}` : `${k}: ${asText(x)}`))
+      .join('\n');
+  }
+  return '';
+}
+
+/** The first non-empty field among the names a model has been seen to use. */
+function pick(d: IldDraft, ...keys: string[]): string {
+  for (const k of keys) {
+    const t = asText(d[k]);
+    if (t) return t;
+  }
+  return '';
+}
+
+/** True when the draft has something a student could actually do. */
+export function ildUsable(d: IldDraft | null | undefined): d is IldDraft {
+  return !!d && !!(pick(d, 'assignment', 'problems', 'tasks', 'assignment_items', 'practice') ||
+    pick(d, 'student_directions', 'directions'));
 }
 
 /** Shape an ILD draft into the template's day structure. */
 export function ildDay(r: ResolvedDay, draft: IldDraft, segmentsPerDay: number) {
+  const directions = pick(draft, 'student_directions', 'directions');
+  const assignment = pick(draft, 'assignment', 'problems', 'tasks', 'assignment_items', 'practice');
+  const answers = pick(draft, 'answer_key', 'answers', 'answer');
   const segs = blankSegments(segmentsPerDay, NO_CLASS);
-  segs[0].student_actions = [draft.student_directions, draft.assignment && `Assignment: ${draft.assignment}`]
+  segs[0].student_actions = [
+    directions && `Directions:\n${directions}`,
+    assignment && `Assignment:\n${assignment}`,
+  ]
     .filter(Boolean)
     .join('\n');
-  segs[0].assessment_strategies = draft.answer_key ? `Answer key: ${draft.answer_key}` : '';
+  segs[0].assessment_strategies = answers ? `Answer key:\n${answers}` : '';
   return {
     name: r.name,
     status: 'ild' as const,
-    standard: draft.standard ?? '',
-    wida: draft.wida ?? '',
-    learning_target: draft.learning_target ?? '',
-    success_criteria: draft.success_criteria ?? '',
-    instructional_resources: draft.instructional_resources ?? '',
+    standard: asText(draft.standard),
+    wida: asText(draft.wida),
+    learning_target: asText(draft.learning_target),
+    success_criteria: asText(draft.success_criteria),
+    instructional_resources: asText(draft.instructional_resources),
     segments: segs,
   };
 }

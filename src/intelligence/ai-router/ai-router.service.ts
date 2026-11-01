@@ -111,11 +111,17 @@ export class AIRouterService {
     provider: AIProvider,
     req: AIRequest,
   ): Promise<AIResponse> {
+    // Only Claude keeps the shared prefix as its own (cacheable) block; the
+    // others get it prepended to the prompt, exactly as if it had been one string.
+    const flat: AIRequest =
+      provider !== 'claude' && req.sharedPrefix
+        ? { ...req, prompt: `${req.sharedPrefix}\n\n${req.prompt}`, sharedPrefix: undefined }
+        : req;
     switch (provider) {
       case 'openai':
-        return this.callOpenAI(req);
+        return this.callOpenAI(flat);
       case 'gemini':
-        return this.callGemini(req);
+        return this.callGemini(flat);
       case 'claude':
         return this.callClaude(req);
     }
@@ -245,9 +251,13 @@ export class AIRouterService {
       provider: 'claude',
       tokensUsed:
         (response.usage?.input_tokens ?? 0) +
-        (response.usage?.output_tokens ?? 0),
+        (response.usage?.output_tokens ?? 0) +
+        (response.usage?.cache_read_input_tokens ?? 0) +
+        (response.usage?.cache_creation_input_tokens ?? 0),
       latencyMs: Date.now() - startedAt,
       stopReason: response.stop_reason ?? undefined,
+      cacheReadTokens: response.usage?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: response.usage?.cache_creation_input_tokens ?? 0,
     };
   }
 
@@ -325,6 +335,14 @@ export class AIRouterService {
       : `${req.prompt}${context}`;
   }
 
+  /** The prompt and context, for when the system prompt already travels as `system`. */
+  private buildPromptWithoutSystem(req: AIRequest): string {
+    const context = req.context
+      ? `\n\nContext:\n${JSON.stringify(req.context, null, 2)}`
+      : '';
+    return `${req.prompt}${context}`;
+  }
+
   private buildGeminiPrompt(req: AIRequest): string {
     if (!req.messages?.length) return this.buildPrompt(req);
     const history = req.messages
@@ -337,6 +355,24 @@ export class AIRouterService {
     req: AIRequest,
   ): Anthropic.Messages.MessageParam[] {
     if (!req.messages?.length) {
+      if (req.sharedPrefix) {
+        // Shared text first, as its own block, so a cache entry written by one
+        // call matches the start of the next. The system prompt is sent as the
+        // `system` parameter, which precedes it in the cache key.
+        return [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: req.sharedPrefix,
+                ...(req.cachePrefix ? { cache_control: { type: 'ephemeral' as const } } : {}),
+              },
+              { type: 'text', text: this.buildPromptWithoutSystem(req) },
+            ],
+          },
+        ];
+      }
       return [{ role: 'user', content: this.buildPrompt(req) }];
     }
     return [

@@ -14,18 +14,22 @@ import {
   UploadedFile,
 } from './lesson-plan.sidecar';
 import {
-  buildIldPrompt,
-  buildLessonPlanPrompt,
+  buildIldDayPrompt,
+  buildLessonDayPrompt,
+  buildSharedContext,
   extractJson,
   LESSON_PLAN_SYSTEM,
   PlanConfig,
+  RESOURCE_CHAR_LIMIT,
 } from './lesson-plan.prompt';
+import { ildNotes, normaliseClassDay, weekRoles } from './lesson-plan.quality';
 import {
   DaySuggestion,
   failedDay,
   formatWeekRange,
   ildDay,
   IldDraft,
+  ildUsable,
   noSchoolDay,
   ResolvedDay,
   resolveDays,
@@ -61,6 +65,8 @@ interface DayDraft {
   /** null when no AI call was made (a no-school day) or the call failed. */
   provider: string | null;
   tokens: number;
+  cacheRead?: number;
+  cacheWrite?: number;
 }
 
 @Injectable()
@@ -125,6 +131,24 @@ export class LessonPlanService {
   }
 
   /**
+   * Which uploads lose text to the resource limit (R7), in prompt order. The
+   * teacher is told, instead of the end of a pacing guide silently vanishing.
+   */
+  private trimmedResources(job: LessonPlanJob): string[] {
+    const order: Record<string, number> = {
+      ilp: 0, pacing: 1, standards: 2, perf_task: 3, roster: 4, slides: 5, other: 6,
+    };
+    let used = 0;
+    const cut: string[] = [];
+    for (const r of [...job.resources].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9))) {
+      used += `=== ${r.filename} [${r.type}] ===\n`.length + r.text.length;
+      if (used > RESOURCE_CHAR_LIMIT) cut.push(r.filename);
+      used += 2;
+    }
+    return cut;
+  }
+
+  /**
    * Days the teacher's own uploads mark as an ILD or a closure, for the
    * teacher to confirm before generating. A regex over text already
    * extracted: no AI call, no cost.
@@ -180,47 +204,73 @@ export class LessonPlanService {
     // - every day keeps its position, because the sidecar fill is positional:
     //   a day that fails is replaced by a visible placeholder, never dropped
     //   (dropping one used to slide every later day into the wrong column).
+    // Since LP4 each class day is told its place in the week's arc, and writes
+    // the misconceptions, a worked example and practice for the notes page.
     const qualityModel = this.config.get<string>('lessonPlan.claudeModel') || undefined;
     const segs = dto.segmentsPerDay;
+    const roles = weekRoles(resolved);
 
-    const draftOne = async (r: ResolvedDay): Promise<DayDraft> => {
+    // LP3 (R5): the class context and resources are identical for every day,
+    // so they travel first as one shared block. Caching it only pays when the
+    // block clears the model's cache minimum AND a later call reads it — a
+    // cache write costs 25% more than plain input — so then one day goes
+    // first and the rest follow in parallel. Below the minimum (the usual case
+    // with the 12,000-character resource limit on Haiku) nothing is cached and
+    // every day runs at once, exactly as before.
+    const shared = buildSharedContext(cfg, resourcesText);
+    const cacheMin = Number(this.config.get<string>('lessonPlan.cacheMinTokens') ?? 4096) || 4096;
+    const sharedTokens = Math.ceil((shared.length + LESSON_PLAN_SYSTEM.length) / 3.5);
+    const callable = resolved.filter((r) => r.status !== 'no_school');
+    const useCache = callable.length >= 2 && sharedTokens >= cacheMin;
+
+    const draftOne = async (r: ResolvedDay, i: number): Promise<DayDraft> => {
       if (r.status === 'no_school') {
         return { days: [noSchoolDay(r, segs)], provider: null, tokens: 0 };
       }
       const isIld = r.status === 'ild';
       const prompt = isIld
-        ? buildIldPrompt({ ...cfg, days: [r.name] }, resourcesText, {
+        ? buildIldDayPrompt({ ...cfg, days: [r.name] }, {
             name: r.name,
             reason: r.reason,
             dateLabel: r.dateLabel,
             weekOverview: overview,
           })
-        : buildLessonPlanPrompt({ ...cfg, days: [r.name] }, resourcesText, {
+        : buildLessonDayPrompt({ ...cfg, days: [r.name] }, {
             dateLabel: r.dateLabel,
             weekOverview: overview,
             statusNote: statusNote(r),
+            ...roles[i],
           });
       const ai = await this.ai.chat({
         prompt,
+        sharedPrefix: shared,
+        cachePrefix: useCache,
         systemPrompt: LESSON_PLAN_SYSTEM,
         preferredProvider: 'claude',
         claudeModel: qualityModel,
-        // One day of segments is ~1500-2500 tokens. 6000 is headroom, and
-        // well inside the SDK non-streaming ceiling whatever the model. An
-        // ILD reply is a fraction of that.
+        // One day of segments is ~1500-2500 tokens, plus ~600 for the notes
+        // page fields. 6000 is headroom, and well inside the SDK non-streaming
+        // ceiling whatever the model. An ILD reply is a fraction of that.
         maxTokens: isIld ? 2500 : 6000,
         temperature: 0.4,
         timeoutMs: 120000,
       });
       const tokens = ai.tokensUsed ?? 0;
+      const cache = { cacheRead: ai.cacheReadTokens ?? 0, cacheWrite: ai.cacheWriteTokens ?? 0 };
       const parsed = extractJson(ai.text) as (IldDraft & { days?: unknown; small_group?: unknown }) | null;
 
       if (isIld) {
-        if (!parsed || (!parsed.student_directions && !parsed.assignment)) {
+        if (!ildUsable(parsed)) {
           this.logger.error(`lesson plan ILD day "${r.name}" unusable — provider=${ai.provider} chars=${(ai.text ?? '').length}`);
-          return { days: [failedDay(r, segs)], provider: null, tokens };
+          return { days: [failedDay(r, segs)], provider: null, tokens, ...cache };
         }
-        return { days: [ildDay(r, parsed, segs)], provider: ai.provider, tokens };
+        const day = ildDay(r, parsed, segs);
+        return {
+          days: [{ ...day, teacher_notes: ildNotes(day.segments[0].assessment_strategies) }],
+          provider: ai.provider,
+          tokens,
+          ...cache,
+        };
       }
 
       const days = parsed?.days;
@@ -233,21 +283,30 @@ export class LessonPlanService {
             `groups=${(dto.differentiationGroups ?? []).length}`,
         );
         this.logger.error(`lesson plan day "${r.name}" tail: ${JSON.stringify(text.slice(-400))}`);
-        return { days: [failedDay(r, segs)], provider: null, tokens };
+        return { days: [failedDay(r, segs)], provider: null, tokens, ...cache };
       }
-      // One day asked for, one day kept, stamped with its status for the sidecar.
-      const day = { ...(days[0] as Record<string, unknown>), name: r.name, status: r.status };
-      return { days: [day], smallGroup: parsed?.small_group, provider: ai.provider, tokens };
+      // One day asked for, one day kept, stamped with its status for the
+      // sidecar, with the notes-page fields gathered and the answers checked.
+      const day = normaliseClassDay({ ...(days[0] as Record<string, unknown>), name: r.name, status: r.status });
+      return { days: [day], smallGroup: parsed?.small_group, provider: ai.provider, tokens, ...cache };
     };
 
-    const drafted: DayDraft[] = await Promise.all(
-      resolved.map((r) =>
-        draftOne(r).catch((err: unknown) => {
-          this.logger.error(`lesson plan day "${r.name}" threw: ${(err as Error)?.message ?? err}`);
-          return { days: [failedDay(r, segs)], provider: null, tokens: 0 } as DayDraft;
-        }),
-      ),
-    );
+    const safe = (r: ResolvedDay, i: number) =>
+      draftOne(r, i).catch((err: unknown) => {
+        this.logger.error(`lesson plan day "${r.name}" threw: ${(err as Error)?.message ?? err}`);
+        return { days: [failedDay(r, segs)], provider: null, tokens: 0 } as DayDraft;
+      });
+
+    let drafted: DayDraft[];
+    if (useCache) {
+      // Warm the cache with the first callable day, then the rest together.
+      const first = resolved.findIndex((r) => r.status !== 'no_school');
+      const warm = await safe(resolved[first], first);
+      const rest = await Promise.all(resolved.map((r, i) => (i === first ? Promise.resolve(warm) : safe(r, i))));
+      drafted = rest;
+    } else {
+      drafted = await Promise.all(resolved.map((r, i) => safe(r, i)));
+    }
 
     const aiCalls = resolved.filter((r) => r.status !== 'no_school').length;
     const produced = drafted.filter((d) => d.provider !== null).length;
@@ -289,6 +348,13 @@ export class LessonPlanService {
       engine: drafted.find((d) => d.provider)?.provider ?? 'none',
       aiCalls,
       tokensUsed: drafted.reduce((n, d) => n + d.tokens, 0),
+      cache: {
+        used: useCache,
+        readTokens: drafted.reduce((n, d) => n + (d.cacheRead ?? 0), 0),
+        writeTokens: drafted.reduce((n, d) => n + (d.cacheWrite ?? 0), 0),
+      },
+      // R7: uploads that lost text to the resource limit.
+      resourcesTrimmed: this.trimmedResources(job),
       days: resolved.map(({ name, status, date }) => ({ name, status, date })),
       structureLocked: fill.structureLocked,
       pacingOk: fill.pacingOk,

@@ -97,9 +97,16 @@ async def fill(template: UploadFile = File(...),
     if not result.get("structure_locked"):
         # never return a doc whose structure drifted
         raise HTTPException(500, "structure-lock check failed; refusing to return altered document")
+    # Teacher notes (LP4) go on a new page AFTER the locked template; a problem
+    # here must never cost the teacher the plan itself.
+    try:
+        notes_days = docx_template.append_teacher_notes(out_path, plan)
+    except Exception:
+        notes_days = 0
     headers = {
         "X-Structure-Locked": "true",
         "X-Pacing-Ok": str(plan.get("_pacing_ok", False)).lower(),
+        "X-Notes-Days": str(notes_days),
         "X-Plan-Json": json.dumps(_plan_summary(plan)),
     }
     return FileResponse(out_path, filename="lesson_plan_filled.docx",

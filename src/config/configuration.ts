@@ -51,6 +51,9 @@ export default () => ({
     svcUrl: process.env.LESSON_PLAN_SVC_URL ?? '',
     svcSecret: process.env.LESSON_PLAN_SVC_SECRET ?? '',
     claudeModel: process.env.LESSON_PLAN_CLAUDE_MODEL ?? '',
+    // Prompt caching of the shared class context (LP3) only switches on when
+    // that block is at least this many tokens: the model's cache minimum.
+    cacheMinTokens: process.env.LESSON_PLAN_CACHE_MIN_TOKENS ?? '4096',
   },
   pushMap: {
     // Model used to read a scanned score report. Empty falls back to

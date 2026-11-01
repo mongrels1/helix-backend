@@ -313,3 +313,79 @@ def _fill_differentiation(cell, diff: dict):
                 if _is_empty_para(para):
                     _set_para_text(para, norm[group])
                     break
+
+
+# --------------------------------------------------------------------------- #
+#  Teacher notes page (Track LP4)
+# --------------------------------------------------------------------------- #
+def _notes_para(doc, text: str, bold: bool = False, size: float | None = None,
+                indent: float | None = None):
+    from docx.shared import Pt
+    p = doc.add_paragraph()
+    run = p.add_run(text)
+    run.bold = bold
+    if size:
+        run.font.size = Pt(size)
+    if indent is not None:
+        p.paragraph_format.left_indent = Pt(indent)
+    p.paragraph_format.space_after = Pt(2)
+    return p
+
+
+def append_teacher_notes(path: str, plan: dict) -> int:
+    """Add a "Teacher notes" page AFTER the school's template: for each day,
+    where it fits in the week, what to watch for, a worked example and
+    practice with answers, and any answer the backend could not confirm.
+
+    Runs after the structure-lock check, on the saved file, so the template
+    itself is untouched; the notes are new paragraphs at the end of the body.
+    Returns the number of days written (0 = nothing added)."""
+    from docx.enum.text import WD_BREAK
+    days = [d for d in plan.get("days", []) if d.get("teacher_notes")]
+    blocks = []
+    for d in days:
+        n = d["teacher_notes"]
+        if not (n.get("where_this_fits") or n.get("watch_for") or n.get("worked_example")
+                or n.get("practice") or n.get("checks")):
+            continue
+        blocks.append((d.get("name", ""), n))
+    if not blocks:
+        return 0
+
+    doc = Document(path)
+    brk = doc.add_paragraph()
+    brk.add_run().add_break(WD_BREAK.PAGE)
+    _notes_para(doc, "Teacher notes", bold=True, size=16)
+    _notes_para(doc, "Read “Watch for” before class. Answers marked “Check” did not "
+                     "recompute; correct them before using them with students.", size=9)
+    for name, n in blocks:
+        _notes_para(doc, "")
+        _notes_para(doc, name, bold=True, size=13)
+        if n.get("where_this_fits"):
+            _notes_para(doc, f"Where this day fits: {n['where_this_fits']}")
+        if n.get("watch_for"):
+            _notes_para(doc, "Watch for", bold=True)
+            for w in n["watch_for"]:
+                _notes_para(doc, f"• {w.get('misconception', '')}", indent=12)
+                if w.get("looks_like"):
+                    _notes_para(doc, f"Looks like: {w['looks_like']}", indent=24)
+                if w.get("teacher_response"):
+                    _notes_para(doc, f"What to say or do: {w['teacher_response']}", indent=24)
+        we = n.get("worked_example")
+        if we:
+            _notes_para(doc, "Worked example", bold=True)
+            if we.get("problem"):
+                _notes_para(doc, we["problem"], indent=12)
+            if we.get("solution"):
+                for line in str(we["solution"]).split("\n"):
+                    _notes_para(doc, line, indent=24)
+        if n.get("practice"):
+            _notes_para(doc, "Practice (easy → hard)", bold=True)
+            for i, p in enumerate(n["practice"], 1):
+                _notes_para(doc, f"{i}. {p.get('problem', '')}", indent=12)
+                if p.get("answer"):
+                    _notes_para(doc, f"Answer: {p['answer']}", indent=24)
+        for c in n.get("checks") or []:
+            _notes_para(doc, f"Check: {c}", bold=True)
+    doc.save(path)
+    return len(blocks)

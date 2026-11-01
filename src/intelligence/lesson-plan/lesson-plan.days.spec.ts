@@ -1,5 +1,7 @@
 import {
+  asText,
   datesFor,
+  ildUsable,
   formatWeekRange,
   ildDay,
   noSchoolDay,
@@ -84,8 +86,8 @@ describe('lesson-plan days (LP1)', () => {
     expect(day.status).toBe('ild');
     expect(day.segments).toHaveLength(3);
     expect(day.segments.every((s) => s.teacher_actions === 'Independent learning day – no class session.')).toBe(true);
-    expect(day.segments[0].student_actions).toContain('Assignment: 1) 3:12 unit rate');
-    expect(day.segments[0].assessment_strategies).toBe('Answer key: 1) 0.25');
+    expect(day.segments[0].student_actions).toContain('Assignment:\n1) 3:12 unit rate');
+    expect(day.segments[0].assessment_strategies).toBe('Answer key:\n1) 0.25');
   });
 
   it('describes the whole week in one line for every day call', () => {
@@ -124,6 +126,48 @@ describe('lesson-plan days (LP1)', () => {
 
     it('suggests nothing without a week start', () => {
       expect(suggestDayStatuses(WEEK, undefined, pacing)).toEqual([]);
+    });
+  });
+
+  describe('ILD drafts that come back as lists (live plan, 1 Nov 2026)', () => {
+    const [, tue] = resolveDays(WEEK, [{ name: 'Tuesday', status: 'ild' }], '2026-11-02');
+
+    it('turns lists into numbered lines, keeping numbers the model already wrote', () => {
+      expect(asText(['Read each scenario.', 'Write the ratio.'])).toBe('1. Read each scenario.\n2. Write the ratio.');
+      expect(asText(['1) 3:12', '2) 2:10'])).toBe('1) 3:12\n2) 2:10');
+      expect(asText({ 1: '0.25', 2: '0.2' })).toBe('1. 0.25\n2. 0.2');
+      expect(asText(null)).toBe('');
+    });
+
+    it('prints directions, the assignment and the answer key, never comma-joined', () => {
+      const day = ildDay(
+        tue,
+        {
+          student_directions: ['Read each scenario.', 'Divide to find the unit rate.'],
+          assignment: ['3 cups purifier : 12 cups water', '2 cups purifier : 10 cups water'],
+          answer_key: ['0.25 per cup', '0.2 per cup'],
+        },
+        3,
+      );
+      const s = day.segments[0];
+      expect(s.student_actions).toBe(
+        'Directions:\n1. Read each scenario.\n2. Divide to find the unit rate.\n' +
+          'Assignment:\n1. 3 cups purifier : 12 cups water\n2. 2 cups purifier : 10 cups water',
+      );
+      expect(s.assessment_strategies).toBe('Answer key:\n1. 0.25 per cup\n2. 0.2 per cup');
+      expect(s.student_actions).not.toContain(',Divide');
+    });
+
+    it('finds the assignment under the other names models use', () => {
+      const day = ildDay(tue, { directions: 'Do the worksheet.', problems: ['1) 4:16'], answers: '1) 0.25' }, 3);
+      expect(day.segments[0].student_actions).toContain('Assignment:\n1) 4:16');
+      expect(day.segments[0].assessment_strategies).toBe('Answer key:\n1) 0.25');
+    });
+
+    it('a draft with neither directions nor an assignment is not usable', () => {
+      expect(ildUsable({ standard: '7.PAR.4.1' })).toBe(false);
+      expect(ildUsable({ problems: ['1) 4:16'] })).toBe(true);
+      expect(ildUsable(null)).toBe(false);
     });
   });
 });

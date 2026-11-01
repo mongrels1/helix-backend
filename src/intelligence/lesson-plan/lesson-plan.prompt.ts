@@ -6,15 +6,26 @@
 
 export const DIFF_GROUPS = ['ESOL', 'Gifted', 'SWD'] as const;
 
+/** Resources beyond this many characters are cut (R7 reports which files). */
+export const RESOURCE_CHAR_LIMIT = 12000;
+
+/**
+ * Track LP2 (R6): no district is named here. The phases are the Lesson
+ * Component options the template itself offers; a teacher who works to a
+ * named framework says so in their notes, and the resources carry the rest.
+ * (This used to name the DCSD framework for every teacher in every district.)
+ */
 export const LESSON_PLAN_SYSTEM =
   'You are an expert K-12 mathematics instructional coach writing a weekly ' +
-  'lesson plan for a district that uses the DCSD Mathematics Instructional ' +
-  'Framework (phases: Pre-Instructional, Engage, Explore, Apply, Reflect). ' +
-  'You write concrete, classroom-ready teacher moves and student moves, ' +
-  'grounded ONLY in the provided resources (pacing guide, ILP, performance ' +
-  'tasks, standards, roster data). Be specific to the math standards given. ' +
-  'You never invent standards not supported by the resources. Output MUST be ' +
-  'valid JSON matching the requested schema and nothing else.';
+  "lesson plan into a teacher's own school template. Lesson phases are the " +
+  "template's Lesson Component options: Pre-Instructional, Engage, Explore, " +
+  'Apply, Reflect. If the teacher names an instructional framework in their ' +
+  'notes or resources, follow it. You write concrete, classroom-ready teacher ' +
+  'moves and student moves, grounded ONLY in the provided resources (pacing ' +
+  'guide, ILP, performance tasks, standards, roster data). Be specific to the ' +
+  'math standards given. You never invent standards not supported by the ' +
+  'resources. Output MUST be valid JSON matching the requested schema and ' +
+  'nothing else.';
 
 export interface PlanConfig {
   period_minutes: number;
@@ -32,9 +43,10 @@ export interface PlanConfig {
 }
 
 /**
- * Where this one day sits in the week (Track LP1). Every day is drafted in its
- * own parallel call, so without this a day cannot know its date, that
- * yesterday was an Independent Learning Day, or that tomorrow is a test.
+ * Where this one day sits in the week. Every day is drafted in its own
+ * parallel call, so without this a day cannot know its date, that yesterday
+ * was an Independent Learning Day, or that tomorrow is a test (LP1), nor what
+ * job it does in the week's arc (LP4).
  */
 export interface DayContext {
   /** e.g. "Tuesday, 3 Nov 2026". */
@@ -43,32 +55,73 @@ export interface DayContext {
   weekOverview?: string;
   /** Extra instruction for a test, centers or half day. */
   statusNote?: string;
+  /** 1-based position among the week's class days, and how many there are. */
+  position?: { k: number; n: number };
+  /** This day's job in the arc, e.g. "introduce", "build", "review before Friday's assessment". */
+  role?: string;
+  /** What the day before and the day after are (status, and the teacher's note). */
+  before?: string;
+  after?: string;
 }
 
-export function buildLessonPlanPrompt(
-  config: PlanConfig,
-  resourcesText: string,
-  day?: DayContext,
-): string {
+/**
+ * The part of every day's prompt that is identical across the week: class
+ * context, the teacher's notes and the resources. Sent first so it can be
+ * cached once and read by every other day call (LP3, R5).
+ */
+export function buildSharedContext(config: PlanConfig, resourcesText: string): string {
+  const groups = config.differentiation_groups ?? [...DIFF_GROUPS];
+  return [
+    'CLASS CONTEXT (the same for every day of this week):',
+    `- Grade/Course: ${config.grade ?? ''}`,
+    `- Unit: ${config.unit ?? ''}`,
+    ...(config.week ? [`- Week of: ${config.week}`] : []),
+    `- Period length: ${config.period_minutes} minutes`,
+    `- Segments per class day: ${config.segments_per_day}`,
+    `- Co-teaching/para: ${config.co_teaching ?? 'None'} (if not None, split teacher_actions by role: 'Teacher 1: ... Teacher 2: ...')`,
+    `- Differentiation groups in this class: ${JSON.stringify(groups)}`,
+    `- Strategies to weave in where appropriate (not forced): ${JSON.stringify(config.strategies ?? [])}`,
+    ...(config.instructions && config.instructions.trim()
+      ? [
+          '',
+          "TEACHER'S SPECIFIC INSTRUCTIONS (high priority — honor these wherever they apply, without breaking the required structure or inventing standards not in the resources):",
+          config.instructions.trim(),
+        ]
+      : []),
+    '',
+    'RESOURCES (plan strictly from these):',
+    resourcesText.slice(0, RESOURCE_CHAR_LIMIT),
+  ].join('\n');
+}
+
+const GENERIC =
+  "'support struggling learners', 'provide scaffolds', 'challenge advanced students', 'offer extension activities', 'use visuals'";
+
+/** The day-specific part of a class day's prompt (sent after the shared context). */
+export function buildLessonDayPrompt(config: PlanConfig, day?: DayContext): string {
   const groups = config.differentiation_groups ?? [...DIFF_GROUPS];
   const diffSchema = groups
-    .map((g) => `"${g}": "specific support for this group (omit groups not listed)"`)
+    .map((g) => `"${g}": "${g === 'Gifted' ? 'Stretch' : 'Support'}: one named move tied to this segment's task"`)
     .join(', ');
 
   const schema = `{
  "days": [{
-   "name": "one of the day names",
+   "name": "the day name",
    "standard": "the specific standard code + short description for that day",
    "wida": "WIDA ELD standard + brief content/language objective",
-   "learning_target": "student-friendly 'Today, we are learning to...' statement",
+   "learning_target": "what students learn today, written to follow the template's own words 'Today, we are learning to:' (do not repeat that phrase)",
    "success_criteria": "'I can...' observable evidence",
    "instructional_resources": "specific texts/materials/tasks used that day",
+   "where_this_fits": "ONE line: how today builds on the day before and sets up the day after",
+   "academic_vocabulary": "key terms for the whole day",
+   "writing_strategies": "the day's writing-to-learn move",
+   "watch_for": [{"misconception": "a specific error students make on THIS standard", "looks_like": "what it looks like in student work, with an example", "teacher_response": "what the teacher says or does"}],
+   "worked_example": {"problem": "one problem at today's level", "solution": "the full solution, step by step"},
+   "practice": [{"problem": "...", "answer": "..."}],
    "segments": [{
      "lesson_component": "one of: Pre-Instructional, Engage, Explore, Apply, Reflect",
      "teacher_actions": "concrete teacher moves for this phase",
      "student_actions": "what students do this phase",
-     "academic_vocabulary": "key terms",
-     "writing_strategies": "a writing-to-learn move",
      "assessment_strategies": "how understanding is checked this phase",
      "differentiation": { ${diffSchema} }
    }]
@@ -79,57 +132,54 @@ export function buildLessonPlanPrompt(
  }]
 }`;
 
+  const pos = day?.position;
   return [
-    'Create a weekly math lesson plan.',
+    'Write ONE class day of a weekly math lesson plan, using the class context and resources above.',
     '',
-    'CONTEXT:',
-    `- Grade/Course: ${config.grade ?? ''}`,
-    `- Unit: ${config.unit ?? ''}`,
-    `- Week of: ${config.week ?? ''}`,
-    `- Period length: ${config.period_minutes} minutes (IMPORTANT for pacing)`,
-    `- Days to plan (produce exactly these, in order): ${JSON.stringify(config.days)}`,
-    ...(day?.dateLabel ? [`- Date of this day: ${day.dateLabel}`] : []),
+    'THIS DAY:',
+    `- Day (produce exactly this one): ${JSON.stringify(config.days)}`,
+    ...(day?.dateLabel ? [`- Date: ${day.dateLabel}`] : []),
+    ...(pos ? [`- Class day ${pos.k} of ${pos.n} this week.`] : []),
+    ...(day?.role ? [`- Its job in the week: ${day.role}.`] : []),
+    ...(day?.before ? [`- The day before: ${day.before}`] : []),
+    ...(day?.after ? [`- The day after: ${day.after}`] : []),
     ...(day?.weekOverview
       ? [
-          `- The whole week (for context only; plan just the day above): ${day.weekOverview}`,
-          '- Never describe a no-school or independent-learning day as a class session, and refer to other days by their status above.',
+          `- The whole week (for context only; plan just this day): ${day.weekOverview}`,
+          '- Never describe a no-school or independent-learning day as a class session. If the day before was independent learning, open by reviewing that assignment and use it to group students.',
         ]
       : []),
     ...(day?.statusNote ? [`- ${day.statusNote}`] : []),
-    `- Segments per day (produce EXACTLY this many per day): ${config.segments_per_day}`,
-    `- Co-teaching/para: ${config.co_teaching ?? 'None'} (if not None, split teacher_actions by role: 'Teacher 1: ... Teacher 2: ...')`,
-    `- Differentiation groups the teacher has (fill ONLY these, where warranted): ${JSON.stringify(groups)}`,
-    `- Strategies to weave in where appropriate (not forced): ${JSON.stringify(config.strategies ?? [])}`,
-    ...(config.instructions && config.instructions.trim()
-      ? [
-          '',
-          "TEACHER'S SPECIFIC INSTRUCTIONS (high priority — honor these; weave them into teacher_actions, instructional_resources, and differentiation wherever they apply, without breaking the required structure or inventing standards not in the resources):",
-          config.instructions.trim(),
-        ]
-      : []),
-    '',
-    'RESOURCES (plan strictly from these):',
-    resourcesText.slice(0, 12000),
     '',
     'RULES:',
-    `- Each day has EXACTLY ${config.segments_per_day} segments; choose the most appropriate framework phases and sequence them coherently across the week.`,
-    `- Differentiation: include a key ONLY for a group in ${JSON.stringify(groups)}, and only when warranted; otherwise omit it.`,
+    `- EXACTLY ${config.segments_per_day} segments, in a sensible phase order for this day's job.`,
     '- Do not include minute counts; pacing is computed separately.',
     '- Ground every standard/target in the resources.',
+    "- watch_for: exactly 2 misconceptions specific to today's standard, each with how it shows up and the teacher's response.",
+    '- worked_example: one fully solved problem. practice: exactly 3 problems ordered easy to hard, each with its answer.',
+    "- Solve every worked example and practice problem step by step before writing it; each answer must match your working. Write numeric answers as 'expression = value' where it helps (e.g. '3 ÷ 12 = 0.25').",
+    `- Differentiation: for each group in ${JSON.stringify(groups)}, give one specific move on the MAIN task segment (Explore or Apply); other segments only where it truly differs. Name the tool, task, prompt or sentence frame. Generic phrases such as ${GENERIC} are not allowed.`,
+    '- Do not reuse a warm-up, opening task or problem numbers that another day of a typical week would use: pick contexts and numbers that fit THIS day\'s job, so comparison problems have different answers and a clear winner.',
+    "- Keep the meaning of 'more' consistent with the rest of the unit's context (say which quantity is per which).",
     '',
     'Return ONLY JSON of this shape (values are instructions, replace them):',
     schema,
   ].join('\n');
 }
 
+/** The whole class-day prompt in one string (shared context + day part). */
+export function buildLessonPlanPrompt(config: PlanConfig, resourcesText: string, day?: DayContext): string {
+  return `${buildSharedContext(config, resourcesText)}\n\n${buildLessonDayPrompt(config, day)}`;
+}
+
 /**
  * An Independent Learning Day: students work on their own and there is no
  * class session, so there are no teacher moves or segments to write. The
  * reply is a fraction of a teaching day's length, so the day costs less.
+ * This is the day-specific part; the shared context goes before it.
  */
-export function buildIldPrompt(
+export function buildIldDayPrompt(
   config: PlanConfig,
-  resourcesText: string,
   day: DayContext & { name: string; reason?: string },
 ): string {
   const schema = `{
@@ -138,35 +188,40 @@ export function buildIldPrompt(
  "learning_target": "what students learn today, written to follow the template's own words 'Today, we are learning to:' (do not repeat that phrase)",
  "success_criteria": "'I can...' observable evidence",
  "instructional_resources": "the exact assignment/worksheet/platform named in the resources",
- "student_directions": "3-6 short numbered steps a student follows at home or alone, in plain language",
- "assignment": "the tasks or problems, numbered, at the right difficulty (5-8 items)",
- "answer_key": "the answer to every numbered item, worked where a step matters"
+ "student_directions": "ONE string: 3-6 short steps a student follows alone, numbered '1. ... 2. ...' on separate lines",
+ "assignment": "ONE string: 5-8 problems numbered '1. ... 2. ...' on separate lines, easy to hard",
+ "answer_key": "ONE string: the answer to each numbered problem, same numbers, worked where a step matters"
 }`;
   return [
-    'Write ONE Independent Learning Day for a weekly math lesson plan.',
+    'Write ONE Independent Learning Day for this weekly math lesson plan, using the class context and resources above.',
     'There is NO class session this day: no teacher actions, no segments, no co-teaching.',
     'Students complete the assignment independently (at home or on a platform).',
     '',
-    'CONTEXT:',
-    `- Grade/Course: ${config.grade ?? ''}`,
-    `- Unit: ${config.unit ?? ''}`,
+    'THIS DAY:',
     `- Day: ${day.name}${day.dateLabel ? ` (${day.dateLabel})` : ''}`,
     ...(day.reason ? [`- Teacher's note: ${day.reason}`] : []),
     ...(day.weekOverview ? [`- The whole week (context only): ${day.weekOverview}`] : []),
-    ...(config.instructions && config.instructions.trim()
-      ? ["- Teacher's instructions (honor where they apply to this day):", config.instructions.trim()]
-      : []),
-    '',
-    'RESOURCES (plan strictly from these; if they name an assignment for this day, use it):',
-    resourcesText.slice(0, 12000),
     '',
     'RULES:',
+    '- If the resources name an assignment for this day, use it.',
+    '- Every value is a single string, never a list. Number items inside the string.',
+    '- The assignment is required: write the actual problems with their numbers, not a description of them.',
+    '- Vary the numbers so the problems have DIFFERENT answers; comparison problems must have a clear winner.',
     '- Solve every assignment item yourself before writing its answer; the answer key must match.',
     '- Ground the standard in the resources. Do not invent standards.',
     '',
     'Return ONLY JSON of this shape (values are instructions, replace them):',
     schema,
   ].join('\n');
+}
+
+/** The whole ILD prompt in one string (shared context + day part). */
+export function buildIldPrompt(
+  config: PlanConfig,
+  resourcesText: string,
+  day: DayContext & { name: string; reason?: string },
+): string {
+  return `${buildSharedContext(config, resourcesText)}\n\n${buildIldDayPrompt(config, day)}`;
 }
 
 /**

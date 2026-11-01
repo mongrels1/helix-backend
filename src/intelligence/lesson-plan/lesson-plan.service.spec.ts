@@ -23,7 +23,7 @@ function teachReply(name: string) {
   });
 }
 
-function makeService(chat: jest.Mock) {
+function makeService(chat: jest.Mock, cfg: Record<string, string> = {}) {
   const sidecar = {
     fill: jest.fn().mockResolvedValue({
       docx: Buffer.from('PK'),
@@ -32,7 +32,7 @@ function makeService(chat: jest.Mock) {
       summary: null,
     }),
   };
-  const config = { get: jest.fn().mockReturnValue(undefined) };
+  const config = { get: jest.fn((k: string) => cfg[k]) };
   const svc = new LessonPlanService({ chat } as never, sidecar as never, config as never);
   return { svc, sidecar };
 }
@@ -175,5 +175,57 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     expect(svc.suggestDays(id, 't1', WEEK, '2026-11-02')).toEqual([
       { name: 'Tuesday', date: '2026-11-03', status: 'ild', evidence: 'Nov 3 ILD – Unit Rate ILD Worksheet' },
     ]);
+  });
+
+  it('caching: when the shared block clears the minimum, one day warms the cache before the rest', async () => {
+    const order: string[] = [];
+    const chat = jest.fn(async ({ prompt, cachePrefix, sharedPrefix }: { prompt: string; cachePrefix: boolean; sharedPrefix: string }) => {
+      expect(cachePrefix).toBe(true);
+      expect(sharedPrefix).toContain('RESOURCES');
+      const name = WEEK.find((d) => prompt.includes(`["${d}"]`))!;
+      order.push(`start ${name}`);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push(`end ${name}`);
+      return { text: teachReply(name), provider: 'claude', tokensUsed: 10, cacheReadTokens: name === 'Monday' ? 0 : 900, cacheWriteTokens: name === 'Monday' ? 900 : 0 };
+    });
+    const { svc } = makeService(chat, { 'lessonPlan.cacheMinTokens': '10' });
+    const id = await jobWithTemplate(svc);
+    const out = await svc.generate(id, 't1', { ...base } as never);
+    expect(order.slice(0, 2)).toEqual(['start Monday', 'end Monday']);
+    expect(out.cache).toEqual({ used: true, readTokens: 3600, writeTokens: 900 });
+  });
+
+  it('no caching below the minimum: every day at once, no cache_control', async () => {
+    const chat = jest.fn(async ({ prompt, cachePrefix }: { prompt: string; cachePrefix: boolean }) => {
+      expect(cachePrefix).toBe(false);
+      const name = WEEK.find((d) => prompt.includes(`["${d}"]`))!;
+      return { text: teachReply(name), provider: 'claude', tokensUsed: 10 };
+    });
+    const { svc } = makeService(chat);
+    const id = await jobWithTemplate(svc);
+    const out = await svc.generate(id, 't1', { ...base } as never);
+    expect(out.cache.used).toBe(false);
+  });
+
+  it('class days carry teacher_notes to the sidecar; the plan reports uploads cut by the limit', async () => {
+    const chat = jest.fn(async ({ prompt }: { prompt: string }) => {
+      const name = WEEK.find((d) => prompt.includes(`["${d}"]`))!;
+      return {
+        text: JSON.stringify({
+          days: [{ name, where_this_fits: 'fits', practice: [{ problem: '5 : 8', answer: '5 ÷ 8 = 0.6' }], segments: [] }],
+        }),
+        provider: 'claude',
+        tokensUsed: 10,
+      };
+    });
+    const { svc, sidecar } = makeService(chat);
+    const id = await jobWithTemplate(svc);
+    const job = (svc as unknown as { jobs: Map<string, { resources: unknown[] }> }).jobs.get(id)!;
+    job.resources.push({ filename: 'big-pacing.pdf', type: 'pacing', text: 'x'.repeat(13000) });
+    const out = await svc.generate(id, 't1', { ...base } as never);
+    expect(out.resourcesTrimmed).toEqual(['big-pacing.pdf']);
+    const plan = sidecar.fill.mock.calls[0][0].plan;
+    expect(plan.days[0].teacher_notes.where_this_fits).toBe('fits');
+    expect(plan.days[0].teacher_notes.checks).toEqual(['5 ÷ 8 = 0.6 (we get 0.625)']);
   });
 });
