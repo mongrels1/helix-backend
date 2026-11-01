@@ -49,15 +49,35 @@ def choose_phases(num_segments: int, day_index: int, total_days: int) -> list[st
         return ["Engage", "Explore"]
     return ["Explore"] * num_segments
 
+# Days with no class session (Track LP1). They keep their column in the
+# template, but get no phases, no minutes and no pacing check.
+NON_TEACHING = {"no_school", "ild", "failed"}
+
+
 def apply_pacing(plan: dict, period_minutes: int, segments_per_day: int,
                  differentiation_groups: list[str]) -> dict:
     """Normalize an LLM-drafted plan: enforce segment count, assign phases,
     time-weight to the period, prune differentiation to selected groups, and
-    stamp the minutes into each teacher_actions header."""
+    stamp the minutes into each teacher_actions header.
+
+    Non-teaching days (status no_school / ild / failed) are left as written:
+    padded to the segment count so the positional fill stays aligned, with no
+    lesson phase and no minutes. Phase choice (first and last day of the week)
+    counts teaching days only."""
     days = plan.get("days", [])
-    for di, d in enumerate(days):
+    teaching = [d for d in days if d.get("status") not in NON_TEACHING]
+    for d in days:
         segs = d.get("segments", [])[:segments_per_day]
-        default = choose_phases(segments_per_day, di, len(days))
+        if d.get("status") in NON_TEACHING:
+            while len(segs) < segments_per_day:
+                segs.append({"lesson_component": "", "teacher_actions": ""})
+            for s in segs:
+                s["minutes"] = None
+                s["differentiation"] = {}
+            d["segments"] = segs
+            continue
+        ti = teaching.index(d)
+        default = choose_phases(segments_per_day, ti, len(teaching))
         while len(segs) < segments_per_day:
             segs.append({"lesson_component": default[len(segs)]})
         phases = [s.get("lesson_component") or default[i] for i, s in enumerate(segs)]
@@ -76,6 +96,6 @@ def apply_pacing(plan: dict, period_minutes: int, segments_per_day: int,
     plan["days"] = days
     plan["_pacing_ok"] = all(
         period_minutes == 0 or sum(s.get("minutes") or 0 for s in d["segments"]) == period_minutes
-        for d in days
+        for d in teaching
     )
     return plan

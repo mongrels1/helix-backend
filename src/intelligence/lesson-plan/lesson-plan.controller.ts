@@ -18,7 +18,7 @@ import { Role } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { LessonPlanService } from './lesson-plan.service';
-import { GeneratePlanDto } from './dto/generate-plan.dto';
+import { DaySuggestionsDto, GeneratePlanDto } from './dto/generate-plan.dto';
 import { LessonPlanAllowanceService } from './lesson-plan.allowance';
 import { LessonPlanContextService } from './lesson-plan.context';
 import { SaveContextDto } from './dto/save-context.dto';
@@ -91,10 +91,28 @@ export class LessonPlanController {
     // Self-serve teachers have a weekly allowance; everyone else passes through.
     await this.allowance.assertCanGenerate(user.userId);
     const data = await this.service.generate(id, user.userId, dto);
-    // Charged only once a plan exists. A failure to count must never cost the
-    // teacher the plan they just waited for.
-    await this.allowance.record(user.userId).catch(() => undefined);
+    // Charged only once a plan exists, and only if the AI did any work (a week
+    // marked entirely "no school" costs nothing). A failure to count must never
+    // cost the teacher the plan they just waited for.
+    if (data.aiCalls > 0) await this.allowance.record(user.userId).catch(() => undefined);
     return { success: true, data };
+  }
+
+  /**
+   * Days the uploaded resources mark as an ILD or a closure, for the teacher to
+   * confirm. Free: a text search, no AI call, and not counted against the
+   * allowance.
+   */
+  @Post('jobs/:id/day-suggestions')
+  daySuggestions(
+    @Param('id') id: string,
+    @Body() dto: DaySuggestionsDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return {
+      success: true,
+      data: { suggestions: this.service.suggestDays(id, user.userId, dto.days, dto.weekStart) },
+    };
   }
 
   @Get('jobs/:id/plan.docx')

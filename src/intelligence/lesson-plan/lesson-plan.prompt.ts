@@ -31,9 +31,24 @@ export interface PlanConfig {
   instructions?: string;
 }
 
+/**
+ * Where this one day sits in the week (Track LP1). Every day is drafted in its
+ * own parallel call, so without this a day cannot know its date, that
+ * yesterday was an Independent Learning Day, or that tomorrow is a test.
+ */
+export interface DayContext {
+  /** e.g. "Tuesday, 3 Nov 2026". */
+  dateLabel?: string;
+  /** One line per day of the week: date, status, teacher's reason. */
+  weekOverview?: string;
+  /** Extra instruction for a test, centers or half day. */
+  statusNote?: string;
+}
+
 export function buildLessonPlanPrompt(
   config: PlanConfig,
   resourcesText: string,
+  day?: DayContext,
 ): string {
   const groups = config.differentiation_groups ?? [...DIFF_GROUPS];
   const diffSchema = groups
@@ -73,6 +88,14 @@ export function buildLessonPlanPrompt(
     `- Week of: ${config.week ?? ''}`,
     `- Period length: ${config.period_minutes} minutes (IMPORTANT for pacing)`,
     `- Days to plan (produce exactly these, in order): ${JSON.stringify(config.days)}`,
+    ...(day?.dateLabel ? [`- Date of this day: ${day.dateLabel}`] : []),
+    ...(day?.weekOverview
+      ? [
+          `- The whole week (for context only; plan just the day above): ${day.weekOverview}`,
+          '- Never describe a no-school or independent-learning day as a class session, and refer to other days by their status above.',
+        ]
+      : []),
+    ...(day?.statusNote ? [`- ${day.statusNote}`] : []),
     `- Segments per day (produce EXACTLY this many per day): ${config.segments_per_day}`,
     `- Co-teaching/para: ${config.co_teaching ?? 'None'} (if not None, split teacher_actions by role: 'Teacher 1: ... Teacher 2: ...')`,
     `- Differentiation groups the teacher has (fill ONLY these, where warranted): ${JSON.stringify(groups)}`,
@@ -93,6 +116,53 @@ export function buildLessonPlanPrompt(
     `- Differentiation: include a key ONLY for a group in ${JSON.stringify(groups)}, and only when warranted; otherwise omit it.`,
     '- Do not include minute counts; pacing is computed separately.',
     '- Ground every standard/target in the resources.',
+    '',
+    'Return ONLY JSON of this shape (values are instructions, replace them):',
+    schema,
+  ].join('\n');
+}
+
+/**
+ * An Independent Learning Day: students work on their own and there is no
+ * class session, so there are no teacher moves or segments to write. The
+ * reply is a fraction of a teaching day's length, so the day costs less.
+ */
+export function buildIldPrompt(
+  config: PlanConfig,
+  resourcesText: string,
+  day: DayContext & { name: string; reason?: string },
+): string {
+  const schema = `{
+ "standard": "the specific standard code + short description",
+ "wida": "WIDA ELD standard + brief language objective for independent work",
+ "learning_target": "what students learn today, written to follow the template's own words 'Today, we are learning to:' (do not repeat that phrase)",
+ "success_criteria": "'I can...' observable evidence",
+ "instructional_resources": "the exact assignment/worksheet/platform named in the resources",
+ "student_directions": "3-6 short numbered steps a student follows at home or alone, in plain language",
+ "assignment": "the tasks or problems, numbered, at the right difficulty (5-8 items)",
+ "answer_key": "the answer to every numbered item, worked where a step matters"
+}`;
+  return [
+    'Write ONE Independent Learning Day for a weekly math lesson plan.',
+    'There is NO class session this day: no teacher actions, no segments, no co-teaching.',
+    'Students complete the assignment independently (at home or on a platform).',
+    '',
+    'CONTEXT:',
+    `- Grade/Course: ${config.grade ?? ''}`,
+    `- Unit: ${config.unit ?? ''}`,
+    `- Day: ${day.name}${day.dateLabel ? ` (${day.dateLabel})` : ''}`,
+    ...(day.reason ? [`- Teacher's note: ${day.reason}`] : []),
+    ...(day.weekOverview ? [`- The whole week (context only): ${day.weekOverview}`] : []),
+    ...(config.instructions && config.instructions.trim()
+      ? ["- Teacher's instructions (honor where they apply to this day):", config.instructions.trim()]
+      : []),
+    '',
+    'RESOURCES (plan strictly from these; if they name an assignment for this day, use it):',
+    resourcesText.slice(0, 12000),
+    '',
+    'RULES:',
+    '- Solve every assignment item yourself before writing its answer; the answer key must match.',
+    '- Ground the standard in the resources. Do not invent standards.',
     '',
     'Return ONLY JSON of this shape (values are instructions, replace them):',
     schema,

@@ -14,11 +14,25 @@ import {
   UploadedFile,
 } from './lesson-plan.sidecar';
 import {
+  buildIldPrompt,
   buildLessonPlanPrompt,
   extractJson,
   LESSON_PLAN_SYSTEM,
   PlanConfig,
 } from './lesson-plan.prompt';
+import {
+  DaySuggestion,
+  failedDay,
+  formatWeekRange,
+  ildDay,
+  IldDraft,
+  noSchoolDay,
+  ResolvedDay,
+  resolveDays,
+  statusNote,
+  suggestDayStatuses,
+  weekOverview,
+} from './lesson-plan.days';
 import { GeneratePlanDto } from './dto/generate-plan.dto';
 import { patchDocxHeader } from './lesson-plan.docx-header';
 
@@ -44,7 +58,9 @@ interface LessonPlanJob {
 interface DayDraft {
   days: unknown[];
   smallGroup?: unknown;
-  provider: string;
+  /** null when no AI call was made (a no-school day) or the call failed. */
+  provider: string | null;
+  tokens: number;
 }
 
 @Injectable()
@@ -97,6 +113,27 @@ export class LessonPlanService {
     return extracted.map(({ text: _text, ...rest }) => rest);
   }
 
+  /** Resources in the order the prompt uses them: ILP and pacing first. */
+  private resourcesText(job: LessonPlanJob): string {
+    const order: Record<string, number> = {
+      ilp: 0, pacing: 1, standards: 2, perf_task: 3, roster: 4, slides: 5, other: 6,
+    };
+    return [...job.resources]
+      .sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9))
+      .map((r) => `=== ${r.filename} [${r.type}] ===\n${r.text}`)
+      .join('\n\n');
+  }
+
+  /**
+   * Days the teacher's own uploads mark as an ILD or a closure, for the
+   * teacher to confirm before generating. A regex over text already
+   * extracted: no AI call, no cost.
+   */
+  suggestDays(jobId: string, teacherId: string, days: string[], weekStart: string): DaySuggestion[] {
+    const job = this.get(jobId, teacherId);
+    return suggestDayStatuses(days, weekStart, job.resources.map((r) => r.text).join('\n'));
+  }
+
   async generate(jobId: string, teacherId: string, dto: GeneratePlanDto) {
     const job = this.get(jobId, teacherId);
     if (!job.template) throw new BadRequestException('upload a template first');
@@ -104,14 +141,7 @@ export class LessonPlanService {
       throw new BadRequestException('periodMinutes is required (How long is the period?)');
     }
 
-    // assemble resource context, ILP/pacing first
-    const order: Record<string, number> = {
-      ilp: 0, pacing: 1, standards: 2, perf_task: 3, roster: 4, slides: 5, other: 6,
-    };
-    const resourcesText = [...job.resources]
-      .sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9))
-      .map((r) => `=== ${r.filename} [${r.type}] ===\n${r.text}`)
-      .join('\n\n');
+    const resourcesText = this.resourcesText(job);
 
     const cfg: PlanConfig = {
       period_minutes: dto.periodMinutes,
@@ -127,6 +157,13 @@ export class LessonPlanService {
       instructions: dto.instructions,
     };
 
+    // Each template day with its status and date (Track LP1). Old clients send
+    // only `days`, which resolves to every day being a teaching day.
+    const resolved = resolveDays(dto.days ?? [], dto.dayPlan, dto.weekStart);
+    const overview = resolved.some((r) => r.status !== 'teach' || r.date)
+      ? weekOverview(resolved)
+      : undefined;
+
     // 1) draft the content, one day per call.
     //
     // A whole week in a single reply is days x segments x nine prose fields,
@@ -136,52 +173,90 @@ export class LessonPlanService {
     // before it arrived. Both are the same problem — one request carrying too
     // much — and asking for one day at a time removes it rather than moving it.
     //
-    // Each day is its own small, fast call, and they run together, so a five-day
-    // week with four differentiation groups costs no more wall-clock than a
-    // two-day one. The prompt is unchanged: it already takes the day list, so
-    // passing a list of one asks for exactly one day.
+    // Each day is its own small, fast call, and they run together. Since LP1:
+    // - a no-school day makes no call at all;
+    // - an independent-learning day makes one short call (directions,
+    //   assignment, answer key) instead of a full lesson;
+    // - every day keeps its position, because the sidecar fill is positional:
+    //   a day that fails is replaced by a visible placeholder, never dropped
+    //   (dropping one used to slide every later day into the wrong column).
     const qualityModel = this.config.get<string>('lessonPlan.claudeModel') || undefined;
+    const segs = dto.segmentsPerDay;
 
-    const drafted: DayDraft[] = (
-      await Promise.all(
-        (dto.days ?? []).map(async (day): Promise<DayDraft | null> => {
-          const ai = await this.ai.chat({
-            prompt: buildLessonPlanPrompt({ ...cfg, days: [day] }, resourcesText),
-            systemPrompt: LESSON_PLAN_SYSTEM,
-            preferredProvider: 'claude',
-            claudeModel: qualityModel,
-            // One day of segments is ~1500-2500 tokens. 6000 is headroom, and
-            // well inside the SDK non-streaming ceiling whatever the model.
-            maxTokens: 6000,
-            temperature: 0.4,
-            timeoutMs: 120000,
+    const draftOne = async (r: ResolvedDay): Promise<DayDraft> => {
+      if (r.status === 'no_school') {
+        return { days: [noSchoolDay(r, segs)], provider: null, tokens: 0 };
+      }
+      const isIld = r.status === 'ild';
+      const prompt = isIld
+        ? buildIldPrompt({ ...cfg, days: [r.name] }, resourcesText, {
+            name: r.name,
+            reason: r.reason,
+            dateLabel: r.dateLabel,
+            weekOverview: overview,
+          })
+        : buildLessonPlanPrompt({ ...cfg, days: [r.name] }, resourcesText, {
+            dateLabel: r.dateLabel,
+            weekOverview: overview,
+            statusNote: statusNote(r),
           });
+      const ai = await this.ai.chat({
+        prompt,
+        systemPrompt: LESSON_PLAN_SYSTEM,
+        preferredProvider: 'claude',
+        claudeModel: qualityModel,
+        // One day of segments is ~1500-2500 tokens. 6000 is headroom, and
+        // well inside the SDK non-streaming ceiling whatever the model. An
+        // ILD reply is a fraction of that.
+        maxTokens: isIld ? 2500 : 6000,
+        temperature: 0.4,
+        timeoutMs: 120000,
+      });
+      const tokens = ai.tokensUsed ?? 0;
+      const parsed = extractJson(ai.text) as (IldDraft & { days?: unknown; small_group?: unknown }) | null;
 
-          const parsed = extractJson(ai.text) as { days?: unknown; small_group?: unknown } | null;
-          const days = parsed?.days;
-          if (!Array.isArray(days) || days.length === 0) {
-            const text = ai.text ?? '';
-            this.logger.error(
-              `lesson plan day "${day}" unusable — provider=${ai.provider} ` +
-                `stopReason=${ai.stopReason ?? 'n/a'} chars=${text.length} ` +
-                `tokens=${ai.tokensUsed} segmentsPerDay=${dto.segmentsPerDay} ` +
-                `groups=${(dto.differentiationGroups ?? []).length}`,
-            );
-            this.logger.error(`lesson plan day "${day}" tail: ${JSON.stringify(text.slice(-400))}`);
-            return null;
-          }
+      if (isIld) {
+        if (!parsed || (!parsed.student_directions && !parsed.assignment)) {
+          this.logger.error(`lesson plan ILD day "${r.name}" unusable — provider=${ai.provider} chars=${(ai.text ?? '').length}`);
+          return { days: [failedDay(r, segs)], provider: null, tokens };
+        }
+        return { days: [ildDay(r, parsed, segs)], provider: ai.provider, tokens };
+      }
 
-          return { days, smallGroup: parsed?.small_group, provider: ai.provider };
+      const days = parsed?.days;
+      if (!Array.isArray(days) || days.length === 0) {
+        const text = ai.text ?? '';
+        this.logger.error(
+          `lesson plan day "${r.name}" unusable — provider=${ai.provider} ` +
+            `stopReason=${ai.stopReason ?? 'n/a'} chars=${text.length} ` +
+            `tokens=${ai.tokensUsed} segmentsPerDay=${dto.segmentsPerDay} ` +
+            `groups=${(dto.differentiationGroups ?? []).length}`,
+        );
+        this.logger.error(`lesson plan day "${r.name}" tail: ${JSON.stringify(text.slice(-400))}`);
+        return { days: [failedDay(r, segs)], provider: null, tokens };
+      }
+      // One day asked for, one day kept, stamped with its status for the sidecar.
+      const day = { ...(days[0] as Record<string, unknown>), name: r.name, status: r.status };
+      return { days: [day], smallGroup: parsed?.small_group, provider: ai.provider, tokens };
+    };
+
+    const drafted: DayDraft[] = await Promise.all(
+      resolved.map((r) =>
+        draftOne(r).catch((err: unknown) => {
+          this.logger.error(`lesson plan day "${r.name}" threw: ${(err as Error)?.message ?? err}`);
+          return { days: [failedDay(r, segs)], provider: null, tokens: 0 } as DayDraft;
         }),
-      )
-    ).filter((d): d is DayDraft => d !== null);
+      ),
+    );
 
-    if (drafted.length === 0) {
+    const aiCalls = resolved.filter((r) => r.status !== 'no_school').length;
+    const produced = drafted.filter((d) => d.provider !== null).length;
+    if (aiCalls > 0 && produced === 0) {
       throw new BadRequestException('generation did not return a usable plan; try again');
     }
-    if (drafted.length < (dto.days ?? []).length) {
+    if (produced < aiCalls) {
       // Better a plan the teacher can see is short than no plan at all — but say so.
-      this.logger.warn(`lesson plan drafted ${drafted.length} of ${(dto.days ?? []).length} days`);
+      this.logger.warn(`lesson plan drafted ${produced} of ${aiCalls} days`);
     }
 
     // Days keep the order they were asked for. small_group is a week-level
@@ -206,11 +281,15 @@ export class LessonPlanService {
       teacher: dto.teacher,
       grade: dto.grade,
       unit: dto.unit,
-      dates: dto.week,
+      // The teacher's own wording wins; otherwise the dates from the week start.
+      dates: dto.week?.trim() || formatWeekRange(resolved),
     });
 
     return {
-      engine: drafted[0].provider,
+      engine: drafted.find((d) => d.provider)?.provider ?? 'none',
+      aiCalls,
+      tokensUsed: drafted.reduce((n, d) => n + d.tokens, 0),
+      days: resolved.map(({ name, status, date }) => ({ name, status, date })),
       structureLocked: fill.structureLocked,
       pacingOk: fill.pacingOk,
       periodMinutes: dto.periodMinutes,

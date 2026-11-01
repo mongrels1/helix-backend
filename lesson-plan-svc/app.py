@@ -110,6 +110,7 @@ def _plan_summary(plan: dict) -> dict:
     """Compact preview (no full text) the backend can return to the UI."""
     return {"pacing_ok": plan.get("_pacing_ok"), "days": [
         {"name": d.get("name"),
+         "status": d.get("status", "teach"),
          "standard": d.get("standard"),
          "learning_target": d.get("learning_target"),
          "segments": [{"lesson_component": s.get("lesson_component"),
