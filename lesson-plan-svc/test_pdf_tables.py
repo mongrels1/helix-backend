@@ -49,3 +49,21 @@ def test_a_column_of_numbers_is_not_a_fraction(tmp_path):
     text = extractors.extract_text(_pdf_with(tmp_path, draw), "w.pdf")
     assert "3/6" not in text and "6/10" not in text
     assert "3" in text and "10" in text
+
+
+def test_a_big_picture_is_marked(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("reportlab")
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    PIL = pytest.importorskip("PIL.Image")
+    img = PIL.new("RGB", (300, 200), "white")
+    ip = tmp_path / "g.png"
+    img.save(ip)
+    path = tmp_path / "p.pdf"
+    c = canvas.Canvas(str(path), pagesize=(612, 792))
+    c.drawString(72, 740, "Lin's times are recorded every minute:")
+    c.drawImage(ImageReader(str(ip)), 72, 400, width=300, height=200)
+    c.save()
+    text = extractors.extract_text(str(path), "p.pdf")
+    assert "[picture on page 1:" in text

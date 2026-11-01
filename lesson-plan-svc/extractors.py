@@ -152,6 +152,20 @@ def _text_with_fractions(page):
     return "\n".join(" ".join(w["text"] for w in sorted(l, key=lambda w: w["x0"])) for l in lines)
 
 
+def _has_picture(page):
+    """
+    A picture big enough to carry content (graph, table screenshot, scanned
+    handwriting), not a logo. Its numbers never reach the text, so the plan
+    is told so instead of guessing them (Nov 16-20: Lin's times, the y = 2x
+    table and the garden scale were all images, and all were invented).
+    """
+    for im in getattr(page, "images", []) or []:
+        w, h = im["x1"] - im["x0"], im["bottom"] - im["top"]
+        if w * h > 15000 and im["top"] > 90:
+            return True
+    return False
+
+
 def _boilerplate(pages_text):
     """Lines that repeat on 3+ pages (headers, footers, licence lines)."""
     seen = Counter()
@@ -189,6 +203,10 @@ def _pdf(path):
                     if any(cells):
                         rows.append(_row(cells))
             text = _text_with_fractions(body)
+            if _has_picture(page):
+                n = len(pages) + 1
+                text += (f"\n[picture on page {n}: a graph, table, image or handwriting whose numbers are "
+                         f"NOT in this text. Do not guess them; tell the teacher to read them from page {n}.]")
             if rows:
                 text = f"{text}\n[table]\n" + "\n".join(rows) + "\n[/table]"
             pages.append(text)

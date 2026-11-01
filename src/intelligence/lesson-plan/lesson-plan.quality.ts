@@ -185,6 +185,9 @@ export function checkUnitFacts(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(PAIR)) {
     const [whole, a, ua, b, ub] = m;
+    // "1 cm = 2 m" on a plan or map is a scale, not a unit conversion.
+    const near = text.slice(Math.max(0, (m.index ?? 0) - 80), (m.index ?? 0) + whole.length + 20);
+    if (/scale|plan\b|drawing|map\b|model|blueprint|represents/i.test(near)) continue;
     const va = parseValue(a);
     const vb = parseValue(b);
     if (va === null || vb === null || va === 0 || vb === 0) continue;
@@ -337,7 +340,11 @@ export function normaliseClassDay(day: Record<string, unknown>, sourceNumbers?: 
   // up (Nov 9-13: 1,040 / 1,430 / 27 gallons "from the Food Guide", which is a
   // website). Checked on the problem only; answers compute new numbers.
   const invented = (problem: string) => (sourceNumbers ? unsupportedNumbers(problem, sourceNumbers).length > 0 : false);
-  const good = (src: string, text: string, problem = '') => !isAdapted(src) && problems(text).length === 0 && !invented(problem);
+  // LP14: an answer that thinks aloud ("Wait—Lane 3 is actually faster") is
+  // a draft, not an answer; it is left out.
+  const unsure = (text: string) => /\bwait\b\s*[—–\-,.!]|let me (re-?)?(calculate|check|recalculate)|\brecalculate\b/i.test(text);
+  const good = (src: string, text: string, problem = '') =>
+    !isAdapted(src) && problems(text).length === 0 && !invented(problem) && !unsure(text);
   const practice = drafted.filter((p) => good(p.source, `${p.problem}\n${p.answer}`, p.problem));
   const removed = drafted.length - practice.length;
 

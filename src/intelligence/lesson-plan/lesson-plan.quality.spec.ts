@@ -214,3 +214,21 @@ describe('LP12b: figures in the lesson itself that are not in the uploads (FILLE
     expect(inventedFigures(lesson, src)).toEqual(['1,430']);
   });
 });
+
+describe('LP14: Nov 16-20 (FILLED_11)', () => {
+  it('a scale on a plan is not a wrong unit fact', () => {
+    expect(checkUnitFacts('On the plan with scale 1 cm : 2 m, so 1 cm = 2 m and 2 cm = 4 m.')).toEqual([]);
+    expect(checkUnitFacts('Since 2 ounces = 1 pound, divide by 2.')).toHaveLength(1);
+  });
+  it('an answer that thinks aloud is left out', () => {
+    const out = normaliseClassDay({
+      name: 'Monday',
+      segments: [],
+      practice: [
+        { source: '3a Turtle Time Trials q5', problem: 'Which is faster: Lane 1 or Lane 3?', answer: 'Lane 1 is faster. Wait—Lane 3 is actually faster because 1.5 > 1.' },
+        { source: '3a Comparing Water Rates', problem: 'Government rate $1.25 per cubic meter: how much water for $200?', answer: '200 ÷ 1.25 = 160 cubic meters' },
+      ],
+    }) as { teacher_notes: { practice: { source: string }[] } };
+    expect(out.teacher_notes.practice.map((p) => p.source)).toEqual(['3a Comparing Water Rates']);
+  });
+});
