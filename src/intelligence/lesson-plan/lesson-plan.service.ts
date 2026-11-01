@@ -22,7 +22,7 @@ import {
   PlanConfig,
   RESOURCE_CHAR_LIMIT,
 } from './lesson-plan.prompt';
-import { ildNotes, normaliseClassDay, weekRoles } from './lesson-plan.quality';
+import { checkUnitFacts, ildNotes, normaliseClassDay, weekRoles } from './lesson-plan.quality';
 import {
   DaySuggestion,
   failedDay,
@@ -272,6 +272,33 @@ export class LessonPlanService {
         );
         retried = first.tokensUsed ?? 0;
       }
+      // LP11: a wrong unit fact ("2 ounces = 1 pound") spreads through the
+      // whole day, so the day is asked for once more with the correction. This
+      // costs a second call only on a day that has one.
+      const unitErrors = (text: string) => {
+        const pj = extractJson(text);
+        return pj ? [...new Set(checkUnitFacts(JSON.stringify(pj)).map((e) => e.replace(/ \(wrong unit fact\)$/, '')))] : [];
+      };
+      let factErrors = usable(ai.text) ? unitErrors(ai.text) : [];
+      if (factErrors.length) {
+        this.logger.warn(`lesson plan day "${r.name}" has wrong unit facts (${factErrors.join('; ')}); redrafting once`);
+        const again = await ask(
+          `${prompt}\n\nIMPORTANT: your previous draft said ${factErrors.map((e) => `"${e}"`).join(', ')}. That is wrong. ` +
+            'Standard unit facts are fixed: 16 ounces = 1 pound, 12 inches = 1 foot, 3 feet = 1 yard, 2 cups = 1 pint, 4 quarts = 1 gallon, 60 minutes = 1 hour. ' +
+            'Re-read the resource table carefully and use the correct relationship everywhere in the day.',
+        );
+        const left = usable(again.text) ? unitErrors(again.text) : null;
+        if (left !== null && left.length < factErrors.length) {
+          retried += ai.tokensUsed ?? 0;
+          ai = again;
+          factErrors = left;
+        } else {
+          retried += again.tokensUsed ?? 0;
+        }
+      }
+      const factNote = factErrors.length
+        ? [`This day's lesson text says ${factErrors.map((e) => `"${e}"`).join(', ')}, which is not the standard conversion. Fix it before printing.`]
+        : [];
       const tokens = (ai.tokensUsed ?? 0) + retried;
       const cache = { cacheRead: ai.cacheReadTokens ?? 0, cacheWrite: ai.cacheWriteTokens ?? 0 };
       const parsed = extractJson(ai.text) as (IldDraft & { days?: unknown; small_group?: unknown }) | null;
@@ -282,8 +309,10 @@ export class LessonPlanService {
           return { days: [failedDay(r, segs)], provider: null, tokens, ...cache };
         }
         const day = ildDay(r, parsed, segs);
+        const notes = ildNotes(day.segments[0].assessment_strategies);
+        notes.checks = [...factNote, ...notes.checks];
         return {
-          days: [{ ...day, teacher_notes: ildNotes(day.segments[0].assessment_strategies) }],
+          days: [{ ...day, teacher_notes: notes }],
           provider: ai.provider,
           tokens,
           ...cache,
@@ -305,6 +334,8 @@ export class LessonPlanService {
       // One day asked for, one day kept, stamped with its status for the
       // sidecar, with the notes-page fields gathered and the answers checked.
       const day = normaliseClassDay({ ...(days[0] as Record<string, unknown>), name: r.name, status: r.status });
+      const tn = day.teacher_notes as { checks: string[] };
+      tn.checks = [...factNote, ...tn.checks];
       return { days: [day], smallGroup: parsed?.small_group, provider: ai.provider, tokens, ...cache };
     };
 

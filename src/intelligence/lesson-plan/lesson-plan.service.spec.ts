@@ -226,7 +226,7 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     expect(out.resourcesTrimmed).toEqual(['big-pacing.pdf']);
     const plan = sidecar.fill.mock.calls[0][0].plan;
     expect(plan.days[0].teacher_notes.where_this_fits).toBe('fits');
-    expect(plan.days[0].teacher_notes.checks).toEqual(['5 ÷ 8 = 0.6 (we get 0.625)']);
+    expect(plan.days[0].teacher_notes.checks).toEqual(['1 practice problem removed: wrong answer, wrong unit fact or not from your resources.']);
   });
 
   it('a day whose reply is unreadable is asked once more, and only that day', async () => {
@@ -256,5 +256,29 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     const id = await jobWithTemplate(svc);
     await svc.generate(id, 't1', { ...base } as never);
     expect(chat).toHaveBeenCalledTimes(5);
+  });
+
+  it('LP11: a day that says "2 ounces = 1 pound" is redrafted once with the correction', async () => {
+    const seen: Record<string, number> = {};
+    const wrong = (name: string) =>
+      JSON.stringify({ days: [{ name, learning_target: `wrong ${name}`, segments: [{ teacher_actions: 'Since 2 ounces = 1 pound, divide by 2.' }] }] });
+    const chat = jest.fn(async ({ prompt }: { prompt: string }) => {
+      const name = WEEK.find((d) => prompt.includes(`["${d}"]`))!;
+      seen[name] = (seen[name] ?? 0) + 1;
+      if (name === 'Monday' && seen[name] === 1) return { text: wrong(name), provider: 'claude', tokensUsed: 30 };
+      if (name === 'Tuesday') return { text: wrong(name), provider: 'claude', tokensUsed: 30 };
+      return { text: teachReply(name), provider: 'claude', tokensUsed: 10 };
+    });
+    const { svc, sidecar } = makeService(chat);
+    const id = await jobWithTemplate(svc);
+    const out = await svc.generate(id, 't1', { ...base } as never);
+    expect(seen).toEqual({ Monday: 2, Tuesday: 2, Wednesday: 1, Thursday: 1, Friday: 1 });
+    const redraft = chat.mock.calls.map((c) => c[0].prompt as string).find((p) => p.includes('previous draft said'));
+    expect(redraft).toContain('"2 ounces = 1 pound"');
+    const plan = sidecar.fill.mock.calls[0][0].plan;
+    expect(plan.days[0].learning_target).toBe('target for Monday');
+    expect(plan.days[0].teacher_notes.checks).toEqual([]);
+    expect(plan.days[1].teacher_notes.checks[0]).toContain('"2 ounces = 1 pound"');
+    expect(out.tokensUsed).toBe(30 + 10 + 30 + 30 + 3 * 10);
   });
 });

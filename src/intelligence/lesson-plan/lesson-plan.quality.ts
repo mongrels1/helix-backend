@@ -155,6 +155,57 @@ export function checkArithmetic(text: string): string[] {
 }
 
 /* ------------------------------------------------------------------------- */
+/*  Unit facts (LP11)                                                         */
+/* ------------------------------------------------------------------------- */
+
+/** Smaller units per larger unit. */
+const UNIT_FACTS: [RegExp, RegExp, number][] = [
+  [/^(ounces?|oz)$/i, /^(pounds?|lbs?)$/i, 16],
+  [/^(inch|inches|in)$/i, /^(foot|feet|ft)$/i, 12],
+  [/^(foot|feet|ft)$/i, /^(yards?|yd)$/i, 3],
+  [/^(inch|inches)$/i, /^(yards?)$/i, 36],
+  [/^(minutes?|min)$/i, /^(hours?|hr)$/i, 60],
+  [/^(seconds?|sec)$/i, /^(minutes?|min)$/i, 60],
+  [/^(cups?)$/i, /^(pints?)$/i, 2],
+  [/^(pints?)$/i, /^(quarts?)$/i, 2],
+  [/^(quarts?)$/i, /^(gallons?)$/i, 4],
+  [/^(cups?)$/i, /^(quarts?)$/i, 4],
+  [/^(cups?)$/i, /^(gallons?)$/i, 16],
+  [/^(centimeters?|cm)$/i, /^(meters?|m)$/i, 100],
+  [/^(millimeters?|mm)$/i, /^(centimeters?|cm)$/i, 10],
+  [/^(grams?|g)$/i, /^(kilograms?|kg)$/i, 1000],
+  [/^(days?)$/i, /^(weeks?)$/i, 7],
+];
+
+const NUM = String.raw`(\d+(?:\.\d+)?(?:\s*\/\s*\d+)?)`;
+const UNIT = String.raw`([a-z]+)`;
+const PAIR = new RegExp(String.raw`${NUM}\s*${UNIT}\s*(?:=|equals?|is|are|makes?|→|->|,|to)\s*${NUM}\s*${UNIT}`, 'gi');
+
+/** "2 ounces = 1 pound" and the like, checked against standard conversions. */
+export function checkUnitFacts(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(PAIR)) {
+    const [whole, a, ua, b, ub] = m;
+    const va = parseValue(a);
+    const vb = parseValue(b);
+    if (va === null || vb === null || va === 0 || vb === 0) continue;
+    for (const [small, big, k] of UNIT_FACTS) {
+      let ok: boolean | null = null;
+      if (small.test(ua) && big.test(ub)) ok = Math.abs(va / vb - k) <= k * 0.005;
+      else if (big.test(ua) && small.test(ub)) ok = Math.abs(vb / va - k) <= k * 0.005;
+      if (ok === false) out.push(`${whole.trim()} (wrong unit fact)`);
+      if (ok !== null) break;
+    }
+  }
+  return out;
+}
+
+/** A source the model marked as its own variation, not the teacher's resource. */
+export function isAdapted(source: string): boolean {
+  return /\badapt(ed|ation)?\b|\binspired by\b|\bbased on\b/i.test(source);
+}
+
+/* ------------------------------------------------------------------------- */
 /*  Day normalisation and teacher notes (R3)                                  */
 /* ------------------------------------------------------------------------- */
 
@@ -200,12 +251,19 @@ export function normaliseClassDay(day: Record<string, unknown>): Record<string, 
     return seg;
   });
 
+  // LP11: a misconception sent as a plain string is the misconception only;
+  // "Looks like" / "What to say" are printed only when they add something.
   const watch = list(day.watch_for)
-    .map((w) => ({
-      misconception: field(w, 'misconception', 'error', 'mistake'),
-      looks_like: field(w, 'looks_like', 'how_it_shows', 'example'),
-      teacher_response: field(w, 'teacher_response', 'response', 'what_to_do'),
-    }))
+    .map((w) => {
+      if (!w || typeof w !== 'object') return { misconception: asText(w), looks_like: '', teacher_response: '' };
+      const m = field(w, 'misconception', 'error', 'mistake');
+      const extra = (t: string) => (t && t !== m ? t : '');
+      return {
+        misconception: m,
+        looks_like: extra(field(w, 'looks_like', 'how_it_shows', 'example')),
+        teacher_response: extra(field(w, 'teacher_response', 'response', 'what_to_do')),
+      };
+    })
     .filter((w) => w.misconception);
 
   const we = day.worked_example;
@@ -220,7 +278,7 @@ export function normaliseClassDay(day: Record<string, unknown>): Record<string, 
         ? { problem: asText(we), solution: '' }
         : null;
 
-  const practice = list(day.practice)
+  const drafted = list(day.practice)
     .map((p) => ({
       problem: field(p, 'problem', 'question'),
       answer: field(p, 'answer', 'solution'),
@@ -228,15 +286,28 @@ export function normaliseClassDay(day: Record<string, unknown>): Record<string, 
     }))
     .filter((p) => p.problem);
 
-  const checks = [
-    ...(worked ? checkArithmetic(`${worked.solution}`) : []),
-    ...practice.flatMap((p) => checkArithmetic(p.answer)),
-  ];
+  // LP11: nothing wrong or invented reaches the page. A practice item is kept
+  // only if its answer recomputes, its unit facts are right and it is not an
+  // "adapted" (invented) item. A worked example that fails is replaced by the
+  // first good practice item.
+  const problems = (text: string) => [...checkArithmetic(text), ...checkUnitFacts(text)];
+  const good = (src: string, text: string) => !isAdapted(src) && problems(text).length === 0;
+  const practice = drafted.filter((p) => good(p.source, `${p.problem}\n${p.answer}`));
+  const removed = drafted.length - practice.length;
+
+  let workedOut = worked && (worked.problem || worked.solution) ? worked : null;
+  if (workedOut && !good(workedOut.source ?? '', `${workedOut.problem}\n${workedOut.solution}`)) {
+    const swap = practice.shift();
+    workedOut = swap ? { problem: swap.problem, solution: swap.answer, source: swap.source } : null;
+  }
+
+  const checks: string[] = [];
+  if (removed > 0) checks.push(`${removed} practice problem${removed > 1 ? 's' : ''} removed: wrong answer, wrong unit fact or not from your resources.`);
 
   const notes: TeacherNotes = {
     where_this_fits: asText(day.where_this_fits),
     watch_for: watch,
-    worked_example: worked && (worked.problem || worked.solution) ? worked : null,
+    worked_example: workedOut,
     practice,
     checks,
   };
@@ -256,6 +327,6 @@ export function ildNotes(answerKey: string): TeacherNotes {
     watch_for: [],
     worked_example: null,
     practice: [],
-    checks: checkArithmetic(answerKey),
+    checks: checkArithmetic(answerKey).map((c) => `Answer key: ${c}. Fix before handing out.`),
   };
 }

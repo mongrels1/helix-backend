@@ -27,7 +27,7 @@ def test_notes_page_is_added_after_the_template(tmp_path):
     assert text[0] == "TEMPLATE BODY"
     assert text[1] == "Teacher notes"
     assert "Monday" in text and "Watch for" in text
-    assert "Check: 5 ÷ 8 = 0.6 (we get 0.625)" in text
+    assert "Note: 5 ÷ 8 = 0.6 (we get 0.625)" in text
     assert "Tuesday" not in text  # no notes, no block
 
 

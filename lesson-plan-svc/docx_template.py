@@ -502,8 +502,8 @@ def append_teacher_notes(path: str, plan: dict) -> int:
     brk = doc.add_paragraph()
     brk.add_run().add_break(WD_BREAK.PAGE)
     _notes_para(doc, "Teacher notes", bold=True, size=16)
-    _notes_para(doc, "Read “Watch for” before class. Answers marked “Check” did not "
-                     "recompute; correct them before using them with students.", size=9)
+    _notes_para(doc, "Read “Watch for” before class. Every answer below was rechecked; "
+                     "any problem that failed the check was left out.", size=9)
     for name, n in blocks:
         _notes_para(doc, "")
         _notes_para(doc, name, bold=True, size=13)
@@ -535,6 +535,6 @@ def append_teacher_notes(path: str, plan: dict) -> int:
                 if p.get("answer"):
                     _notes_para(doc, f"Answer: {p['answer']}", indent=24)
         for c in n.get("checks") or []:
-            _notes_para(doc, f"Check: {c}", bold=True)
+            _notes_para(doc, f"Note: {c}", size=9)
     doc.save(path)
     return len(blocks)
