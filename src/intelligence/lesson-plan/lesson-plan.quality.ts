@@ -164,8 +164,7 @@ const UNIT_FACTS: [RegExp, RegExp, number][] = [
   [/^(inch|inches|in)$/i, /^(foot|feet|ft)$/i, 12],
   [/^(foot|feet|ft)$/i, /^(yards?|yd)$/i, 3],
   [/^(inch|inches)$/i, /^(yards?)$/i, 36],
-  [/^(minutes?|min)$/i, /^(hours?|hr)$/i, 60],
-  [/^(seconds?|sec)$/i, /^(minutes?|min)$/i, 60],
+  // Times are left out: "210 seconds = 3 minutes 30 seconds" read as a wrong fact.
   [/^(cups?)$/i, /^(pints?)$/i, 2],
   [/^(pints?)$/i, /^(quarts?)$/i, 2],
   [/^(quarts?)$/i, /^(gallons?)$/i, 4],
@@ -231,7 +230,7 @@ export function inventedFigures(text: string, source: Set<string>): string[] {
   const out = new Set<string>();
   for (const m of text.matchAll(NUMBER)) {
     const n = m[1].replace(/,/g, '');
-    if (Number(n) < 10 || source.has(n) || worked.has(n)) continue;
+    if (Number(n) < 100 || /^(19|20)\d\d$/.test(n) || source.has(n) || worked.has(n)) continue;
     const i = m.index ?? 0;
     const before = text.slice(Math.max(0, i - 14), i);
     const after = text.slice(i + m[1].length, i + m[1].length + 16);

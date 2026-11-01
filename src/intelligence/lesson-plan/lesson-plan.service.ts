@@ -226,6 +226,10 @@ export class LessonPlanService {
     const firstClass = resolved.findIndex((r) => r.status !== 'no_school' && r.status !== 'ild');
     const useCache = callable.length >= 2 && sharedTokens >= cacheMin;
 
+    // The browser gives up on /generate after about 125 s (1 Nov logs), and a
+    // day takes ~35 s at full resources, so a redraft is only started early.
+    const started = Date.now();
+    const REDRAFT_BEFORE_MS = 60_000;
     const draftOne = async (r: ResolvedDay, i: number): Promise<DayDraft> => {
       if (r.status === 'no_school') {
         return { days: [noSchoolDay(r, segs)], provider: null, tokens: 0 };
@@ -290,20 +294,20 @@ export class LessonPlanService {
           figures: inventedFigures(lesson, sourceNums),
         };
       };
-      const count = (x: { units: string[]; figures: string[] }) => x.units.length + x.figures.length;
+      // Only a wrong unit fact triggers the redraft. Figures not in the uploads
+      // are flagged in the notes, never redrafted: on 1 Nov the figure redraft
+      // fired on most days (the year, minutes, products like 48) and doubled
+      // the run past the 125 s request limit.
+      const count = (x: { units: string[]; figures: string[] }) => x.units.length;
       let found = usable(ai.text) ? issues(ai.text) : { units: [], figures: [] };
-      if (count(found)) {
+      if (count(found) && Date.now() - started < REDRAFT_BEFORE_MS) {
         this.logger.warn(
-          `lesson plan day "${r.name}" redrafting once: unit facts [${found.units.join('; ')}] figures not in uploads [${found.figures.join('; ')}]`,
+          `lesson plan day "${r.name}" redrafting once: unit facts [${found.units.join('; ')}]`,
         );
         const fix: string[] = [];
         if (found.units.length)
           fix.push(
             `your previous draft said ${found.units.map((e) => `"${e}"`).join(', ')}. That is wrong. Standard unit facts are fixed: 16 ounces = 1 pound, 12 inches = 1 foot, 3 feet = 1 yard, 2 cups = 1 pint, 4 quarts = 1 gallon, 60 minutes = 1 hour. Re-read the resource table carefully and use the correct relationship everywhere in the day.`,
-          );
-        if (found.figures.length)
-          fix.push(
-            `your previous draft used ${found.figures.map((e) => `"${e}"`).join(', ')}, which do not appear in the uploads. Use only figures from the resources; where a task needs data the uploads do not contain, leave a blank for the teacher (___).`,
           );
         const again = await ask(`${prompt}\n\nIMPORTANT: ${fix.join(' Also, ')}`);
         const left = usable(again.text) ? issues(again.text) : null;

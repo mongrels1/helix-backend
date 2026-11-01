@@ -282,7 +282,7 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     expect(out.tokensUsed).toBe(30 + 10 + 30 + 30 + 3 * 10);
   });
 
-  it('LP12b: a day whose lesson uses a figure not in the uploads is redrafted once, then flagged', async () => {
+  it('LP12b: a day whose lesson uses a figure not in the uploads is flagged, not redrafted (keeps the run short)', async () => {
     const seen: Record<string, number> = {};
     const invented = (name: string) =>
       JSON.stringify({ days: [{ name, learning_target: `bad ${name}`, segments: [{ teacher_actions: 'A protein uses 1,430 gallons per serving.' }] }] });
@@ -295,8 +295,7 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     const { svc, sidecar } = makeService(chat);
     const id = await jobWithTemplate(svc);
     await svc.generate(id, 't1', { ...base } as never);
-    expect(seen.Thursday).toBe(2);
-    expect(chat.mock.calls.map((c) => c[0].prompt as string).find((p) => p.includes('do not appear in the uploads'))).toContain('"1,430"');
+    expect(seen.Thursday).toBe(1);
     const plan = sidecar.fill.mock.calls[0][0].plan;
     expect(plan.days[3].teacher_notes.checks[0]).toContain('"1,430"');
   });

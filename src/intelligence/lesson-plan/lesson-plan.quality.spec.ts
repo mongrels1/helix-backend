@@ -209,7 +209,7 @@ describe('LP12b: figures in the lesson itself that are not in the uploads (FILLE
   it('flags an invented figure and skips working, counts, times and labels', () => {
     const lesson =
       "Guide students: 76 gallons ÷ 4 ounces = 19 gallons per ounce. Model w = 19(10) = 190 gallons. Ask: 'The constant is 19.' " +
-      'Give students 15 minutes in groups of 4. Use question 12 on page 14 at 10:30. ' +
+      'Give students 15 minutes in groups of 4. Use question 12 on page 14 at 10:30, Nov 9, 2026; 3 × 16 gives 48. ' +
       'Pose: a protein with a water footprint of 1,430 gallons per serving. What does the 1,430 represent?';
     expect(inventedFigures(lesson, src)).toEqual(['1,430']);
   });
