@@ -520,6 +520,8 @@ def append_teacher_notes(path: str, plan: dict) -> int:
         we = n.get("worked_example")
         if we:
             _notes_para(doc, "Worked example", bold=True)
+            if we.get("source"):
+                _notes_para(doc, f"From: {we['source']}", size=9, indent=12)
             if we.get("problem"):
                 _notes_para(doc, we["problem"], indent=12)
             if we.get("solution"):
@@ -528,7 +530,8 @@ def append_teacher_notes(path: str, plan: dict) -> int:
         if n.get("practice"):
             _notes_para(doc, "Practice (easy → hard)", bold=True)
             for i, p in enumerate(n["practice"], 1):
-                _notes_para(doc, f"{i}. {p.get('problem', '')}", indent=12)
+                src = f"  (from: {p['source']})" if p.get("source") else ""
+                _notes_para(doc, f"{i}. {p.get('problem', '')}{src}", indent=12)
                 if p.get("answer"):
                     _notes_para(doc, f"Answer: {p['answer']}", indent=24)
         for c in n.get("checks") or []:

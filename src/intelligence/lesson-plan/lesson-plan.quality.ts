@@ -161,8 +161,8 @@ export function checkArithmetic(text: string): string[] {
 export interface TeacherNotes {
   where_this_fits: string;
   watch_for: { misconception: string; looks_like: string; teacher_response: string }[];
-  worked_example: { problem: string; solution: string } | null;
-  practice: { problem: string; answer: string }[];
+  worked_example: { problem: string; solution: string; source?: string } | null;
+  practice: { problem: string; answer: string; source?: string }[];
   /** Answers that did not recompute; shown to the teacher, never hidden. */
   checks: string[];
 }
@@ -211,13 +211,21 @@ export function normaliseClassDay(day: Record<string, unknown>): Record<string, 
   const we = day.worked_example;
   const worked =
     we && typeof we === 'object'
-      ? { problem: field(we, 'problem', 'question'), solution: field(we, 'solution', 'answer', 'steps') }
+      ? {
+          problem: field(we, 'problem', 'question'),
+          solution: field(we, 'solution', 'answer', 'steps'),
+          source: field(we, 'source', 'from'),
+        }
       : asText(we)
         ? { problem: asText(we), solution: '' }
         : null;
 
   const practice = list(day.practice)
-    .map((p) => ({ problem: field(p, 'problem', 'question'), answer: field(p, 'answer', 'solution') }))
+    .map((p) => ({
+      problem: field(p, 'problem', 'question'),
+      answer: field(p, 'answer', 'solution'),
+      source: field(p, 'source', 'from'),
+    }))
     .filter((p) => p.problem);
 
   const checks = [

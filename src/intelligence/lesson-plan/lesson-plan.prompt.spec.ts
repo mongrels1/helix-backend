@@ -28,3 +28,16 @@ describe('Small Group is written once per week', () => {
     expect(other).toContain('Do not write a small_group section');
   });
 });
+
+describe('resources only, misconceptions stated (John, 1 Nov 2026)', () => {
+  const cfg = { period_minutes: 55, days: ['Monday'], segments_per_day: 3, differentiation_groups: ['ESOL'] };
+  const p = buildLessonDayPrompt(cfg, {});
+  it('no outside or hypothetical contexts are suggested', () => {
+    expect(p).not.toMatch(/hypothetical|store price|machine rate|recipe uses/i);
+    expect(p).toContain("USE THE TEACHER'S RESOURCES");
+  });
+  it('misconceptions are one sentence each, with no invented wrong work', () => {
+    expect(p).toContain('stated in ONE plain sentence');
+    expect(p).not.toContain('looks_like');
+  });
+});

@@ -123,3 +123,18 @@ describe('answer check: equations with an unknown are not claimed results (Nov 9
     expect(checkArithmetic('12 × 20 = 8 × x, so 240 ÷ 8 = 32 cups')).toEqual(['240 ÷ 8 = 32 (we get 30)']);
   });
 });
+
+describe('stated misconceptions and sourced problems', () => {
+  it('accepts one-sentence misconceptions and keeps each problem’s source', () => {
+    const out = normaliseClassDay({
+      name: 'Mon',
+      watch_for: ['Divides ounces by gallons when the question asks gallons per ounce.', 'Adds instead of multiplying to extend a table.'],
+      worked_example: { source: '2a Diagnostic Assessment', problem: '76 gal for 4 oz', solution: '76 ÷ 4 = 19' },
+      practice: [{ source: '2a Student Reproducibles', problem: '2 oz?', answer: '2 × 19 = 38' }],
+      segments: [],
+    }) as { teacher_notes: { watch_for: { misconception: string }[]; worked_example: { source: string }; practice: { source: string }[] } };
+    expect(out.teacher_notes.watch_for.map((w) => w.misconception)).toHaveLength(2);
+    expect(out.teacher_notes.worked_example.source).toBe('2a Diagnostic Assessment');
+    expect(out.teacher_notes.practice[0].source).toBe('2a Student Reproducibles');
+  });
+});

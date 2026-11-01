@@ -221,7 +221,7 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     const { svc, sidecar } = makeService(chat);
     const id = await jobWithTemplate(svc);
     const job = (svc as unknown as { jobs: Map<string, { resources: unknown[] }> }).jobs.get(id)!;
-    job.resources.push({ filename: 'big-pacing.pdf', type: 'pacing', text: 'x'.repeat(13000) });
+    job.resources.push({ filename: 'big-pacing.pdf', type: 'pacing', text: 'x'.repeat(41000) });
     const out = await svc.generate(id, 't1', { ...base } as never);
     expect(out.resourcesTrimmed).toEqual(['big-pacing.pdf']);
     const plan = sidecar.fill.mock.calls[0][0].plan;

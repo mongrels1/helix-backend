@@ -7,7 +7,14 @@
 export const DIFF_GROUPS = ['ESOL', 'Gifted', 'SWD'] as const;
 
 /** Resources beyond this many characters are cut (R7 reports which files). */
-export const RESOURCE_CHAR_LIMIT = 12000;
+/**
+ * How much of the teacher's uploads each day sees. Raised from 12,000 on
+ * 1 Nov 2026 (John): the plans must be built from the teacher's (abundant)
+ * resources, and 12,000 characters cut every 2a/2b PDF short. About 11k
+ * tokens; at this size the shared block clears the cache minimum, so the
+ * other days read it at a tenth of the price.
+ */
+export const RESOURCE_CHAR_LIMIT = 40000;
 
 /**
  * Track LP2 (R6): no district is named here. The phases are the Lesson
@@ -121,9 +128,9 @@ export function buildLessonDayPrompt(config: PlanConfig, day?: DayContext): stri
    "where_this_fits": "ONE line: how today builds on the day before and sets up the day after",
    "academic_vocabulary": "key terms for the whole day",
    "writing_strategies": "the day's writing-to-learn move",
-   "watch_for": [{"misconception": "a specific error students make on THIS standard", "looks_like": "what it looks like in student work, with an example", "teacher_response": "what the teacher says or does"}],
-   "worked_example": {"problem": "one problem at today's level", "solution": "the full solution, step by step"},
-   "practice": [{"problem": "...", "answer": "..."}],
+   "watch_for": ["one sentence naming a misconception students commonly have with today's skill"],
+   "worked_example": {"source": "the resource it comes from (file name / task)", "problem": "a problem taken from the resources (same context; numbers may change)", "solution": "the full solution, step by step"},
+   "practice": [{"source": "the resource it comes from", "problem": "a problem taken from the resources", "answer": "..."}],
    "segments": [{
      "lesson_component": "one of: Pre-Instructional, Engage, Explore, Apply, Reflect",
      "teacher_actions": "concrete teacher moves for this phase",
@@ -167,17 +174,13 @@ export function buildLessonDayPrompt(config: PlanConfig, day?: DayContext): stri
     '- Ground every standard/target in the resources.',
     ...(day?.includeSmallGroup === false ? ['- Do not write a small_group section (another day writes it).'] : []),
     '- Output strictly valid JSON: escape any double quote inside a string as \\" (or use single quotes), no line breaks inside strings, no trailing commas.',
-    "- watch_for: exactly 2 misconceptions specific to today's standard, each with how it shows up and the teacher's response.",
-    '- worked_example: one fully solved problem. practice: exactly 3 problems ordered easy to hard, each with its answer.',
+    "- USE THE TEACHER'S RESOURCES, not outside content. Every task, context, example and problem comes from the uploaded resources (their tasks, reproducibles, diagnostics, data talks, HMH practice). Do not introduce outside contexts (notebooks, widgets, gyms, cookies…) or real-world figures that are not in the resources.",
+    '- worked_example and practice: take them from the resources and name the source. You may change the numbers to fit today, keeping the resource\'s own context; check every answer. practice: exactly 3 problems, easy to hard, each with its answer.',
+    "- watch_for: exactly 2 misconceptions about TODAY's skill, each stated in ONE plain sentence. Do not write example wrong work.",
+    '- Do not repeat another day\'s opening task: use the part of the resources that fits THIS day\'s job.',
     "- Solve every worked example and practice problem step by step before writing it; each answer must match your working. Write numeric answers as 'expression = value' where it helps (e.g. '3 ÷ 12 = 0.25').",
     `- Differentiation: for each group in ${JSON.stringify(groups)}, give one specific move on the MAIN task segment (Explore or Apply); other segments only where it truly differs. Name the tool, task, prompt or sentence frame. Generic phrases such as ${GENERIC} are not allowed.`,
-    '- Do not reuse a warm-up, opening task or problem numbers that another day of a typical week would use: pick contexts and numbers that fit THIS day\'s job, so comparison problems have different answers and a clear winner.',
     "- Keep the meaning of 'more' consistent with the rest of the unit's context (say which quantity is per which).",
-    "- In watch_for, worked_example and practice, do NOT state water-footprint (or other real-world) figures for specific foods unless that exact figure is quoted in the resources; otherwise use clearly hypothetical contexts such as a recipe, a store price or a machine rate.",
-    "- Real-world figures (e.g. a food's water footprint) must come from the resources. If you need others, make the context clearly hypothetical ('a recipe uses…') instead of stating invented facts about real foods.",
-    "- watch_for: choose misconceptions about TODAY's new skill (e.g. classifying, writing y = kx, solving for the other quantity), not the general 'inverted ratio' unless today introduces unit rates. Write each field in at most 2 plain sentences, with one example, and never correct yourself mid-answer: decide the example first, then write it.",
-    "- Each watch_for item must show work that is genuinely WRONG, with the correct value beside it; re-check that the 'looks_like' example is really an error (an equivalent proportion such as 76/4 = 304/x is correct, not a misconception).",
-    '- The worked example and the 3 practice problems must each have a DIFFERENT unit rate.',
     '',
     'Return ONLY JSON of this shape (values are instructions, replace them):',
     schema,
@@ -220,7 +223,7 @@ export function buildIldDayPrompt(
     ...(day.weekOverview ? [`- The whole week (context only): ${day.weekOverview}`] : []),
     '',
     'RULES:',
-    '- If the resources name an assignment for this day, use it.',
+    "- Take the assignment from the resources: the day's named assignment (e.g. an ILD worksheet) or the unit's reproducibles. No outside contexts or figures that are not in the resources.",
     '- Every value is a single string, never a list. Number items inside the string.',
     '- The assignment is required: write the actual problems with their numbers, not a description of them.',
     '- Vary the numbers so the problems have DIFFERENT answers; comparison problems must have a clear winner.',
