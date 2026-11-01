@@ -112,6 +112,145 @@ def _fill_after_label(cell, label_key: str, value: str, max_lines=1) -> bool:
     return False
 
 # --------------------------------------------------------------------------- #
+#  Re-using last week's filled plan as the template (Track LP7)
+# --------------------------------------------------------------------------- #
+# Teachers upload last week's FILLED plan as "the template". The fill writes
+# into the empty paragraph after each label; on a filled plan there is none,
+# so new text landed beside last week's and the two weeks mixed (seen on the
+# Redan Nov 9-13 plan, 1 Nov 2026). Before filling, last week's values are
+# cleared: the paragraphs stay (structure is unchanged), only their text goes.
+
+# Grid labels end with a colon in the template ("Standard/Expectations:"); a
+# value that merely starts with the same words ("Today, we are learning to
+# compare...") has none, so the colon is required for them.
+_COLON_LABELS = {"standard", "wida", "learning_target", "success_criteria", "instructional_resources"}
+_LABEL_RES = [
+    (re.compile(r"^\s*" + r"\s+".join(re.escape(w) for w in lbl.split(" "))
+                + (r"\s*:" if key in _COLON_LABELS else r"\s*:?"), re.I), key)
+    for lbl, key in LABELS.items()
+]
+
+def _label_with_value(p: Paragraph):
+    """(key, label_text) when the paragraph STARTS with a label and has more
+    text after it — the old fill appended values onto the label line."""
+    t = p.text
+    for rx, key in _LABEL_RES:
+        m = rx.match(t)
+        if m and t[m.end():].strip():
+            return key, t[:m.end()].rstrip()
+    return None
+
+def _is_heading(p: Paragraph) -> bool:
+    """A template heading such as 'Learning Targets:' or 'Success Criteria:'."""
+    t = p.text.strip()
+    return bool(t) and _norm(t) in LABELS or (t.endswith(":") and len(t) <= 40)
+
+def _clear_after_labels(cell) -> int:
+    """Blank the value paragraphs that follow each label, up to the next label
+    or heading. Returns how many paragraphs had text."""
+    cleared = 0
+    in_value = False
+    for p in cell.paragraphs:
+        if p._p.find(".//" + qn("w:sdt")) is not None:
+            in_value = False
+            continue
+        lv = _label_with_value(p)
+        if lv:
+            _set_para_text(p, lv[1])  # cut the label line back to the label
+            cleared += 1
+            in_value = True
+            continue
+        if _is_heading(p):
+            in_value = _norm(p.text) in LABELS
+            continue
+        if in_value and p.text.strip():
+            _set_para_text(p, "")
+            cleared += 1
+    return cleared
+
+def _clear_differentiation(cell) -> int:
+    """Blank the text after each Differentiation dropdown (the group notes)."""
+    cleared = 0
+    seen_sdt = False
+    for ch in list(cell._tc):
+        if ch.tag == qn("w:sdt") and _sdt_alias(ch) == "Differentiation":
+            seen_sdt = True
+            continue
+        if seen_sdt and ch.tag == qn("w:p"):
+            para = Paragraph(ch, cell)
+            if para.text.strip():
+                _set_para_text(para, "")
+                cleared += 1
+    return cleared
+
+def _remove_old_notes(doc) -> bool:
+    """Drop a 'Teacher notes' page a previous run appended (it would repeat)."""
+    paras = doc.paragraphs
+    for i, p in enumerate(paras):
+        if p.text.strip() == "Teacher notes" and i + 1 < len(paras) \
+                and paras[i + 1].text.startswith("Read \u201cWatch for\u201d"):
+            start = i - 1 if i > 0 and not paras[i - 1].text.strip() else i
+            first = paras[start]._p
+            body = first.getparent()
+            el = first
+            while el is not None and el.tag != qn("w:sectPr"):
+                nxt = el.getnext()
+                body.remove(el)
+                el = nxt
+            return True
+    return False
+
+def clear_previous_fill(doc) -> dict:
+    """Make a filled plan behave like the blank template before filling."""
+    tables = doc.tables
+    if not tables:
+        return {"cleared": 0, "old_notes_removed": False}
+    cleared = 0
+    grid = tables[0]
+    for ri in range(1, len(grid.rows)):
+        seen = set()
+        for cell in grid.rows[ri].cells:
+            if id(cell._tc) in seen:
+                continue
+            seen.add(id(cell._tc))
+            cleared += _clear_after_labels(cell)
+    for st in tables[1:-1]:
+        for row in st.rows:
+            for outer in row.cells:
+                for nt in outer.tables:
+                    cells = nt.rows[0].cells
+                    if len(cells) >= 1:
+                        cleared += _clear_after_labels(cells[0])
+                    if len(cells) >= 2:
+                        cleared += _clear_differentiation(cells[1])
+                    if len(cells) >= 3:
+                        cleared += _clear_after_labels(cells[2])
+    if len(tables) >= 3:
+        for row in tables[-1].rows[1:]:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    if p.text.strip():
+                        _set_para_text(p, "")
+                        cleared += 1
+    removed = _remove_old_notes(doc)
+    return {"cleared": cleared, "old_notes_removed": removed}
+
+def looks_filled(doc) -> bool:
+    """True when the grid already has text after its labels (a filled plan)."""
+    if not doc.tables:
+        return False
+    for ri in range(1, len(doc.tables[0].rows)):
+        for cell in doc.tables[0].rows[ri].cells:
+            paras = cell.paragraphs
+            for i, p in enumerate(paras):
+                if _label_with_value(p):
+                    return True
+                if i + 1 < len(paras) and _norm(p.text) in LABELS \
+                        and paras[i + 1].text.strip() and not _is_heading(paras[i + 1]):
+                    return True
+    return False
+
+# --------------------------------------------------------------------------- #
 #  Content-control (SDT) dropdowns
 # --------------------------------------------------------------------------- #
 def _all_sdts(doc: Document):
@@ -173,6 +312,9 @@ def parse_template(path: str) -> dict:
                                "academic_vocabulary", "writing_strategies",
                                "assessment_strategies", "differentiation"],
         "has_small_group_table": len(tables) >= 3,
+        # LP7: last week's filled plan uploaded as the template. It still
+        # works (old values are cleared before filling); the UI says so.
+        "looks_filled": looks_filled(doc),
     }
 
 def fill_template(in_path: str, out_path: str, plan: dict) -> dict:
@@ -196,6 +338,9 @@ def fill_template(in_path: str, out_path: str, plan: dict) -> dict:
       }
     """
     doc = Document(in_path)
+    # A teacher's last-week plan used as the template: clear its old values
+    # (and any old Teacher notes page) so the weeks never mix (LP7).
+    reset = clear_previous_fill(doc)
     sig_before = structural_signature(doc)
 
     tables = doc.tables
@@ -274,6 +419,7 @@ def fill_template(in_path: str, out_path: str, plan: dict) -> dict:
     doc.save(out_path)
     return {
         "structure_locked": sig_before == sig_after,
+        "reset": reset,
         "signature_before": sig_before[:12],
         "signature_after": sig_after[:12],
     }

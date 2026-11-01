@@ -26,6 +26,8 @@ export interface TemplateFieldMap {
   fields_per_day: string[];
   fields_per_segment: string[];
   has_small_group_table: boolean;
+  /** LP7: a filled plan was uploaded as the template (old text is cleared before filling). */
+  looks_filled?: boolean;
 }
 
 export interface ExtractedResource {
