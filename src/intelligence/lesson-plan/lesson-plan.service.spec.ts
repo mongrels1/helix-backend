@@ -299,4 +299,34 @@ describe('LessonPlanService.generate with day status (LP1)', () => {
     const plan = sidecar.fill.mock.calls[0][0].plan;
     expect(plan.days[3].teacher_notes.checks[0]).toContain('"1,430"');
   });
+
+  it('LP15: pictured PDF pages are read once at upload and their numbers replace the marker', async () => {
+    const claudeVision = jest.fn(async ({ text }: { text: string }) =>
+      text.includes('Page 9') ? 'Time (min) | Distance (mi)\n1 | 0.11\n2 | 0.21\n4 | 0.41\n5 | 0.53' : (() => { throw new Error('timeout'); })(),
+    );
+    const sidecar = {
+      extract: jest.fn().mockResolvedValue([
+        {
+          filename: '3a.pdf',
+          type: 'ilp',
+          detected: {},
+          chars: 10,
+          text: "Lin's times are recorded every minute:\n[picture on page 9: a graph, table, image or handwriting whose numbers are NOT in this text. Do not guess them; tell the teacher to read them from page 9.]\nA\n[picture on page 2: a graph ... from page 2.]",
+          pictures: [
+            { page: 9, image: 'data:image/png;base64,AAAA' },
+            { page: 2, image: 'data:image/png;base64,BBBB' },
+          ],
+        },
+      ]),
+    };
+    const svc = new LessonPlanService({ chat: jest.fn(), claudeVision } as never, sidecar as never, { get: jest.fn() } as never);
+    const { jobId } = svc.createJob('t1');
+    const out = await svc.addResources(jobId, 't1', [{ buffer: Buffer.from(''), originalname: '3a.pdf' }] as never);
+    expect(out[0]).not.toHaveProperty('pictures');
+    expect(out[0]).not.toHaveProperty('text');
+    const stored = (svc as unknown as { jobs: Map<string, { resources: { text: string }[] }> }).jobs.get(jobId)!.resources[0].text;
+    expect(stored).toContain('[picture on page 9, read from the image:\nTime (min) | Distance (mi)\n1 | 0.11');
+    expect(stored).toContain('[picture on page 2: a graph'); // unread page keeps its marker
+    expect(claudeVision).toHaveBeenCalledTimes(2);
+  });
 });

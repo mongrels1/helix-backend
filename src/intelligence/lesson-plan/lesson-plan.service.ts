@@ -115,8 +115,67 @@ export class LessonPlanService {
   ): Promise<Omit<ExtractedResource, 'text'>[]> {
     const job = this.get(jobId, teacherId);
     const extracted = await this.sidecar.extract(files);
+    await Promise.all(
+      extracted.map(async (r) => {
+        r.text = await this.readPictures(r);
+        r.chars = r.text.length;
+        delete r.pictures;
+      }),
+    );
     job.resources.push(...extracted);
-    return extracted.map(({ text: _text, ...rest }) => rest);
+    return extracted.map(({ text: _text, pictures: _p, ...rest }) => rest);
+  }
+
+  /**
+   * LP15: graphs, table screenshots and handwriting in a PDF never reach its
+   * text (Nov 16-20: Lin's times, the y = 2x table and the garden scale were
+   * all pictures, and the plan invented them). The sidecar renders each such
+   * page; the same Claude vision call the diagnostic figure reader uses
+   * (AIRouterService.claudeVision) transcribes it once, at upload, and the
+   * transcription replaces that page's "[picture on page N: ...]" marker. A
+   * page that cannot be read keeps the marker, which tells the plan not to
+   * guess. Haiku, well under a cent a page; pages are read in parallel.
+   */
+  private async readPictures(r: ExtractedResource): Promise<string> {
+    const pics = (r.pictures ?? []).filter((p) => /^data:image\/(png|jpe?g);base64,/.test(p.image)).slice(0, 20);
+    if (!pics.length) return r.text;
+    const sys =
+      "You transcribe ONE page of a math worksheet for a teacher's lesson plan. Write out, as plain text, " +
+      'everything on the page that is a picture rather than typed text: every table (one row per line, cells ' +
+      'separated by |), every graph (axis labels and scales, plotted points, which lines pass through which ' +
+      'points, the slope of each line), number lines, diagrams with their measurements and labels, scale bars, ' +
+      'and handwritten work word for word. Use the exact numbers you can see. Do not solve anything, do not ' +
+      'explain, and do not invent values you cannot read (write "unreadable" instead). Be brief.';
+    const read = await Promise.all(
+      pics.map(async (p) => {
+        try {
+          const base64 = p.image.replace(/^data:image\/[a-z]+;base64,/, '');
+          const mediaType = /^data:image\/png/.test(p.image) ? 'image/png' : 'image/jpeg';
+          const text = await this.ai.claudeVision({
+            systemPrompt: sys,
+            text: `Page ${p.page} of "${r.filename}". Transcribe the pictures on this page.`,
+            images: [{ base64, mediaType }],
+            maxTokens: 900,
+            timeoutMs: 45_000,
+            model: 'claude-haiku-4-5-20251001',
+          });
+          return { page: p.page, text: text.trim() };
+        } catch (err) {
+          this.logger.warn(`lesson plan picture read failed (${r.filename} p${p.page}): ${(err as Error)?.message ?? err}`);
+          return { page: p.page, text: '' };
+        }
+      }),
+    );
+    let text = r.text;
+    for (const { page, text: seen } of read) {
+      if (!seen) continue;
+      text = text.replace(
+        new RegExp(`\\[picture on page ${page}:[^\\]]*\\]`),
+        `[picture on page ${page}, read from the image:\n${seen.slice(0, 2500)}\n]`,
+      );
+    }
+    this.logger.log(`lesson plan pictures read: ${r.filename} ${read.filter((x) => x.text).length}/${pics.length}`);
+    return text;
   }
 
   /** Resources in the order the prompt uses them: ILP and pacing first. */

@@ -36,6 +36,8 @@ export interface ExtractedResource {
   detected: string;
   chars: number;
   text: string;
+  /** LP15: rendered PDF pages that carry pictures (data URLs), read once at upload. */
+  pictures?: { page: number; image: string }[];
 }
 
 export interface UploadedFile {

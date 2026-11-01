@@ -10,6 +10,18 @@ from __future__ import annotations
 import os, re, io
 from collections import Counter
 
+def extract_with_pictures(path: str, filename: str = ""):
+    """Text plus rendered images of the PDF pages that carry pictures (LP15)."""
+    name = (filename or os.path.basename(path)).lower()
+    if os.path.splitext(name)[1] != ".pdf":
+        return extract_text(path, filename), []
+    pictures = []
+    try:
+        return _pdf(path, pictures), pictures
+    except Exception as e:
+        return f"[could not extract {name}: {e}]", []
+
+
 def extract_text(path: str, filename: str = "") -> str:
     name = (filename or os.path.basename(path)).lower()
     ext = os.path.splitext(name)[1]
@@ -152,6 +164,22 @@ def _text_with_fractions(page):
     return "\n".join(" ".join(w["text"] for w in sorted(l, key=lambda w: w["x0"])) for l in lines)
 
 
+MAX_PICTURES = 20
+
+
+def _render(page):
+    """The whole page as a PNG data URL (~110 dpi), for the backend to read
+    with the same Claude vision call the diagnostic figure reader uses."""
+    try:
+        import base64
+        im = page.to_image(resolution=110).original
+        buf = io.BytesIO()
+        im.convert("RGB").save(buf, format="PNG", optimize=True)
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return None
+
+
 def _has_picture(page):
     """
     A picture big enough to carry content (graph, table screenshot, scanned
@@ -175,7 +203,7 @@ def _boilerplate(pages_text):
     return {l for l, n in seen.items() if n >= 3 and len(l) < 160 and l not in ("[table]", "[/table]") and "|" not in l}
 
 
-def _pdf(path):
+def _pdf(path, pictures=None):
     """
     Page text with tables taken out of the running text and written as rows
     ("Ounces | Pounds", "1/2 | ", "2 | 1/8"), so a stacked fraction is not
@@ -207,6 +235,10 @@ def _pdf(path):
                 n = len(pages) + 1
                 text += (f"\n[picture on page {n}: a graph, table, image or handwriting whose numbers are "
                          f"NOT in this text. Do not guess them; tell the teacher to read them from page {n}.]")
+                if pictures is not None and len(pictures) < MAX_PICTURES:
+                    img = _render(page)
+                    if img:
+                        pictures.append({"page": n, "image": img})
             if rows:
                 text = f"{text}\n[table]\n" + "\n".join(rows) + "\n[/table]"
             pages.append(text)

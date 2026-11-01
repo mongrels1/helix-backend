@@ -58,13 +58,13 @@ async def extract(files: list[UploadFile] = File(...),
     for f in files:
         path = _save(f)
         try:
-            text = extractors.extract_text(path, f.filename)
+            text, pictures = extractors.extract_with_pictures(path, f.filename)
         finally:
             os.unlink(path)
         label = extractors.classify(text, f.filename)
         out.append({"filename": f.filename, "type": label,
                     "detected": extractors.summarize_detection(text, label),
-                    "chars": len(text), "text": text})
+                    "chars": len(text), "text": text, "pictures": pictures})
     return {"resources": out}
 
 @app.post("/fill")
