@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import { Membership, Role } from '@prisma/client';
 import { Roles } from '@common/decorators/roles.decorator';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { OrganizationsRepository, SchoolChoice } from './organizations.repository';
 import { AddMemberDto } from './dto/add-member.dto';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { RosterSettingsDto } from './dto/roster-settings.dto';
@@ -21,7 +23,18 @@ import { OrganizationsService } from './organizations.service';
 
 @Controller('api/v1/organizations')
 export class OrganizationsController {
-  constructor(private readonly organizationsService: OrganizationsService) {}
+  constructor(
+    private readonly organizationsService: OrganizationsService,
+    private readonly organizationsRepository: OrganizationsRepository,
+  ) {}
+
+  /** The schools the signed-in user may file a classroom under (the New Classroom picker). */
+  @Get('mine')
+  async mine(
+    @CurrentUser() user: { userId: string; role: string },
+  ): Promise<{ success: true; data: SchoolChoice[] }> {
+    return { success: true, data: await this.organizationsRepository.schoolsFor(user.userId, user.role) };
+  }
 
   @Post()
   async create(

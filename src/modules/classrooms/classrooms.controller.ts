@@ -31,6 +31,7 @@ export class ClassroomsController {
     const classroom = await this.classroomsService.create(
       createClassroomDto,
       currentUser.userId,
+      currentUser,
     );
     return { success: true, data: classroom };
   }

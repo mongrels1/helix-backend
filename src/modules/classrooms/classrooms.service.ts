@@ -81,6 +81,7 @@ export class ClassroomsService {
   async create(
     dto: CreateClassroomDto,
     teacherId: string,
+    requestingUser?: Pick<RequestingUser, 'userId' | 'role'>,
   ): Promise<ClassroomEntity> {
     const organization = await this.organizationsRepository.findById(
       dto.organizationId,
@@ -88,8 +89,25 @@ export class ClassroomsService {
     if (!organization) {
       throw new NotFoundException('Organization not found');
     }
+    if (requestingUser) await this.assertCanUseSchool(dto.organizationId, requestingUser);
 
     return this.classroomsRepository.create(dto, teacherId);
+  }
+
+  /**
+   * A classroom may only be filed under one of the caller's own schools (see
+   * OrganizationsRepository.schoolsFor). Stops a class landing in the wrong
+   * school — or in EdKairos's house organization — from the picker or the API.
+   */
+  private async assertCanUseSchool(
+    organizationId: string,
+    user: Pick<RequestingUser, 'userId' | 'role'>,
+  ): Promise<void> {
+    if (user.role === Role.SUPER_ADMIN) return;
+    const schools = await this.organizationsRepository.schoolsFor(user.userId, user.role);
+    if (!schools.some((s) => s.id === organizationId)) {
+      throw new ForbiddenException('You can only create classes for your own school.');
+    }
   }
 
   async update(
@@ -107,13 +125,14 @@ export class ClassroomsService {
       throw new ForbiddenException('Insufficient classroom permissions');
     }
 
-    if (dto.organizationId) {
+    if (dto.organizationId && dto.organizationId !== classroom.organizationId) {
       const organization = await this.organizationsRepository.findById(
         dto.organizationId,
       );
       if (!organization) {
         throw new NotFoundException('Organization not found');
       }
+      await this.assertCanUseSchool(dto.organizationId, requestingUser);
     }
 
     return this.classroomsRepository.update(id, dto);

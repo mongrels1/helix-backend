@@ -33,9 +33,43 @@ type OrganizationRecord = {
   };
 };
 
+/**
+ * House organizations: EdKairos's own internal entries (the original
+ * "Edkairos LMS" placeholder). They are not schools, so teachers never see or
+ * file classrooms under them; only a super-admin can.
+ */
+export const HOUSE_ORG_SLUGS = ['helix-lms'];
+
+export type SchoolChoice = { id: string; name: string; slug: string };
+
 @Injectable()
 export class OrganizationsRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * The schools a user may file a classroom under.
+   * - Super-admin: every organization.
+   * - Everyone else: schools they are a member of, plus schools where they
+   *   already teach a class — minus EdKairos's house organizations.
+   */
+  async schoolsFor(userId: string, role: Role | string): Promise<SchoolChoice[]> {
+    const select = { id: true, name: true, slug: true };
+    if (role === Role.SUPER_ADMIN) {
+      return this.prisma.organization.findMany({ where: { deletedAt: null }, select, orderBy: { name: 'asc' } });
+    }
+    return this.prisma.organization.findMany({
+      where: {
+        deletedAt: null,
+        slug: { notIn: HOUSE_ORG_SLUGS },
+        OR: [
+          { memberships: { some: { userId } } },
+          { classrooms: { some: { teacherId: userId, deletedAt: null } } },
+        ],
+      },
+      select,
+      orderBy: { name: 'asc' },
+    });
+  }
 
   async findAll(
     page: number,
