@@ -30,7 +30,7 @@ const PENDING_TTL_HOURS = 24;
 // are created only under a school/org by an admin; admins are provisioned.
 const SELF_SERVE_ROLES = new Set<Role>([Role.STUDENT, Role.PARENT]);
 
-type AuthTokens = {
+export type AuthTokens = {
   accessToken: string;
   refreshToken: string;
   user: UserEntity;
@@ -200,6 +200,28 @@ export class AuthService {
     // logging failure must never block a valid sign-in.
     void this.authRepository.createLoginEvent(user.id).catch(() => undefined);
     return { ...tokens, user };
+  }
+
+  /**
+   * Sign a student in WITHOUT a password, for Class Pass (QR badge / class code).
+   * The caller has already proved who the student is (badge secret or backup
+   * code) — this only mints the session. `refreshTtlMs` lets a badge session
+   * end with the school day on shared Chromebooks instead of lasting a week.
+   */
+  async issueSessionFor(userId: string, refreshTtlMs?: number): Promise<AuthTokens> {
+    const user = await this.usersRepository.findById(userId);
+    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (user.suspendedAt) {
+      throw new UnauthorizedException('Your account is paused. Please contact support.');
+    }
+    const refreshToken = randomUUID();
+    await this.authRepository.createRefreshToken(
+      user.id,
+      refreshToken,
+      refreshTtlMs ? new Date(Date.now() + refreshTtlMs) : this.getRefreshExpiry(),
+    );
+    void this.authRepository.createLoginEvent(user.id).catch(() => undefined);
+    return { accessToken: this.signAccessToken(user), refreshToken, user };
   }
 
   async refresh(dto: RefreshDto): Promise<{ accessToken: string }> {

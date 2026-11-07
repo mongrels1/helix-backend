@@ -148,6 +148,9 @@ export class EmailService {
     html: string;
     text: string;
   }): Promise<void> {
+    // Class Pass students have placeholder addresses that can never receive mail
+    // (RFC 2606 .invalid). Skip them quietly instead of bouncing at Resend.
+    if (/\.invalid$/i.test((message.to ?? '').trim())) return;
     const apiKey = this.config.get<string>('email.resendApiKey')?.trim();
     if (!apiKey) {
       this.logger.warn(`Email skipped for ${message.to}: RESEND_API_KEY is not configured`);

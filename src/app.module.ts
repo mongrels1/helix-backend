@@ -53,6 +53,7 @@ import { PrismaModule } from './prisma/prisma.module';
 
 import { ReportsModule } from './modules/reports/reports.module';
 import { RosterModule } from '@modules/roster/roster.module';
+import { ClassPassModule } from '@modules/class-pass/class-pass.module';
 import { InstitutionalEnrollmentModule } from './modules/institutional-enrollment/institutional-enrollment.module';
 import { KSportsModule } from '@modules/ksports/ksports.module';
 import { WhiteboardModule } from '@modules/whiteboard/whiteboard.module';
@@ -130,6 +131,7 @@ import { WhiteboardModule } from '@modules/whiteboard/whiteboard.module';
     OrganizationsModule,
     ClassroomsModule,
     RosterModule,
+    ClassPassModule,
     InstitutionalEnrollmentModule,
     CoursesModule,
     OrchestrationModule,

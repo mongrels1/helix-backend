@@ -344,9 +344,34 @@ model Classroom {
   assignments    Assignment[]
   attendanceRecords AttendanceRecord[]
   pacingRecommendations PacingRecommendation[]
+  /// Class Pass: students sign in with a printed QR badge, or with this class
+  /// code + their name + a backup code. Null until the teacher turns it on.
+  classPassCode  String?      @unique
+  classPassOn    Boolean      @default(false)
+  classPasses    ClassPass[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
+}
+
+/// One student's Class Pass for one classroom. The badge secret (QR) and the
+/// backup code are never stored, only their SHA-256 hashes. Re-issuing a badge
+/// overwrites both hashes, so the old card stops working at once.
+model ClassPass {
+  id             String    @id @default(uuid())
+  classroomId    String
+  studentId      String
+  badgeHash      String    @unique
+  backupHash     String
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  revokedAt      DateTime?
+  issuedAt       DateTime  @default(now())
+  lastUsedAt     DateTime?
+  classroom      Classroom @relation(fields: [classroomId], references: [id])
+
+  @@unique([classroomId, studentId])
+  @@index([studentId])
 }
 
 model Enrollment {
