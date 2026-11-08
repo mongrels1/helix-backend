@@ -349,6 +349,9 @@ model Classroom {
   classPassCode  String?      @unique
   classPassOn    Boolean      @default(false)
   classPasses    ClassPass[]
+  /// Weekly practice goal in minutes for this class (null = the default, 180).
+  /// Shown against measured practice time on reports and the Progress tab.
+  practiceGoalMinutes Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?

@@ -103,9 +103,17 @@ export class AttendanceRepository {
       where: { studentId_date: { studentId, date } },
     });
     if (!existing) {
-      return this.prisma.presenceDay.create({
-        data: { studentId, date, firstSeenAt: now, lastSeenAt: now, activeSeconds: 0 },
-      });
+      try {
+        return await this.prisma.presenceDay.create({
+          data: { studentId, date, firstSeenAt: now, lastSeenAt: now, activeSeconds: 0 },
+        });
+      } catch (e) {
+        // Two first heartbeats of the day can race (two tabs, or a retry): the
+        // loser hits the unique (studentId, date) row the winner just made.
+        // That row now exists, so this ping simply has nothing to credit yet.
+        if ((e as { code?: string })?.code !== 'P2002') throw e;
+        return this.prisma.presenceDay.findUniqueOrThrow({ where: { studentId_date: { studentId, date } } });
+      }
     }
     const gapSeconds = Math.max(0, Math.round((now.getTime() - existing.lastSeenAt.getTime()) / 1000));
     const credit = Math.min(gapSeconds, MAX_CREDIT_SECONDS);
