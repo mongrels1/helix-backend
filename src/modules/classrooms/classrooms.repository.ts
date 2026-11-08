@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { fillMissingGrades } from '@common/grade/grade';
-import { Enrollment } from '@prisma/client';
+import { ClassroomStaffRole, Enrollment } from '@prisma/client';
+import {
+  accessibleClassroomWhere,
+  classroomAccessLevel,
+  type AccessCaller,
+  type ClassroomAccessLevel,
+} from '@common/classroom-access/classroom-access';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateClassroomDto } from './dto/create-classroom.dto';
 import { ClassroomEntity } from './entities/classroom.entity';
@@ -50,12 +56,47 @@ export class ClassroomsRepository {
     return classroom ? this.toEntity(classroom) : null;
   }
 
+  /** The teacher's own classes plus classes shared with them, each marked with their access. */
   async findByTeacher(
     teacherId: string,
     page: number,
     limit: number,
   ): Promise<[ClassroomEntity[], number]> {
-    return this.findByWhere({ teacherId, deletedAt: null }, page, limit);
+    const where = { deletedAt: null, ...accessibleClassroomWhere(teacherId) };
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.classroom.findMany({
+        where,
+        select: {
+          ...classroomSelect,
+          staff: { where: { userId: teacherId }, select: { role: true } },
+          teacher: { select: { profile: { select: { firstName: true, lastName: true } } } },
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.classroom.count({ where }),
+    ]);
+    return [
+      rows.map((r) => {
+        const own = r.teacherId === teacherId;
+        const p = r.teacher?.profile;
+        return {
+          ...this.toEntity(r),
+          access: own ? 'owner' : r.staff[0]?.role === ClassroomStaffRole.CO_TEACHER ? 'co_teacher' : 'viewer',
+          ownerName: own ? null : p ? `${p.firstName} ${p.lastName}`.trim() : null,
+        } as ClassroomEntity;
+      }),
+      total,
+    ];
+  }
+
+  /** The caller's access to a class (owner, school admin, co-teacher, viewer) or null. */
+  accessLevel(
+    classroom: { id: string; teacherId: string; organizationId: string },
+    caller: AccessCaller,
+  ): Promise<ClassroomAccessLevel | null> {
+    return classroomAccessLevel(this.prisma, classroom, caller);
   }
 
   async findByStudent(

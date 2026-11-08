@@ -57,8 +57,9 @@ export class ClassroomsController {
   @Get(':id')
   async findById(
     @Param('id') id: string,
+    @CurrentUser() currentUser: RequestingUser,
   ): Promise<{ success: true; data: ClassroomEntity }> {
-    const classroom = await this.classroomsService.findById(id);
+    const classroom = await this.classroomsService.findForCaller(id, currentUser, 'view');
     return { success: true, data: classroom };
   }
 
@@ -89,10 +90,12 @@ export class ClassroomsController {
   async enroll(
     @Param('id') id: string,
     @Body() enrollStudentDto: EnrollStudentDto,
+    @CurrentUser() currentUser: RequestingUser,
   ): Promise<{ success: true; data: Enrollment }> {
     const enrollment = await this.classroomsService.enroll(
       id,
       enrollStudentDto,
+      currentUser,
     );
     return { success: true, data: enrollment };
   }
@@ -102,8 +105,9 @@ export class ClassroomsController {
   async unenroll(
     @Param('id') id: string,
     @Param('studentId') studentId: string,
+    @CurrentUser() currentUser: RequestingUser,
   ): Promise<{ success: true; data: null }> {
-    await this.classroomsService.unenroll(id, studentId);
+    await this.classroomsService.unenroll(id, studentId, currentUser);
     return { success: true, data: null };
   }
 

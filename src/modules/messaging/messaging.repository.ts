@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { accessibleClassroomWhere } from '@common/classroom-access/classroom-access';
 import { Message, Role, Thread } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -122,7 +123,7 @@ export class MessagingRepository {
     limit = 10,
   ): Promise<RecipientResult[]> {
     const classrooms = await this.prisma.classroom.findMany({
-      where: { teacherId, deletedAt: null },
+      where: { deletedAt: null, ...accessibleClassroomWhere(teacherId, 'teach') },
       select: { id: true },
     });
     const classroomIds = classrooms.map((classroom) => classroom.id);

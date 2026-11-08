@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ContentBlock, Course, Role, Section, Unit } from '@prisma/client';
 import { Roles } from '@common/decorators/roles.decorator';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { CreateContentBlockDto } from './dto/create-content-block.dto';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { CreateSectionDto } from './dto/create-section.dto';
@@ -26,8 +27,9 @@ export class CoursesController {
   @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async createCourse(
     @Body() dto: CreateCourseDto,
+    @CurrentUser() user: { userId: string; role: Role },
   ): Promise<{ success: true; data: Course }> {
-    const course = await this.coursesService.createCourse(dto);
+    const course = await this.coursesService.createCourse(dto, user);
     return { success: true, data: course };
   }
 
@@ -56,15 +58,16 @@ export class CoursesController {
   async updateCourse(
     @Param('id') id: string,
     @Body() dto: Partial<CreateCourseDto>,
+    @CurrentUser() user: { userId: string; role: Role },
   ): Promise<{ success: true; data: Course }> {
-    const course = await this.coursesService.updateCourse(id, dto);
+    const course = await this.coursesService.updateCourse(id, dto, user);
     return { success: true, data: course };
   }
 
   @Delete('courses/:id')
   @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
-  async deleteCourse(@Param('id') id: string): Promise<{ success: true; data: null }> {
-    await this.coursesService.softDeleteCourse(id);
+  async deleteCourse(@Param('id') id: string, @CurrentUser() user: { userId: string; role: Role }): Promise<{ success: true; data: null }> {
+    await this.coursesService.softDeleteCourse(id, user);
     return { success: true, data: null };
   }
 

@@ -7,7 +7,8 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { accessibleClassroomWhere, classroomAccessLevel, levelAllows } from '@common/classroom-access/classroom-access';
+import { Prisma, Role } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -178,10 +179,12 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     if (input.classroomId) {
       const classroom = await this.prisma.classroom.findFirst({
         where: { id: input.classroomId, deletedAt: null },
-        select: { id: true, teacherId: true },
+        select: { id: true, teacherId: true, organizationId: true },
       });
       if (!classroom) throw new NotFoundException('Classroom not found');
-      if (classroom.teacherId !== tutorId) {
+      // The owner or a co-teacher (not a view-only teacher).
+      const level = await classroomAccessLevel(this.prisma, classroom, { userId: tutorId, role: Role.TEACHER });
+      if (level !== 'owner' && level !== 'co_teacher') {
         throw new ForbiddenException('Only the classroom teacher can start a live session');
       }
       classroomId = classroom.id;
@@ -338,7 +341,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
   async myStudents(tutorId: string, query: string) {
     const [enrolled, past] = await Promise.all([
       this.prisma.enrollment.findMany({
-        where: { classroom: { teacherId: tutorId, deletedAt: null } },
+        where: { classroom: { deletedAt: null, ...accessibleClassroomWhere(tutorId, 'teach') } },
         select: { studentId: true },
       }),
       this.prisma.whiteboardBoard.findMany({
@@ -422,7 +425,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
   private async isMyStudent(tutorId: string, studentId: string): Promise<boolean> {
     const [enr, board] = await Promise.all([
       this.prisma.enrollment.findFirst({
-        where: { studentId, classroom: { teacherId: tutorId, deletedAt: null } },
+        where: { studentId, classroom: { deletedAt: null, ...accessibleClassroomWhere(tutorId, 'teach') } },
         select: { id: true },
       }),
       this.prisma.whiteboardBoard.findFirst({
@@ -464,7 +467,11 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
       select: { teacherId: true, organizationId: true },
     });
     if (!classroom) throw new NotFoundException('Classroom not found');
-    if (classroom.teacherId !== user.userId && !this.isAdminOf(user, classroom.organizationId)) {
+    if (
+      classroom.teacherId !== user.userId &&
+      !this.isAdminOf(user, classroom.organizationId) &&
+      !levelAllows(await classroomAccessLevel(this.prisma, { id: classroomId, ...classroom }, user), 'view')
+    ) {
       throw new ForbiddenException();
     }
     return this.prisma.whiteboardSession.findMany({

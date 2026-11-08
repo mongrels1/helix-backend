@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { assertClassroomAccess } from '@common/classroom-access/classroom-access';
 import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -66,19 +67,13 @@ export class RosterService {
     caller: RosterCaller,
     dto: ImportRosterDto,
   ): Promise<RosterImportResult> {
-    // 1. Classroom + authorization: the class owner, or an org/super admin.
+    // 1. Classroom + authorization: the owner, a co-teacher, or a school admin.
     const classroom = await this.prisma.classroom.findFirst({
       where: { id: classroomId, deletedAt: null },
       select: { id: true, teacherId: true, organizationId: true },
     });
     if (!classroom) throw new NotFoundException('Classroom not found');
-
-    const isOwner = classroom.teacherId === caller.userId;
-    const isAdmin =
-      caller.role === Role.ORG_ADMIN || caller.role === Role.SUPER_ADMIN;
-    if (!isOwner && !isAdmin) {
-      throw new ForbiddenException('You do not have access to this classroom');
-    }
+    await assertClassroomAccess(this.prisma, classroom, caller, 'teach');
 
     // 2. Org approval gate — a super-admin must have enabled this school first.
     const org = await this.prisma.organization.findUnique({

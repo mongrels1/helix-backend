@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { accessibleClassroomWhere } from '@common/classroom-access/classroom-access';
 import { Assignment, Prisma, Role, Rubric } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
@@ -31,7 +32,7 @@ export class AssignmentsRepository {
     if (requestingUser?.role === Role.STUDENT) {
       where.classroom = { enrollments: { some: { studentId: requestingUser.userId } } };
     } else if (requestingUser?.role === Role.TEACHER) {
-      where.classroom = { teacherId: requestingUser.userId };
+      where.classroom = accessibleClassroomWhere(requestingUser.userId);
     }
     const skip = (page - 1) * limit;
     const [assignments, total] = await this.prisma.$transaction([

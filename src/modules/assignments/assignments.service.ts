@@ -1,11 +1,15 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Role, Rubric } from '@prisma/client';
 import { ClassroomsRepository } from '@modules/classrooms/classrooms.repository';
 import { CoursesRepository } from '@modules/courses/courses.repository';
+import { levelAllows } from '@common/classroom-access/classroom-access';
+
+type Caller = { userId: string; role: Role | string };
 import { AssignmentsRepository } from './assignments.repository';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { CreateRubricDto } from './dto/create-rubric.dto';
@@ -49,9 +53,19 @@ export class AssignmentsService {
     return assignment;
   }
 
-  async create(dto: CreateAssignmentDto): Promise<AssignmentEntity> {
-    const classroom = await this.classroomsRepository.findById(dto.classroomId);
+  /** Assigning and editing work: the class owner, a co-teacher or a school admin. */
+  private async assertCanTeach(classroomId: string, caller?: Caller): Promise<void> {
+    const classroom = await this.classroomsRepository.findById(classroomId);
     if (!classroom) throw new NotFoundException('Classroom not found');
+    if (!caller) return;
+    const level = await this.classroomsRepository.accessLevel(classroom, caller);
+    if (!levelAllows(level, 'teach')) {
+      throw new ForbiddenException(level === 'viewer' ? 'You have view-only access to this class.' : 'You do not have access to this classroom');
+    }
+  }
+
+  async create(dto: CreateAssignmentDto, caller?: Caller): Promise<AssignmentEntity> {
+    await this.assertCanTeach(dto.classroomId, caller);
     if (dto.courseId) {
       const course = await this.coursesRepository.findById(dto.courseId);
       if (!course) throw new NotFoundException('Course not found');
@@ -59,11 +73,11 @@ export class AssignmentsService {
     return this.assignmentsRepository.create(dto);
   }
 
-  async update(id: string, dto: UpdateAssignmentDto): Promise<AssignmentEntity> {
-    await this.findById(id);
-    if (dto.classroomId) {
-      const classroom = await this.classroomsRepository.findById(dto.classroomId);
-      if (!classroom) throw new NotFoundException('Classroom not found');
+  async update(id: string, dto: UpdateAssignmentDto, caller?: Caller): Promise<AssignmentEntity> {
+    const existing = await this.findById(id);
+    await this.assertCanTeach(existing.classroomId, caller);
+    if (dto.classroomId && dto.classroomId !== existing.classroomId) {
+      await this.assertCanTeach(dto.classroomId, caller);
     }
     if (dto.courseId) {
       const course = await this.coursesRepository.findById(dto.courseId);
@@ -72,16 +86,19 @@ export class AssignmentsService {
     return this.assignmentsRepository.update(id, dto);
   }
 
-  async remove(id: string): Promise<void> {
-    await this.findById(id);
+  async remove(id: string, caller?: Caller): Promise<void> {
+    const existing = await this.findById(id);
+    await this.assertCanTeach(existing.classroomId, caller);
     await this.assignmentsRepository.softDelete(id);
   }
 
   async createRubric(
     assignmentId: string,
     dto: CreateRubricDto,
+    caller?: Caller,
   ): Promise<Rubric> {
     const assignment = await this.findById(assignmentId);
+    await this.assertCanTeach(assignment.classroomId, caller);
     if (assignment.rubric) {
       throw new ConflictException('Assignment already has a rubric');
     }

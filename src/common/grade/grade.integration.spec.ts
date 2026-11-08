@@ -79,7 +79,7 @@ run('grades (real DB)', () => {
     const c = await classrooms.create({ name: 'P5', organizationId: orgId, gradeLevel: '6' } as any, teacher.userId, teacher);
     expect(c.gradeLevel).toBe('6');
     const s = await prisma.user.create({ data: { email: `fa-${sfx}@x.invalid`, passwordHash: 'x', role: 'STUDENT', profile: { create: { firstName: 'Fa', lastName: 'X' } } } });
-    await classrooms.enroll(c.id, { studentId: s.id } as any);
+    await classrooms.enroll(c.id, { studentId: s.id } as any, teacher);
     expect(await gradesIn(c.id)).toEqual(['Fa:6']);
   });
 });

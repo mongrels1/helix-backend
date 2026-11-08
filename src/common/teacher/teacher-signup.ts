@@ -68,6 +68,18 @@ export function isApprovedTeacherEmail(
 }
 
 /**
+ * Stricter than isApprovedTeacherEmail: an address AT an approved district
+ * domain, with no individual exceptions and no `+` alias. This is what "district
+ * credentials only" means for sharing a class (classroom-staff module).
+ */
+export function isDistrictStaffEmail(email: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const address = email.trim().toLowerCase();
+  const at = address.lastIndexOf('@');
+  if (at < 1 || address.slice(0, at).includes('+')) return false;
+  return teacherSignupDomains(env).includes(address.slice(at + 1));
+}
+
+/**
  * Individually approved addresses, lower-cased. TEACHER_SIGNUP_EMAILS is a
  * comma list of exact addresses: one teacher at a school whose domain is not
  * approved, or a test inbox. Empty by default.

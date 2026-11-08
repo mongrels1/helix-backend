@@ -60,6 +60,8 @@ describe('ClassroomsService', () => {
       unenroll: jest.fn(),
       getEnrollments: jest.fn(),
       isEnrolled: jest.fn(),
+      // Owner only here; sharing is covered by classroom-sharing.integration.spec.
+      accessLevel: jest.fn(async (c: { teacherId: string }, u: { userId: string }) => (c.teacherId === u.userId ? 'owner' : null)),
     } as unknown as jest.Mocked<ClassroomsRepository>;
 
     organizationsRepository = {
@@ -147,7 +149,7 @@ describe('ClassroomsService', () => {
     classroomsRepository.isEnrolled.mockResolvedValue(true);
 
     await expect(
-      service.enroll('classroom-1', { studentId: 'student-1' }),
+      service.enroll('classroom-1', { studentId: 'student-1' }, { userId: 'teacher-1', role: Role.TEACHER }),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 });

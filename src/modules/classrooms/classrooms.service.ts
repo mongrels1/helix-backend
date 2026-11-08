@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Enrollment, Role } from '@prisma/client';
 import { normalizeGrade } from '@common/grade/grade';
+import { levelAllows, type ClassroomNeed } from '@common/classroom-access/classroom-access';
 import { OrganizationsRepository } from '@modules/organizations/organizations.repository';
 import { UsersRepository } from '@modules/users/users.repository';
 import { CreateClassroomDto } from './dto/create-classroom.dto';
@@ -80,6 +81,32 @@ export class ClassroomsService {
     return classroom;
   }
 
+  /**
+   * Load a class and require `need` (view / teach / manage) for this caller.
+   * Students may also view a class they are enrolled in.
+   */
+  async findForCaller(
+    id: string,
+    caller: Pick<RequestingUser, 'userId' | 'role'>,
+    need: ClassroomNeed,
+  ): Promise<ClassroomEntity> {
+    const classroom = await this.findById(id);
+    if (need === 'view' && caller.role === Role.STUDENT && (await this.classroomsRepository.isEnrolled(id, caller.userId))) {
+      return classroom;
+    }
+    const level = await this.classroomsRepository.accessLevel(classroom, caller);
+    if (!levelAllows(level, need)) {
+      throw new ForbiddenException(
+        level === 'viewer'
+          ? 'You have view-only access to this class.'
+          : level === 'co_teacher'
+            ? 'Only the class owner can do that.'
+            : 'You do not have access to this classroom',
+      );
+    }
+    return { ...classroom, access: level === 'admin' ? 'owner' : level ?? undefined } as ClassroomEntity;
+  }
+
   async create(
     dto: CreateClassroomDto,
     teacherId: string,
@@ -117,15 +144,10 @@ export class ClassroomsService {
     dto: Partial<CreateClassroomDto>,
     requestingUser: RequestingUser,
   ): Promise<ClassroomEntity> {
-    const classroom = await this.findById(id);
-    const isOwner = classroom.teacherId === requestingUser.userId;
-    const isAdmin =
-      requestingUser.role === Role.ORG_ADMIN ||
-      requestingUser.role === Role.SUPER_ADMIN;
-
-    if (!isOwner && !isAdmin) {
-      throw new ForbiddenException('Insufficient classroom permissions');
-    }
+    // Moving a class to another school is the owner's call; name, grade and
+    // description can be changed by a co-teacher too.
+    const moving = !!dto.organizationId && dto.organizationId !== (await this.findById(id)).organizationId;
+    const classroom = await this.findForCaller(id, requestingUser, moving ? 'manage' : 'teach');
 
     if (dto.organizationId && dto.organizationId !== classroom.organizationId) {
       const organization = await this.organizationsRepository.findById(
@@ -158,8 +180,9 @@ export class ClassroomsService {
   async enroll(
     classroomId: string,
     dto: EnrollStudentDto,
+    caller: Pick<RequestingUser, 'userId' | 'role'>,
   ): Promise<Enrollment> {
-    const classroom = await this.findById(classroomId);
+    const classroom = await this.findForCaller(classroomId, caller, 'teach');
 
     const student = await this.usersRepository.findById(dto.studentId);
     if (!student || student.role !== Role.STUDENT) {
@@ -179,8 +202,8 @@ export class ClassroomsService {
     return enrollment;
   }
 
-  async unenroll(classroomId: string, studentId: string): Promise<void> {
-    await this.findById(classroomId);
+  async unenroll(classroomId: string, studentId: string, caller: Pick<RequestingUser, 'userId' | 'role'>): Promise<void> {
+    await this.findForCaller(classroomId, caller, 'teach');
     await this.classroomsRepository.unenroll(classroomId, studentId);
   }
 
@@ -188,13 +211,15 @@ export class ClassroomsService {
     classroomId: string,
     requestingUser?: Pick<RequestingUser, 'userId' | 'role'>,
   ): Promise<Enrollment[]> {
-    const classroom = await this.findById(classroomId);
     // A roster carries students' full names and emails: never to students,
-    // parents, or a teacher who doesn't teach this class.
+    // parents, or a teacher this class isn't shared with.
     if (requestingUser) {
-      const isOwner = classroom.teacherId === requestingUser.userId;
-      const isAdmin = requestingUser.role === Role.ORG_ADMIN || requestingUser.role === Role.SUPER_ADMIN;
-      if (!isOwner && !isAdmin) throw new ForbiddenException('You do not have access to this class roster');
+      if (requestingUser.role === Role.STUDENT || requestingUser.role === Role.PARENT) {
+        throw new ForbiddenException('You do not have access to this class roster');
+      }
+      await this.findForCaller(classroomId, requestingUser, 'view');
+    } else {
+      await this.findById(classroomId);
     }
     return this.classroomsRepository.getEnrollments(classroomId);
   }

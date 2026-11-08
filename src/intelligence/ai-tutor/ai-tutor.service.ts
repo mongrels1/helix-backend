@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { accessibleClassroomWhere } from '@common/classroom-access/classroom-access';
 import {
   Role,
   TutorMessage,
@@ -201,9 +202,10 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
    */
   private async assertStaffCanSeeStudent(studentId: string, userId: string, role: string): Promise<void> {
     if (role === Role.SUPER_ADMIN || role === Role.STUDENT) return;
-    if (role === Role.TEACHER) {
+    if (role === Role.TEACHER || role === Role.ORG_ADMIN) {
+      // In a class they own or that is shared with them.
       const teaches = await this.prisma.enrollment.findFirst({
-        where: { studentId, classroom: { teacherId: userId, deletedAt: null } },
+        where: { studentId, classroom: { deletedAt: null, ...accessibleClassroomWhere(userId) } },
         select: { id: true },
       });
       if (teaches) return;

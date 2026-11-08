@@ -1,6 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ContentBlock, Course, Section, Unit } from '@prisma/client';
 import { ClassroomsRepository } from '@modules/classrooms/classrooms.repository';
+import { levelAllows } from '@common/classroom-access/classroom-access';
+
+type Caller = { userId: string; role: string };
 import { CreateContentBlockDto } from './dto/create-content-block.dto';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { CreateSectionDto } from './dto/create-section.dto';
@@ -27,19 +30,32 @@ export class CoursesService {
     return course;
   }
 
-  async createCourse(dto: CreateCourseDto): Promise<Course> {
-    const classroom = await this.classroomsRepository.findById(dto.classroomId);
+  /** Adding or changing a class's courses: the owner, a co-teacher or a school admin. */
+  private async assertCanTeach(classroomId: string, caller?: Caller): Promise<void> {
+    const classroom = await this.classroomsRepository.findById(classroomId);
     if (!classroom) throw new NotFoundException('Classroom not found');
+    if (!caller) return;
+    const level = await this.classroomsRepository.accessLevel(classroom, caller);
+    if (!levelAllows(level, 'teach')) {
+      throw new ForbiddenException(level === 'viewer' ? 'You have view-only access to this class.' : 'You do not have access to this classroom');
+    }
+  }
+
+  async createCourse(dto: CreateCourseDto, caller?: Caller): Promise<Course> {
+    await this.assertCanTeach(dto.classroomId, caller);
     return this.coursesRepository.createCourse(dto);
   }
 
-  async updateCourse(id: string, data: Partial<CreateCourseDto>): Promise<Course> {
-    await this.findById(id);
+  async updateCourse(id: string, data: Partial<CreateCourseDto>, caller?: Caller): Promise<Course> {
+    const course = await this.findById(id);
+    await this.assertCanTeach(course.classroomId, caller);
+    if (data.classroomId && data.classroomId !== course.classroomId) await this.assertCanTeach(data.classroomId, caller);
     return this.coursesRepository.updateCourse(id, data);
   }
 
-  async softDeleteCourse(id: string): Promise<void> {
-    await this.findById(id);
+  async softDeleteCourse(id: string, caller?: Caller): Promise<void> {
+    const course = await this.findById(id);
+    await this.assertCanTeach(course.classroomId, caller);
     await this.coursesRepository.softDeleteCourse(id);
   }
 

@@ -14,6 +14,7 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes, randomUUID } from 'crypto';
 import { AuthService, AuthTokens } from '@modules/auth/auth.service';
 import { fillMissingGrades, normalizeGrade } from '@common/grade/grade';
+import { assertClassroomAccess, type ClassroomNeed } from '@common/classroom-access/classroom-access';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   displayName,
@@ -84,8 +85,8 @@ export class ClassPassService {
 
   // ── Teacher side ──────────────────────────────────────────────────────────
 
-  /** The class owner, or an org/super admin. Returns the classroom + its org. */
-  private async ownedClassroom(classroomId: string, caller: ClassPassCaller) {
+  /** Load the class and require `need` (see common/classroom-access). */
+  private async ownedClassroom(classroomId: string, caller: ClassPassCaller, need: ClassroomNeed = 'teach') {
     const classroom = await this.prisma.classroom.findFirst({
       where: { id: classroomId, deletedAt: null },
       select: {
@@ -99,11 +100,8 @@ export class ClassPassService {
       },
     });
     if (!classroom) throw new NotFoundException('Classroom not found');
-    const isAdmin = caller.role === Role.ORG_ADMIN || caller.role === Role.SUPER_ADMIN;
-    if (classroom.teacherId !== caller.userId && !isAdmin) {
-      throw new ForbiddenException('You do not have access to this classroom');
-    }
-    return classroom;
+    const access = await assertClassroomAccess(this.prisma, classroom, caller, need);
+    return { ...classroom, access };
   }
 
   /**
@@ -125,7 +123,7 @@ export class ClassPassService {
   }
 
   async status(classroomId: string, caller: ClassPassCaller) {
-    const classroom = await this.ownedClassroom(classroomId, caller);
+    const classroom = await this.ownedClassroom(classroomId, caller, 'view');
     const [enrollments, passes] = await Promise.all([
       this.prisma.enrollment.findMany({
         where: { classroomId },
@@ -166,13 +164,16 @@ export class ClassPassService {
       gradeLevel: classroom.gradeLevel,
       on: classroom.classPassOn,
       classCode: classroom.classPassCode,
+      /** owner / admin / co_teacher / viewer: the page hides what this teacher can't do. */
+      access: classroom.access,
       students,
     };
   }
 
   /** Turn Class Pass on (creating the class code the first time) or off. */
   async setOn(classroomId: string, caller: ClassPassCaller, on: boolean) {
-    const classroom = await this.ownedClassroom(classroomId, caller);
+    // Turning Class Pass off stops every student's page: the owner's call.
+    const classroom = await this.ownedClassroom(classroomId, caller, on ? 'teach' : 'manage');
     if (on) await this.assertSchoolApproved(classroom.organizationId, caller);
     const classPassCode = classroom.classPassCode ?? (await this.uniqueClassCode());
     await this.prisma.classroom.update({
@@ -423,7 +424,7 @@ export class ClassPassService {
    * questions (not the coach's replies) so the teacher can scan them quickly.
    */
   async helpActivity(classroomId: string, caller: ClassPassCaller, days = 14) {
-    await this.ownedClassroom(classroomId, caller);
+    await this.ownedClassroom(classroomId, caller, 'view');
     const since = new Date(Date.now() - Math.min(Math.max(days, 1), 60) * 86_400_000);
     const enrolled = await this.prisma.enrollment.findMany({
       where: { classroomId },

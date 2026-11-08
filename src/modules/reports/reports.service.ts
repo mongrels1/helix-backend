@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { accessibleClassroomWhere, assertClassroomAccess, type ClassroomNeed } from '@common/classroom-access/classroom-access';
 import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -519,9 +520,10 @@ export class ReportsService {
       const link = await this.prisma.parentStudentLink.findFirst({ where: { parentId: caller.userId, studentId }, select: { id: true } });
       if (link) return;
     }
-    if (caller.role === Role.TEACHER) {
+    if (caller.role === Role.TEACHER || caller.role === Role.ORG_ADMIN) {
+      // In a class they own or that is shared with them.
       const enrolled = await this.prisma.enrollment.findFirst({
-        where: { studentId, classroom: { teacherId: caller.userId, deletedAt: null } },
+        where: { studentId, classroom: { deletedAt: null, ...accessibleClassroomWhere(caller.userId) } },
         select: { id: true },
       });
       if (enrolled) return;
@@ -536,21 +538,14 @@ export class ReportsService {
     throw new ForbiddenException('You do not have access to this student');
   }
 
-  private async ownedClassroom(classroomId: string, caller: ReportCaller) {
+  private async ownedClassroom(classroomId: string, caller: ReportCaller, need: ClassroomNeed = 'view') {
     const classroom = await this.prisma.classroom.findFirst({
       where: { id: classroomId, deletedAt: null },
       select: { id: true, name: true, teacherId: true, practiceGoalMinutes: true, organizationId: true },
     });
     if (!classroom) throw new NotFoundException('Classroom not found');
-    if (caller.role === Role.SUPER_ADMIN || classroom.teacherId === caller.userId) return classroom;
-    if (caller.role === Role.ORG_ADMIN) {
-      const m = await this.prisma.membership.findFirst({
-        where: { userId: caller.userId, organizationId: classroom.organizationId, role: Role.ORG_ADMIN },
-        select: { id: true },
-      });
-      if (m) return classroom;
-    }
-    throw new ForbiddenException('You do not have access to this classroom');
+    await assertClassroomAccess(this.prisma, classroom, caller, need);
+    return classroom;
   }
 
   async reportForStudent(caller: ReportCaller, studentId: string, week?: string, classroomId?: string) {
@@ -592,7 +587,7 @@ export class ReportsService {
   }
 
   async setClassroomGoal(caller: ReportCaller, classroomId: string, minutes: number | null) {
-    await this.ownedClassroom(classroomId, caller);
+    await this.ownedClassroom(classroomId, caller, 'teach');
     const value = minutes == null ? null : Math.round(minutes);
     if (value != null && (value < 15 || value > 1200)) {
       throw new BadRequestException('Weekly goal must be between 15 minutes and 20 hours.');

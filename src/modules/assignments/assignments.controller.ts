@@ -27,8 +27,9 @@ export class AssignmentsController {
   @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async create(
     @Body() dto: CreateAssignmentDto,
+    @CurrentUser() user: { userId: string; role: Role },
   ): Promise<{ success: true; data: AssignmentEntity }> {
-    const assignment = await this.assignmentsService.create(dto);
+    const assignment = await this.assignmentsService.create(dto, user);
     return { success: true, data: assignment };
   }
 
@@ -65,15 +66,16 @@ export class AssignmentsController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateAssignmentDto,
+    @CurrentUser() user: { userId: string; role: Role },
   ): Promise<{ success: true; data: AssignmentEntity }> {
-    const assignment = await this.assignmentsService.update(id, dto);
+    const assignment = await this.assignmentsService.update(id, dto, user);
     return { success: true, data: assignment };
   }
 
   @Delete('assignments/:id')
   @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
-  async remove(@Param('id') id: string): Promise<{ success: true; data: null }> {
-    await this.assignmentsService.remove(id);
+  async remove(@Param('id') id: string, @CurrentUser() user: { userId: string; role: Role }): Promise<{ success: true; data: null }> {
+    await this.assignmentsService.remove(id, user);
     return { success: true, data: null };
   }
 
@@ -82,8 +84,9 @@ export class AssignmentsController {
   async createRubric(
     @Param('id') id: string,
     @Body() dto: CreateRubricDto,
+    @CurrentUser() user: { userId: string; role: Role },
   ): Promise<{ success: true; data: Rubric }> {
-    const rubric = await this.assignmentsService.createRubric(id, dto);
+    const rubric = await this.assignmentsService.createRubric(id, dto, user);
     return { success: true, data: rubric };
   }
 

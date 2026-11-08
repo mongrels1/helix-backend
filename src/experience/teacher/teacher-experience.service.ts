@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { accessibleClassroomWhere } from '@common/classroom-access/classroom-access';
 import { AttendanceStatus, Role, SubmissionStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -22,7 +23,7 @@ export class TeacherExperienceService {
     activeNotifications: number;
   }> {
     const classrooms = await this.prisma.classroom.findMany({
-      where: { teacherId, deletedAt: null },
+      where: { deletedAt: null, ...accessibleClassroomWhere(teacherId) },
       select: {
         id: true,
         name: true,
@@ -244,7 +245,8 @@ export class TeacherExperienceService {
     total: number;
   }> {
     const classrooms = await this.prisma.classroom.findMany({
-      where: { teacherId, deletedAt: null, ...(classroomId ? { id: classroomId } : {}) },
+      // Grading: own classes and classes shared with them as co-teacher.
+      where: { deletedAt: null, ...accessibleClassroomWhere(teacherId, 'teach'), ...(classroomId ? { id: classroomId } : {}) },
       select: { id: true },
     });
     const classroomIds = classrooms.map((classroom) => classroom.id);
@@ -486,7 +488,7 @@ export class TeacherExperienceService {
       where: {
         id: classroomId,
         deletedAt: null,
-        ...(user.role === Role.TEACHER ? { teacherId: user.userId } : {}),
+        ...(user.role === Role.TEACHER ? accessibleClassroomWhere(user.userId) : {}),
       },
       select: { id: true, name: true },
     });

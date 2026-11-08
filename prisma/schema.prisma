@@ -108,6 +108,7 @@ model User {
   profile      Profile?
   memberships  Membership[]
   taughtClassrooms Classroom[]  @relation("TeacherClassrooms")
+  sharedClassrooms ClassroomStaff[] @relation("ClassroomStaffUser")
   enrollments Enrollment[] @relation("StudentEnrollments")
   submissions Submission[] @relation("StudentSubmissions")
   masteryScores MasteryScore[] @relation("StudentMastery")
@@ -349,6 +350,8 @@ model Classroom {
   classPassCode  String?      @unique
   classPassOn    Boolean      @default(false)
   classPasses    ClassPass[]
+  /// Other teachers this class is shared with (the owner is teacherId).
+  staff          ClassroomStaff[]
   /// Weekly practice goal in minutes for this class (null = the default, 180).
   /// Shown against measured practice time on reports and the Progress tab.
   practiceGoalMinutes Int?
@@ -1159,4 +1162,46 @@ model WhiteboardAsset {
   createdAt  DateTime @default(now())
 
   @@index([sessionId])
+}
+
+enum ClassroomStaffRole {
+  CO_TEACHER
+  VIEWER
+}
+
+/// A teacher other than the owner who can work in (CO_TEACHER) or see
+/// (VIEWER) one class. Only the owner or a school admin adds or removes them.
+model ClassroomStaff {
+  id          String             @id @default(uuid())
+  classroomId String
+  userId      String
+  role        ClassroomStaffRole
+  addedById   String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  classroom   Classroom          @relation(fields: [classroomId], references: [id])
+  user        User               @relation("ClassroomStaffUser", fields: [userId], references: [id])
+
+  @@unique([classroomId, userId])
+  @@index([userId])
+}
+
+/// An emailed, single-use invitation to co-teach one or more classes. Only the
+/// token's SHA-256 is stored; it works only for the invited address, which
+/// must be a district staff address (common/teacher/teacher-signup.ts).
+model ClassroomInvite {
+  id             String    @id @default(uuid())
+  organizationId String
+  email          String
+  /// [{ classroomId, role }]
+  grants         Json
+  tokenHash      String    @unique
+  invitedById    String
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  acceptedById   String?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, email])
 }

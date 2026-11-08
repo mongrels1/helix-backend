@@ -139,6 +139,24 @@ export class EmailService {
     });
   }
 
+  /** A colleague shared one or more classes. The link works only for this address. */
+  async sendClassInvite(
+    to: string,
+    m: { subject: string; inviterName: string; classNames: string; what: string; link: string; days: number },
+  ): Promise<void> {
+    await this.sendEmail({
+      to,
+      subject: m.subject,
+      html: `
+        <p>${this.escapeHtml(m.inviterName)} invited you to ${this.escapeHtml(m.what)} on EdKairos: <strong>${this.escapeHtml(m.classNames)}</strong>.</p>
+        <p><a href="${m.link}">Open the invitation</a></p>
+        <p>Sign in with this district email address (${this.escapeHtml(to)}) to accept. No account yet? Create a free teacher account with this address first. The link expires in ${m.days} days and works only for this address.</p>
+        <p>If you weren't expecting this, you can ignore it.</p>
+      `,
+      text: `${m.inviterName} invited you to ${m.what} on EdKairos: ${m.classNames}.\n\nOpen the invitation: ${m.link}\n\nSign in with this district email (${to}) to accept. No account yet? Create a free teacher account with this address first. The link expires in ${m.days} days and works only for this address.`,
+    });
+  }
+
   async sendWeeklyReport(to: string, subject: string, html: string, text: string): Promise<void> {
     await this.sendEmail({ to, subject, html, text });
   }
