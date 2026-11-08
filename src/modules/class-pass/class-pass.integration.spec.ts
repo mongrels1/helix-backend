@@ -13,6 +13,7 @@ import { showsBillingSurface } from '../../common/billing/billing';
 import { AITutorService } from '../../intelligence/ai-tutor/ai-tutor.service';
 import { AITutorRepository } from '../../intelligence/ai-tutor/ai-tutor.repository';
 import { ClassPassService, CLASS_PASS_EMAIL_DOMAIN } from './class-pass.service';
+import { hashBackup } from './class-pass.codes';
 
 const URL = process.env.INTEGRATION_DATABASE_URL;
 const run = URL ? describe : describe.skip;
@@ -92,7 +93,7 @@ run('Class Pass (real DB)', () => {
     expect(again.added).toHaveLength(0);
   });
 
-  let badges: { studentId: string; badgePath: string; backupCode: string; displayName: string }[] = [];
+  let badges: { studentId: string; badgePath: string; personalCode: string; displayName: string }[] = [];
 
   it('issues a badge to every student without one, in plain text once', async () => {
     const res = await svc.issue(classroomId, teacher);
@@ -100,14 +101,16 @@ run('Class Pass (real DB)', () => {
     expect(badges).toHaveLength(3);
     for (const b of badges) {
       expect(b.badgePath).toMatch(/^\/go\/[A-Z2-9]{26}$/);
-      expect(b.backupCode).toMatch(/^[A-Z2-9]{3}-[A-Z2-9]{3}$/);
+      expect(b.personalCode).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     }
     const rows = await prisma.classPass.findMany({ where: { classroomId } });
     const dump = JSON.stringify(rows);
     for (const b of badges) {
       expect(dump).not.toContain(b.badgePath.slice(4));
-      expect(dump).not.toContain(b.backupCode.replace('-', ''));
+      expect(dump).not.toContain(b.personalCode.replace('-', ''));
     }
+    expect(new Set(badges.map((b) => b.personalCode)).size).toBe(3);
+    expect((await svc.status(classroomId, teacher)).students.every((x) => x.personalCode)).toBe(true);
     // A second "issue missing" call has nothing to do.
     expect((await svc.issue(classroomId, teacher)).issued).toHaveLength(0);
   });
@@ -129,51 +132,61 @@ run('Class Pass (real DB)', () => {
     await expect(svc.signInWithBadge('x')).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it('lists first name + last initial for the class code', async () => {
-    const s = await svc.status(classroomId, teacher);
-    const list = await svc.lookupClass(s.classCode!.toLowerCase());
-    expect(list.classroomName).toBe('Math 7 – P3');
-    expect(list.students.map((x) => x.displayName).sort()).toEqual(['Ana D.', 'Jay B.', 'Maria L.']);
-    expect(JSON.stringify(list)).not.toContain('Lopez');
+  it('the personal code alone opens that one student, with no names anywhere', async () => {
+    for (const b of badges) {
+      const res = await svc.signInWithPersonalCode(b.personalCode.toLowerCase().replace('-', ' '), '10.0.0.1');
+      expect(res.user.id).toBe(b.studentId);
+      expect(res.classroomId).toBe(classroomId);
+    }
+    await expect(svc.signInWithPersonalCode('ZZZZ-ZZZZ', '10.0.0.1')).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.signInWithPersonalCode('ABC', '10.0.0.1')).rejects.toBeInstanceOf(UnauthorizedException);
+    // The old name-list lookup no longer exists.
+    expect((svc as any).lookupClass).toBeUndefined();
   });
 
-  it('signs in with class code + name + backup code, and locks after 5 misses', async () => {
+  it('pages printed earlier: class code + code finds the student itself', async () => {
     const s = await svc.status(classroomId, teacher);
     const b = badges[1];
-    const ok = await svc.signInWithCode(s.classCode!, b.studentId, b.backupCode.toLowerCase());
+    const ok = await svc.signInWithClassAndCode(s.classCode!.toLowerCase(), b.personalCode, '10.0.0.2');
     expect(ok.user.id).toBe(b.studentId);
-
-    for (let i = 0; i < 5; i++) {
-      await expect(svc.signInWithCode(s.classCode!, b.studentId, 'ZZZ-ZZZ')).rejects.toBeInstanceOf(UnauthorizedException);
-    }
-    // Locked: even the right code is refused now.
-    await expect(svc.signInWithCode(s.classCode!, b.studentId, b.backupCode)).rejects.toBeInstanceOf(HttpException);
-    expect((await svc.status(classroomId, teacher)).students.find((x) => x.studentId === b.studentId)!.locked).toBe(true);
-    await svc.unlock(classroomId, teacher, b.studentId);
-    expect((await svc.signInWithCode(s.classCode!, b.studentId, b.backupCode)).user.id).toBe(b.studentId);
+    // Old 6-character codes still match (hash is per student, any length).
+    const legacy = 'ABC-DEF';
+    await prisma.classPass.update({
+      where: { classroomId_studentId: { classroomId, studentId: badges[2].studentId } },
+      data: { backupHash: hashBackup(badges[2].studentId, legacy) },
+    });
+    expect((await svc.signInWithClassAndCode(s.classCode!, legacy, '10.0.0.2')).user.id).toBe(badges[2].studentId);
+    await expect(svc.signInWithClassAndCode(s.classCode!, 'ZZZ-ZZZ', '10.0.0.2')).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.signInWithClassAndCode('ZZZZZZ', b.personalCode, '10.0.0.2')).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it("does not let one student's backup code open another student", async () => {
-    const s = await svc.status(classroomId, teacher);
-    await expect(svc.signInWithCode(s.classCode!, badges[2].studentId, badges[1].backupCode)).rejects.toBeInstanceOf(UnauthorizedException);
+  it('slows down a network that keeps typing wrong codes', async () => {
+    for (let i = 0; i < 60; i++) {
+      await expect(svc.signInWithPersonalCode('ZZZZ-ZZZ' + (i % 9), '10.9.9.9')).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+    await expect(svc.signInWithPersonalCode(badges[0].personalCode, '10.9.9.9')).rejects.toBeInstanceOf(HttpException);
+    // Another network is unaffected.
+    expect((await svc.signInWithPersonalCode(badges[0].personalCode, '10.0.0.3')).user.id).toBe(badges[0].studentId);
   });
 
   it('re-issuing replaces the old card; revoking stops it', async () => {
     const old = badges[0];
     const re = await svc.issue(classroomId, teacher, [old.studentId]);
     await expect(svc.signInWithBadge(old.badgePath.slice(4))).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.signInWithPersonalCode(old.personalCode, '10.0.0.4')).rejects.toBeInstanceOf(UnauthorizedException);
     expect((await svc.signInWithBadge(re.issued[0].badgePath.slice(4))).user.id).toBe(old.studentId);
+    expect((await svc.signInWithPersonalCode(re.issued[0].personalCode, '10.0.0.4')).user.id).toBe(old.studentId);
     await svc.revoke(classroomId, teacher, old.studentId);
     await expect(svc.signInWithBadge(re.issued[0].badgePath.slice(4))).rejects.toBeInstanceOf(UnauthorizedException);
-    const s = await svc.status(classroomId, teacher);
-    expect((await svc.lookupClass(s.classCode!)).students).toHaveLength(2);
+    await expect(svc.signInWithPersonalCode(re.issued[0].personalCode, '10.0.0.4')).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('turning Class Pass off stops every badge and the class code', async () => {
     const s = await svc.status(classroomId, teacher);
     await svc.setOn(classroomId, teacher, false);
     await expect(svc.signInWithBadge(badges[2].badgePath.slice(4))).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(svc.lookupClass(s.classCode!)).rejects.toThrow();
+    await expect(svc.signInWithPersonalCode(badges[2].personalCode, '10.0.0.5')).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.signInWithClassAndCode(s.classCode!, badges[1].personalCode, '10.0.0.5')).rejects.toBeInstanceOf(UnauthorizedException);
     await svc.setOn(classroomId, teacher, true);
     expect((await svc.signInWithBadge(badges[2].badgePath.slice(4))).user.id).toBe(badges[2].studentId);
   });
@@ -183,6 +196,7 @@ run('Class Pass (real DB)', () => {
     const issued = await svc.issue(classroomId, teacher, [extra.added[0].studentId]);
     await prisma.enrollment.delete({ where: { classroomId_studentId: { classroomId, studentId: extra.added[0].studentId } } });
     await expect(svc.signInWithBadge(issued.issued[0].badgePath.slice(4))).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.signInWithPersonalCode(issued.issued[0].personalCode, '10.0.0.6')).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   describe('Ask for help', () => {

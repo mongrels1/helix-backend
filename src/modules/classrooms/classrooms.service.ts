@@ -184,8 +184,18 @@ export class ClassroomsService {
     await this.classroomsRepository.unenroll(classroomId, studentId);
   }
 
-  async getEnrollments(classroomId: string): Promise<Enrollment[]> {
-    await this.findById(classroomId);
+  async getEnrollments(
+    classroomId: string,
+    requestingUser?: Pick<RequestingUser, 'userId' | 'role'>,
+  ): Promise<Enrollment[]> {
+    const classroom = await this.findById(classroomId);
+    // A roster carries students' full names and emails: never to students,
+    // parents, or a teacher who doesn't teach this class.
+    if (requestingUser) {
+      const isOwner = classroom.teacherId === requestingUser.userId;
+      const isAdmin = requestingUser.role === Role.ORG_ADMIN || requestingUser.role === Role.SUPER_ADMIN;
+      if (!isOwner && !isAdmin) throw new ForbiddenException('You do not have access to this class roster');
+    }
     return this.classroomsRepository.getEnrollments(classroomId);
   }
 }

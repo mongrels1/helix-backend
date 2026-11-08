@@ -1,15 +1,16 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Public } from '@common/decorators/public.decorator';
 import { Roles } from '@common/decorators/roles.decorator';
 import { EntitlementService } from '@modules/entitlement/entitlement.service';
-import { ClassPassRateLimitGuard } from './class-pass-rate-limit.guard';
+import { ClassPassRateLimitGuard, clientIp, type IpRequest } from './class-pass-rate-limit.guard';
 import { ClassPassCaller, ClassPassService } from './class-pass.service';
 import {
   AddStudentsDto,
   BadgeSignInDto,
-  CodeSignInDto,
+  ClassCodeSignInDto,
+  PersonalCodeSignInDto,
   IssueBadgesDto,
   SetClassPassDto,
 } from './dto/class-pass.dto';
@@ -81,13 +82,6 @@ export class ClassPassController {
   // ── Student (public: this IS the sign-in) ────────────────────────────────
   @Public()
   @UseGuards(ClassPassRateLimitGuard)
-  @Get('class/:code')
-  async lookup(@Param('code') code: string) {
-    return { success: true, data: await this.classPass.lookupClass(code) };
-  }
-
-  @Public()
-  @UseGuards(ClassPassRateLimitGuard)
   @Post('sign-in/badge')
   @HttpCode(200)
   async badge(@Body() dto: BadgeSignInDto) {
@@ -96,12 +90,24 @@ export class ClassPassController {
     return { success: true, data: { ...data, user: { ...data.user, entitled } } };
   }
 
+  /** The personal code typed alone: opens that one student's work, nothing else. */
+  @Public()
+  @UseGuards(ClassPassRateLimitGuard)
+  @Post('sign-in/personal')
+  @HttpCode(200)
+  async personal(@Body() dto: PersonalCodeSignInDto, @Req() req: IpRequest) {
+    const data = await this.classPass.signInWithPersonalCode(dto.code, clientIp(req));
+    const entitled = await this.entitlement.isEntitled(data.user.id);
+    return { success: true, data: { ...data, user: { ...data.user, entitled } } };
+  }
+
+  /** Pages printed before 8 Nov: class code + 6-character code. No name list. */
   @Public()
   @UseGuards(ClassPassRateLimitGuard)
   @Post('sign-in/code')
   @HttpCode(200)
-  async code(@Body() dto: CodeSignInDto) {
-    const data = await this.classPass.signInWithCode(dto.classCode, dto.studentId, dto.backupCode);
+  async code(@Body() dto: ClassCodeSignInDto, @Req() req: IpRequest) {
+    const data = await this.classPass.signInWithClassAndCode(dto.classCode, dto.code, clientIp(req));
     const entitled = await this.entitlement.isEntitled(data.user.id);
     return { success: true, data: { ...data, user: { ...data.user, entitled } } };
   }

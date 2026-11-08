@@ -40,6 +40,20 @@ export function newBackupCode(): string {
   return `${c.slice(0, 3)}-${c.slice(3)}`;
 }
 
+/**
+ * The personal code a student types at /class: 8 characters, printed XXXX-XXXX.
+ * ~40 bits, unique across the platform, so on its own it opens one account,
+ * like a bank card PIN plus card in one, without any name list.
+ */
+export function newPersonalCode(): string {
+  const c = randomCode(8);
+  return `${c.slice(0, 4)}-${c.slice(4)}`;
+}
+
+export function hashPersonal(code: string): string {
+  return createHash('sha256').update(`code:${normalizeCode(code)}`).digest('hex');
+}
+
 export function newClassCode(): string {
   return randomCode(6);
 }

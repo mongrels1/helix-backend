@@ -369,6 +369,9 @@ model ClassPass {
   studentId      String
   badgeHash      String    @unique
   backupHash     String
+  /// SHA-256 of the student's 8-character personal code: typed alone at /class,
+  /// it identifies exactly one student (no class code, no name list). Unique.
+  codeHash       String?   @unique
   failedAttempts Int       @default(0)
   lockedUntil    DateTime?
   revokedAt      DateTime?

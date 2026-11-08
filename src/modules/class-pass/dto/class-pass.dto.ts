@@ -34,16 +34,18 @@ export class BadgeSignInDto {
   badge!: string;
 }
 
-export class CodeSignInDto {
+export class PersonalCodeSignInDto {
+  @IsString()
+  @MaxLength(16)
+  code!: string;
+}
+
+export class ClassCodeSignInDto {
   @IsString()
   @MaxLength(16)
   classCode!: string;
 
   @IsString()
-  @MaxLength(64)
-  studentId!: string;
-
-  @IsString()
   @MaxLength(16)
-  backupCode!: string;
+  code!: string;
 }

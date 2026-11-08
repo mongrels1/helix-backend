@@ -21,8 +21,9 @@ import {
   hashBackup,
   hashBadge,
   isPlausibleBadge,
-  newBackupCode,
+  hashPersonal,
   newBadgeSecret,
+  newPersonalCode,
   newClassCode,
   normalizeCode,
   parseStudentName,
@@ -34,8 +35,11 @@ export type ClassPassCaller = { userId: string; role: Role | string };
 /** Accounts made by Class Pass have no real email; this domain can never receive mail. */
 export const CLASS_PASS_EMAIL_DOMAIN = 'classpass.edkairos.invalid';
 
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCK_MINUTES = 10;
+const FAIL_WINDOW_MS = 10 * 60 * 1000;
+/** Wrong codes allowed per network per 10 min (a whole school shares one network). */
+const MAX_FAILS_PER_IP = 60;
+/** Wrong class-code+code tries per class per 10 min. */
+const MAX_FAILS_PER_CLASS = 20;
 const MAX_NAMES_PER_CALL = 200;
 const DEFAULT_CLASS_PASS_CAP = 150;
 const DEFAULT_ACCESS_ENDS = '2027-06-30';
@@ -50,7 +54,10 @@ export interface IssuedBadge {
   displayName: string;
   /** Path the QR encodes, e.g. /go/ABCD… (the frontend adds its own origin). */
   badgePath: string;
+  /** Same value as personalCode (kept for printouts made before 8 Nov). */
   backupCode: string;
+  /** 8 characters, XXXX-XXXX: typed alone at /class. */
+  personalCode: string;
 }
 
 export interface ClassPassStudentRow {
@@ -62,6 +69,7 @@ export interface ClassPassStudentRow {
   issuedAt: Date | null;
   lastUsedAt: Date | null;
   locked: boolean;
+  personalCode: boolean;
 }
 
 @Injectable()
@@ -147,6 +155,8 @@ export class ClassPassService {
           issuedAt: p?.issuedAt ?? null,
           lastUsedAt: p?.lastUsedAt ?? null,
           locked: !!p?.lockedUntil && p.lockedUntil.getTime() > now,
+          /** True once this student's page carries an 8-character personal code. */
+          personalCode: !!p && !p.revokedAt && !!p.codeHash,
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -344,10 +354,14 @@ export class ClassPassService {
     const issued: IssuedBadge[] = [];
     for (const e of targets) {
       const secret = newBadgeSecret();
-      const backup = newBackupCode();
+      // One personal code per student. It works typed alone (codeHash, unique
+      // across the platform) and with a class code (backupHash), so nothing a
+      // student types ever needs a name list.
+      const personal = await this.uniquePersonalCode();
       const data = {
         badgeHash: hashBadge(secret),
-        backupHash: hashBackup(e.studentId, backup),
+        backupHash: hashBackup(e.studentId, personal),
+        codeHash: hashPersonal(personal),
         failedAttempts: 0,
         lockedUntil: null,
         revokedAt: null,
@@ -365,12 +379,22 @@ export class ClassPassService {
         name: `${first} ${last}`.trim(),
         displayName: displayName(first, last),
         badgePath: `/go/${secret}`,
-        backupCode: backup,
+        backupCode: personal,
+        personalCode: personal,
       });
     }
     issued.sort((a, b) => a.name.localeCompare(b.name));
     this.logger.log(`[class-pass] classroom=${classroomId} issued=${issued.length}`);
     return { classroomName: classroom.name, classCode: classroom.classPassCode, issued };
+  }
+
+  private async uniquePersonalCode(): Promise<string> {
+    for (let i = 0; i < 10; i++) {
+      const code = newPersonalCode();
+      const taken = await this.prisma.classPass.findUnique({ where: { codeHash: hashPersonal(code) }, select: { id: true } });
+      if (!taken) return code;
+    }
+    throw new Error('Could not allocate a personal code');
   }
 
   /** Stop one student's badge and backup code at once (lost card). */
@@ -474,33 +498,6 @@ export class ClassPassService {
 
   // ── Student side (public endpoints) ───────────────────────────────────────
 
-  /** Class code → the class name and the first-name-last-initial list to tap. */
-  async lookupClass(classCode: string) {
-    const code = normalizeCode(classCode);
-    if (code.length !== 6) throw new NotFoundException('Class not found. Check the code on the board.');
-    const classroom = await this.prisma.classroom.findFirst({
-      where: { classPassCode: code, classPassOn: true, deletedAt: null },
-      select: { id: true, name: true },
-    });
-    if (!classroom) throw new NotFoundException('Class not found. Check the code on the board.');
-    const passes = await this.prisma.classPass.findMany({
-      where: { classroomId: classroom.id, revokedAt: null },
-      select: { studentId: true },
-    });
-    const students = passes.length
-      ? await this.prisma.user.findMany({
-          where: { id: { in: passes.map((p) => p.studentId) }, deletedAt: null, suspendedAt: null },
-          select: { id: true, profile: { select: { firstName: true, lastName: true } } },
-        })
-      : [];
-    return {
-      classroomName: classroom.name,
-      students: students
-        .map((s) => ({ id: s.id, displayName: displayName(s.profile?.firstName, s.profile?.lastName) }))
-        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
-    };
-  }
-
   /** The QR badge: the secret alone proves who the student is. */
   async signInWithBadge(secret: string): Promise<AuthTokens & { classroomId: string }> {
     if (!isPlausibleBadge(secret)) throw new UnauthorizedException(BAD_BADGE);
@@ -523,50 +520,71 @@ export class ClassPassService {
     return { ...tokens, classroomId: pass.classroomId };
   }
 
-  /** The fallback: class code + tap your name + backup code. Locks after 5 misses. */
-  async signInWithCode(
-    classCode: string,
-    studentId: string,
-    backupCode: string,
-  ): Promise<AuthTokens & { classroomId: string }> {
-    const code = normalizeCode(classCode);
-    const classroom = code.length === 6
-      ? await this.prisma.classroom.findFirst({
-          where: { classPassCode: code, classPassOn: true, deletedAt: null },
-          select: { id: true },
+  /**
+   * The personal code typed alone at /class: like a bank card, it opens one
+   * account and nothing else. No name list, no class code. Guessing is blocked
+   * by ~40 bits per code plus a per-network limit on wrong tries.
+   */
+  async signInWithPersonalCode(code: string, ip: string): Promise<AuthTokens & { classroomId: string }> {
+    this.assertNotThrottled(`ip:${ip}`, MAX_FAILS_PER_IP);
+    const n = normalizeCode(code);
+    const pass = n.length === 8
+      ? await this.prisma.classPass.findUnique({
+          where: { codeHash: hashPersonal(n) },
+          select: { id: true, studentId: true, classroomId: true, revokedAt: true, classroom: { select: { classPassOn: true, deletedAt: true } } },
         })
       : null;
-    if (!classroom || typeof studentId !== 'string' || studentId.length > 64) {
+    if (!pass || pass.revokedAt || !pass.classroom.classPassOn || pass.classroom.deletedAt) {
+      this.noteFailure(`ip:${ip}`);
       throw new UnauthorizedException(WRONG_CODE);
     }
-    const pass = await this.prisma.classPass.findUnique({
-      where: { classroomId_studentId: { classroomId: classroom.id, studentId } },
-    });
-    if (!pass || pass.revokedAt) throw new UnauthorizedException(WRONG_CODE);
-    if (pass.lockedUntil && pass.lockedUntil.getTime() > Date.now()) {
-      throw new HttpException(
-        'Too many tries. Ask your teacher to unlock your Class Pass, or wait 10 minutes.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-    if (!sameHash(hashBackup(studentId, backupCode ?? ''), pass.backupHash)) {
-      const failed = pass.failedAttempts + 1;
-      await this.prisma.classPass.update({
-        where: { id: pass.id },
-        data: {
-          failedAttempts: failed >= MAX_FAILED_ATTEMPTS ? 0 : failed,
-          lockedUntil: failed >= MAX_FAILED_ATTEMPTS ? new Date(Date.now() + LOCK_MINUTES * 60_000) : pass.lockedUntil,
-        },
-      });
+    await this.assertStillEnrolled(pass.classroomId, pass.studentId, WRONG_CODE);
+    const tokens = await this.auth.issueSessionFor(pass.studentId, endOfSchoolDayMs());
+    await this.prisma.classPass.update({ where: { id: pass.id }, data: { lastUsedAt: new Date(), failedAttempts: 0, lockedUntil: null } });
+    return { ...tokens, classroomId: pass.classroomId };
+  }
+
+  /**
+   * For pages printed before personal codes (class code + 6-character code):
+   * the student types both; the server finds the match itself. No names shown.
+   */
+  async signInWithClassAndCode(classCode: string, code: string, ip: string): Promise<AuthTokens & { classroomId: string }> {
+    this.assertNotThrottled(`ip:${ip}`, MAX_FAILS_PER_IP);
+    const cc = normalizeCode(classCode);
+    const classroom = cc.length === 6
+      ? await this.prisma.classroom.findFirst({ where: { classPassCode: cc, classPassOn: true, deletedAt: null }, select: { id: true } })
+      : null;
+    if (classroom) this.assertNotThrottled(`class:${classroom.id}`, MAX_FAILS_PER_CLASS);
+    const passes = classroom
+      ? await this.prisma.classPass.findMany({ where: { classroomId: classroom.id, revokedAt: null }, select: { id: true, studentId: true, backupHash: true } })
+      : [];
+    const match = passes.find((p) => sameHash(hashBackup(p.studentId, code ?? ''), p.backupHash));
+    if (!classroom || !match) {
+      this.noteFailure(`ip:${ip}`);
+      if (classroom) this.noteFailure(`class:${classroom.id}`);
       throw new UnauthorizedException(WRONG_CODE);
     }
-    await this.assertStillEnrolled(classroom.id, studentId, WRONG_CODE);
-    const tokens = await this.auth.issueSessionFor(studentId, endOfSchoolDayMs());
-    await this.prisma.classPass.update({
-      where: { id: pass.id },
-      data: { failedAttempts: 0, lockedUntil: null, lastUsedAt: new Date() },
-    });
+    await this.assertStillEnrolled(classroom.id, match.studentId, WRONG_CODE);
+    const tokens = await this.auth.issueSessionFor(match.studentId, endOfSchoolDayMs());
+    await this.prisma.classPass.update({ where: { id: match.id }, data: { lastUsedAt: new Date(), failedAttempts: 0, lockedUntil: null } });
     return { ...tokens, classroomId: classroom.id };
+  }
+
+  // Wrong-code throttle: per network (a school shares one) and per class.
+  private readonly failures = new Map<string, number[]>();
+  private noteFailure(key: string) {
+    const now = Date.now();
+    const list = (this.failures.get(key) ?? []).filter((t) => now - t < FAIL_WINDOW_MS);
+    list.push(now);
+    this.failures.set(key, list);
+    if (this.failures.size > 10_000) this.failures.clear();
+  }
+  private assertNotThrottled(key: string, max: number) {
+    const now = Date.now();
+    const recent = (this.failures.get(key) ?? []).filter((t) => now - t < FAIL_WINDOW_MS);
+    if (recent.length >= max) {
+      throw new HttpException('Too many wrong codes. Wait 10 minutes, or scan the QR code on your page.', HttpStatus.TOO_MANY_REQUESTS);
+    }
   }
 
   private async assertStillEnrolled(classroomId: string, studentId: string, message: string) {

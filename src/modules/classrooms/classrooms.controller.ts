@@ -107,11 +107,14 @@ export class ClassroomsController {
     return { success: true, data: null };
   }
 
+  /** The class roster (names, emails): the class's teacher and admins only. */
   @Get(':id/enrollments')
+  @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async getEnrollments(
     @Param('id') id: string,
+    @CurrentUser() currentUser: RequestingUser,
   ): Promise<{ success: true; data: Enrollment[] }> {
-    const enrollments = await this.classroomsService.getEnrollments(id);
+    const enrollments = await this.classroomsService.getEnrollments(id, currentUser);
     return { success: true, data: enrollments };
   }
 }

@@ -45,7 +45,7 @@ export class AITutorController {
   ): Promise<{ success: true; data: TutorSession[] }> {
     const targetStudentId = user.role === Role.STUDENT ? user.userId : studentId;
     const data = targetStudentId
-      ? await this.aiTutorService.getSessionsForStudent(targetStudentId)
+      ? await this.aiTutorService.getSessionsForStudent(targetStudentId, user.userId, user.role)
       : [];
     return { success: true, data };
   }

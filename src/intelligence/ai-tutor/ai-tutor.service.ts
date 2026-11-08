@@ -179,11 +179,43 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     ) {
       throw new ForbiddenException('You can only view your own tutor session');
     }
+    await this.assertStaffCanSeeStudent(session.studentId, requestingUserId, requestingUserRole);
     return session;
   }
 
-  async getSessionsForStudent(studentId: string): Promise<TutorSession[]> {
+  async getSessionsForStudent(
+    studentId: string,
+    requestingUserId?: string,
+    requestingUserRole?: string,
+  ): Promise<TutorSession[]> {
+    if (requestingUserId && requestingUserRole) {
+      await this.assertStaffCanSeeStudent(studentId, requestingUserId, requestingUserRole);
+    }
     return this.repository.findSessionsForStudent(studentId);
+  }
+
+  /**
+   * A student's help conversations are visible to that student, a teacher who
+   * teaches them, an org admin of their school, or a super-admin. Not to any
+   * other teacher. (Students are already limited to their own above.)
+   */
+  private async assertStaffCanSeeStudent(studentId: string, userId: string, role: string): Promise<void> {
+    if (role === Role.SUPER_ADMIN || role === Role.STUDENT) return;
+    if (role === Role.TEACHER) {
+      const teaches = await this.prisma.enrollment.findFirst({
+        where: { studentId, classroom: { teacherId: userId, deletedAt: null } },
+        select: { id: true },
+      });
+      if (teaches) return;
+    }
+    if (role === Role.ORG_ADMIN) {
+      const shared = await this.prisma.membership.findFirst({
+        where: { userId: studentId, organization: { memberships: { some: { userId, role: Role.ORG_ADMIN } } } },
+        select: { id: true },
+      });
+      if (shared) return;
+    }
+    throw new ForbiddenException("You can only view help conversations of students in your classes");
   }
 
   async getUsageReport(): Promise<Array<{ studentId: string; name: string; email: string; messagesThisMonth: number; cap: number; over: boolean; pct: number | null }>> {

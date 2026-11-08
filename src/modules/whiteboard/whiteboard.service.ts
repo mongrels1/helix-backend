@@ -510,7 +510,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     }
     const live = this.live.get(sessionId);
     return {
-      session: this.sessionView(live ?? (await this.ensureLive(sessionId, false))),
+      session: this.sessionView(live ?? (await this.ensureLive(sessionId, false)), userId, admin),
       boards: visible.map((b) => {
         const lb = live?.boards.get(b.id);
         return {
@@ -927,7 +927,25 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     else s.hands.delete(userId);
   }
 
-  sessionView(s: LiveSession): SessionView {
+  /**
+   * The session as one person may see it. With `viewerId` of a STUDENT, every
+   * other student is removed (names, ids, hands, locks, who is online) so a
+   * student never learns who else is in the session. The teacher, admins and
+   * calls without a viewer get the full view.
+   */
+  sessionView(s: LiveSession, viewerId?: string, viewerIsAdmin = false): SessionView {
+    const full = this.fullSessionView(s);
+    if (!viewerId || viewerIsAdmin || isTutor(viewerId, s.state)) return full;
+    return {
+      ...full,
+      focusStudentId: full.focusStudentId === viewerId ? viewerId : null,
+      lockedStudentIds: full.lockedStudentIds.filter((id) => id === viewerId),
+      hands: full.hands.filter((h) => h === viewerId),
+      participants: full.participants.filter((p) => p.role === 'TUTOR' || p.userId === viewerId),
+    };
+  }
+
+  private fullSessionView(s: LiveSession): SessionView {
     return {
       id: s.id,
       classroomId: s.classroomId,

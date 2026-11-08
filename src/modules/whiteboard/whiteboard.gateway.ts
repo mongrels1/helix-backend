@@ -222,8 +222,8 @@ export class WhiteboardGateway
       if (s.state.tutorId === data.userId) await client.join(tRoom(s.id));
       const boards = this.service.boardsFor(s, data.userId);
       for (const b of boards) await client.join(bRoom(b.id));
-      const result = { me: data.userId, session: this.service.sessionView(s), boards, online: [] as string[] };
-      result.online = await this.online(s.id);
+      const result = { me: data.userId, session: this.service.sessionView(s, data.userId), boards, online: [] as string[] };
+      result.online = this.visibleOnline(s, data.userId, await this.online(s.id));
       await this.broadcastSession(s.id);
       return { ok: true, data: result };
     } catch (err) {
@@ -376,12 +376,24 @@ export class WhiteboardGateway
     return [...new Set(sockets.map((x) => (x.data as SocketData).userId as string))];
   }
 
+  /**
+   * Each person gets their own copy: the teacher sees everyone; a student sees
+   * only the teacher and themselves (never classmates' names or who is online).
+   */
   private async broadcastSession(sessionId: string): Promise<void> {
     const s = this.service.getLive(sessionId);
     if (!s) return;
-    this.server
-      .to(sRoom(sessionId))
-      .emit('wb:session', { session: this.service.sessionView(s), online: await this.online(sessionId) });
+    const online = await this.online(sessionId);
+    const sockets = await this.server.in(sRoom(sessionId)).fetchSockets();
+    for (const sock of sockets) {
+      const viewer = (sock.data as SocketData).userId as string;
+      sock.emit('wb:session', { session: this.service.sessionView(s, viewer), online: this.visibleOnline(s, viewer, online) });
+    }
+  }
+
+  private visibleOnline(s: { state: { tutorId: string } }, viewer: string, online: string[]): string[] {
+    if (viewer === s.state.tutorId) return online;
+    return online.filter((id) => id === viewer || id === s.state.tutorId);
   }
 
   /**
