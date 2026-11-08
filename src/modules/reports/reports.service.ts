@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '@modules/email/email.service';
+import { effectiveGrade } from '@common/grade/grade';
 import { DEFAULT_GOAL_MINUTES, PracticeBand, practiceBand, schoolWeek, SchoolWeek } from './report-week';
 
 export type ReportCaller = { userId: string; role: Role | string };
@@ -28,6 +29,8 @@ export interface StudentWeeklyReport {
   /** First name (what the parent email greets). */
   name: string;
   fullName: string;
+  /** "K" or "1"–"12": own grade, else the class's. */
+  grade: string | null;
   classrooms: { id: string; name: string }[];
   windowStart: Date;
   windowEnd: Date;
@@ -165,10 +168,10 @@ export class ReportsService {
       select: {
         id: true,
         email: true,
-        profile: { select: { firstName: true, lastName: true } },
+        profile: { select: { firstName: true, lastName: true, grade: true } },
         enrollments: {
           where: { classroom: { deletedAt: null } },
-          select: { classroom: { select: { id: true, name: true, practiceGoalMinutes: true } } },
+          select: { classroom: { select: { id: true, name: true, practiceGoalMinutes: true, gradeLevel: true } } },
         },
       },
     });
@@ -337,6 +340,7 @@ export class ReportsService {
       studentId,
       name,
       fullName,
+      grade: effectiveGrade(student.profile?.grade, classrooms.map((c) => c.gradeLevel)),
       classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })),
       windowStart,
       windowEnd,

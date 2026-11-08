@@ -352,6 +352,9 @@ model Classroom {
   /// Weekly practice goal in minutes for this class (null = the default, 180).
   /// Shown against measured practice time on reports and the Progress tab.
   practiceGoalMinutes Int?
+  /// The class's grade ("K" or "1"–"12"). Students without their own grade
+  /// inherit it; setting it fills in any student who has none.
+  gradeLevel     String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?

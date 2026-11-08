@@ -19,6 +19,7 @@ import { figureIsSane } from '../item-generation/reliability-gate';
 import { resolveToGa, expectationsForGrade } from '../standards/ga-standards';
 import { PrismaService } from '../../prisma/prisma.service';
 import { startOfSchoolDay } from '../../modules/class-pass/class-pass.codes';
+import { effectiveGrade } from '../../common/grade/grade';
 import {
   AITutorRepository,
   TutorSessionWithMessages,
@@ -494,12 +495,22 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     studentId: string,
   ): Promise<number | undefined> {
     try {
+      // Latest diagnostic first; otherwise the student's own grade, then their class's.
       const d = await this.prisma.diagnosticSession.findFirst({
         where: { userId: studentId, grade: { not: null } },
         orderBy: { completedAt: 'desc' },
         select: { grade: true },
       });
-      return this.parseGrade(d?.grade);
+      const fromDiagnostic = this.parseGrade(d?.grade);
+      if (fromDiagnostic !== undefined) return fromDiagnostic;
+      const u = await this.prisma.user.findUnique({
+        where: { id: studentId },
+        select: {
+          profile: { select: { grade: true } },
+          enrollments: { select: { classroom: { select: { gradeLevel: true } } } },
+        },
+      });
+      return this.parseGrade(effectiveGrade(u?.profile?.grade, u?.enrollments.map((e) => e.classroom.gradeLevel) ?? []));
     } catch {
       return undefined;
     }

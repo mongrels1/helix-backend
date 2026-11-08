@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Enrollment, Role } from '@prisma/client';
+import { normalizeGrade } from '@common/grade/grade';
 import { OrganizationsRepository } from '@modules/organizations/organizations.repository';
 import { UsersRepository } from '@modules/users/users.repository';
 import { CreateClassroomDto } from './dto/create-classroom.dto';
@@ -135,7 +137,17 @@ export class ClassroomsService {
       await this.assertCanUseSchool(dto.organizationId, requestingUser);
     }
 
-    return this.classroomsRepository.update(id, dto);
+    if (dto.gradeLevel !== undefined) {
+      const g = normalizeGrade(dto.gradeLevel);
+      if (!g) throw new BadRequestException('Grade must be K or 1–12.');
+      dto = { ...dto, gradeLevel: g };
+    }
+    const updated = await this.classroomsRepository.update(id, dto);
+    // A class grade fills in every student in the class who has none.
+    if (dto.gradeLevel && dto.gradeLevel !== classroom.gradeLevel) {
+      await this.classroomsRepository.fillMissingGrades(id, dto.gradeLevel);
+    }
+    return updated;
   }
 
   async remove(id: string): Promise<void> {
@@ -147,7 +159,7 @@ export class ClassroomsService {
     classroomId: string,
     dto: EnrollStudentDto,
   ): Promise<Enrollment> {
-    await this.findById(classroomId);
+    const classroom = await this.findById(classroomId);
 
     const student = await this.usersRepository.findById(dto.studentId);
     if (!student || student.role !== Role.STUDENT) {
@@ -162,7 +174,9 @@ export class ClassroomsService {
       throw new ConflictException('Student is already enrolled');
     }
 
-    return this.classroomsRepository.enroll(classroomId, dto.studentId);
+    const enrollment = await this.classroomsRepository.enroll(classroomId, dto.studentId);
+    if (classroom.gradeLevel) await this.classroomsRepository.fillMissingGrades(classroomId, classroom.gradeLevel);
+    return enrollment;
   }
 
   async unenroll(classroomId: string, studentId: string): Promise<void> {

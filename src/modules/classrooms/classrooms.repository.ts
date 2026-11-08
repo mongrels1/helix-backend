@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { fillMissingGrades } from '@common/grade/grade';
 import { Enrollment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateClassroomDto } from './dto/create-classroom.dto';
@@ -10,6 +11,7 @@ const classroomSelect = {
   description: true,
   organizationId: true,
   teacherId: true,
+  gradeLevel: true,
   createdAt: true,
   _count: {
     select: {
@@ -24,6 +26,7 @@ type ClassroomRecord = {
   description: string | null;
   organizationId: string;
   teacherId: string;
+  gradeLevel?: string | null;
   createdAt: Date;
   _count?: {
     enrollments: number;
@@ -77,6 +80,7 @@ export class ClassroomsRepository {
         description: dto.description,
         organizationId: dto.organizationId,
         teacherId,
+        gradeLevel: dto.gradeLevel ?? null,
       },
       select: classroomSelect,
     });
@@ -167,6 +171,11 @@ export class ClassroomsRepository {
     return [classrooms.map(this.toEntity), total];
   }
 
+  /** Students in this class with no grade get the class grade (never overwrites one). */
+  async fillMissingGrades(classroomId: string, grade: string): Promise<number> {
+    return fillMissingGrades(this.prisma, classroomId, grade);
+  }
+
   private toEntity(classroom: ClassroomRecord): ClassroomEntity {
     return {
       id: classroom.id,
@@ -174,6 +183,7 @@ export class ClassroomsRepository {
       description: classroom.description,
       organizationId: classroom.organizationId,
       teacherId: classroom.teacherId,
+      gradeLevel: classroom.gradeLevel ?? null,
       enrollmentCount: classroom._count?.enrollments ?? 0,
       createdAt: classroom.createdAt,
     };

@@ -13,6 +13,7 @@ import { PlanSource, Role, TutorMessageRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes, randomUUID } from 'crypto';
 import { AuthService, AuthTokens } from '@modules/auth/auth.service';
+import { fillMissingGrades, normalizeGrade } from '@common/grade/grade';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   displayName,
@@ -86,6 +87,7 @@ export class ClassPassService {
         organizationId: true,
         classPassCode: true,
         classPassOn: true,
+        gradeLevel: true,
       },
     });
     if (!classroom) throw new NotFoundException('Classroom not found');
@@ -151,6 +153,7 @@ export class ClassPassService {
     return {
       classroomId,
       classroomName: classroom.name,
+      gradeLevel: classroom.gradeLevel,
       on: classroom.classPassOn,
       classCode: classroom.classPassCode,
       students,
@@ -210,6 +213,16 @@ export class ClassPassService {
     }
     if (names.length > MAX_NAMES_PER_CALL) {
       throw new BadRequestException(`Add up to ${MAX_NAMES_PER_CALL} names at a time.`);
+    }
+    // Every student gets a grade: the one chosen, else the class's. With
+    // neither, refuse, so a missed dropdown can't leave a class without grades.
+    const chosen = normalizeGrade(grade);
+    const studentGrade = chosen ?? normalizeGrade(classroom.gradeLevel);
+    if (!studentGrade) {
+      throw new BadRequestException('Choose the grade for this class first.');
+    }
+    if (chosen && !normalizeGrade(classroom.gradeLevel)) {
+      await this.prisma.classroom.update({ where: { id: classroomId }, data: { gradeLevel: chosen } });
     }
 
     const [teacher, org, existingInTeacherClasses, inThisClass] = await Promise.all([
@@ -273,7 +286,7 @@ export class ClassPassService {
               create: {
                 firstName: parsed.firstName,
                 lastName: parsed.lastName,
-                ...(grade ? { grade } : {}),
+                grade: studentGrade,
               },
             },
           },
@@ -289,6 +302,8 @@ export class ClassPassService {
       total++;
       added.push({ studentId: student.id, name });
     }
+    // Students already in the class without a grade (e.g. added before this rule) get it too.
+    await fillMissingGrades(this.prisma, classroomId, normalizeGrade(classroom.gradeLevel) ?? studentGrade);
     this.logger.log(`[class-pass] classroom=${classroomId} added=${added.length} skipped=${skipped.length}`);
     return { added, skipped, cap, total };
   }
