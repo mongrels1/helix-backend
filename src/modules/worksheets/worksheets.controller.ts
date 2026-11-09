@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Res } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -38,6 +38,12 @@ export class WorksheetsController {
   @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async assignTargets(@CurrentUser() user: Caller) {
     return { success: true, data: await this.service.assignTargets(user) };
+  }
+
+  @Delete(':id')
+  @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
+  async remove(@CurrentUser() user: Caller, @Param('id', ParseUUIDPipe) id: string) {
+    return { success: true, data: await this.service.remove(user, id) };
   }
 
   @Post(':id/assign')

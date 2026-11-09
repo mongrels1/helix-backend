@@ -7,11 +7,13 @@ const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, t
 const run = (metatype: any, value: unknown) => pipe.transform(value, { type: 'body', metatype });
 
 describe('worksheet DTOs under the live validation settings', () => {
-  const q = { stem: 'Q1', options: { A: 'a', B: 'b', C: 'c', D: 'd' }, feedback: { A: 'x' }, crop: { page: 1, x: 0.1, y: 0.2, w: 0.4, h: 0.2 } };
+  const q = { context: 'Story', stem: 'Q1', table: { headers: ['a'], rows: [['1']] }, figureImage: 'data:image/png;base64,AA==', options: { A: 'a', B: 'b', C: 'c', D: 'd' }, feedback: { A: 'x' }, crop: { page: 1, x: 0.1, y: 0.2, w: 0.4, h: 0.2 } };
 
   it('accepts a question with a crop (what the check screen sends)', async () => {
     const out = await run(CreateWorksheetDto, { title: 'T', pageImages: ['data:image/jpeg;base64,AA=='], questions: [q], key: ['C'] });
     expect(out.questions[0].crop).toEqual(q.crop);
+    expect(out.questions[0].table).toEqual(q.table);
+    expect(out.questions[0].figureImage).toBe(q.figureImage);
   });
 
   it('still refuses unknown fields', async () => {

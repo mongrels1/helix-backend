@@ -47,11 +47,19 @@ export async function worksheetMiniLessonDirective(
   const theirs = answers[questionNo - 1];
   const key: string = a.worksheet.key[questionNo - 1];
   const fence = (s: string) => s.replace(/<<<|>>>/g, '');
+  const table = q.table
+    ? ['Table:', q.table.headers.length ? fence(q.table.headers.join(' | ')) : '', ...q.table.rows.map((r) => fence(r.join(' | ')))].filter(Boolean).join('\n')
+    : '';
   const problem = [
+    q.context ? fence(q.context) : '',
+    table,
+    q.figure ? '(The question also shows a graph or diagram the student can see.)' : '',
     `Question ${questionNo}: ${fence(q.stem)}`,
     ...(['A', 'B', 'C', 'D'] as const).map((L) => `${L}) ${fence(q.options[L])}`),
     `The student chose: ${theirs ?? 'no answer'}.`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   const revealed = answersRevealed(a.dueAt, now);
   const lines = revealed

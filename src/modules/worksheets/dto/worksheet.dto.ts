@@ -58,10 +58,27 @@ export class WorksheetQuestionDto {
   @IsObject()
   feedback?: Record<string, string>;
 
-  /** Where the question is on the worksheet ({page, x, y, w, h} as fractions); checked in the service. */
+  /** Draft only: where a graph is on the page ({page, x, y, w, h}); not stored. */
   @IsOptional()
   @IsObject()
   crop?: Record<string, number>;
+
+  /** Facts from the problem box, shown above the question. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(800)
+  context?: string;
+
+  /** {headers: string[], rows: string[][]}; checked in the service. */
+  @IsOptional()
+  @IsObject()
+  table?: Record<string, unknown>;
+
+  /** The question's graph/diagram as a high-resolution data:image URL. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(6_000_000)
+  figureImage?: string;
 }
 
 /** Save the teacher-confirmed worksheet. The server re-checks everything. */

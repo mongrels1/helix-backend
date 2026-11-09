@@ -10,10 +10,13 @@ Rules:
 - Transcribe; do not solve unless told to, and never invent questions or options that are not on the page.
 - Copy each printed A, B, C, D option's text exactly (numbers, units, signs, fractions as a/b, mixed numbers like 10 1/2).
 - NEVER invent options. If a question does not have four choices printed with the letters A, B, C, D (for example "Circle: Proportional / Not proportional", a blank to fill in, or a table to complete), still list it, but leave every option as "" and add a note naming the question. Do not repeat one choice to fill four slots.
-- "stem" is the question itself, plus only the facts from its problem box that a student needs to answer it (for example the prices or the table values). Keep it short and in plain text.
+- The student will see each question on its own phone screen as clean text, NOT as a picture of the page. So for each question give:
+  - "context": the facts from its problem box the student needs, in one or two short plain sentences (e.g. "The taxi charges $4 plus $1.50 per mile. Cherie rides 7 miles."). Leave out worksheet directions, the printed answer bubbles and anything another question asks. "" if none.
+  - "stem": the question itself, exactly as printed, without its number.
+  - "table": if the problem box has a table the student needs, {"headers":[...],"rows":[[...],...]} with every cell copied exactly (fractions as a/b, mixed numbers like 17 1/2, blank cells as ""); otherwise null. Do not put table values into the context.
 - Feedback: for each WRONG letter write one short, kind sentence to the student naming the likely mistake, using the problem's own numbers (e.g. "You doubled the $3 fee too. The fee is charged once per order."). Never write feedback for the correct letter. Never state the correct answer or the correct letter in feedback.
 - If the teacher's notes say what a wrong letter means, use that meaning.
-- "crop": where the question is on its worksheet page. Each worksheet image has a red grid: lines every 0.1 of the page width and height, labelled 0.1 to 0.9 along the top and left edges. Give {"page": the worksheet page number (1 = first image), "x", "y" = top-left corner, "w", "h" = width and height}, all as fractions of the page (0 to 1). The box must hold everything a student needs on one screen: the problem box's title and story, its table, graph or diagram, the question itself and its printed A–D choices. When several questions share one problem box or figure (e.g. two questions about the same story, or one set of graphs), give each question the whole shared box. Make the box a little too big rather than too small.
+- "crop": ONLY when the student needs a graph, diagram, picture or number line that cannot be written as text or a table; otherwise null. Then give the box around that drawing alone (with its labels such as "Graph 1"), NOT around text, tables, the question or the answer bubbles. Each worksheet image has a red grid: lines every 0.1 of the page width and height, labelled 0.1 to 0.9 along the top and left edges. Give {"page": the worksheet page number (1 = first image), "x", "y" = top-left corner, "w", "h"}, all as fractions of the page (0 to 1). Questions that share one set of graphs each get that same box.
 - Output ONLY JSON, no commentary.`;
 
 export function buildDraftPrompt(args: {
@@ -46,7 +49,7 @@ export function buildDraftPrompt(args: {
   }
   parts.push(
     'Return JSON shaped exactly like:',
-    '{"questions":[{"stem":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"key":"C","feedback":{"A":"...","B":"...","D":"..."},"crop":{"page":1,"x":0.05,"y":0.3,"w":0.45,"h":0.2}}],"notes":["anything you could not read"]}',
+    '{"questions":[{"context":"...","stem":"...","table":null,"options":{"A":"...","B":"...","C":"...","D":"..."},"key":"C","feedback":{"A":"...","B":"...","D":"..."},"crop":null}],"notes":["anything you could not read"]}',
     'Questions in the order they are numbered on the worksheet.',
   );
   return parts.join('\n');

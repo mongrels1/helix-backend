@@ -18,6 +18,7 @@ const run = URL ? describe : describe.skip;
 
 const KEY = 'C D C D A D B C A B C A B B D'.split(' ');
 const JPEG = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).toString('base64')}`;
+const PNG = `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48]).toString('base64')}`;
 const SVG = `data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`;
 const questions = Array.from({ length: 15 }, (_, i) => ({
   stem: `Q${i + 1} stem`,
@@ -100,15 +101,25 @@ run('Build W worksheets (real DB)', () => {
     bad[0] = 'E';
     await expect(svc.create(owner, { title: 'Proportional or Not?', pageImages: [JPEG], questions, key: bad })).rejects.toBeInstanceOf(BadRequestException);
     await expect(svc.create(owner, { title: 'x', pageImages: [SVG], questions, key: KEY })).rejects.toBeInstanceOf(BadRequestException);
-    // A question without a crop (no picture for the student) blocks saving; so does a crop on a missing page.
-    const noCrop = questions.map((q, i) => (i === 3 ? { ...q, crop: undefined } : q));
-    await expect(svc.create(owner, { title: 'x', pageImages: [JPEG, JPEG], questions: noCrop as any, key: KEY })).rejects.toBeInstanceOf(BadRequestException);
+    // A graph box on a page that does not exist blocks saving; a figure that is not a picture does too.
     await expect(svc.create(owner, { title: 'x', pageImages: [JPEG], questions, key: KEY })).rejects.toBeInstanceOf(BadRequestException);
-    const ws = await svc.create(owner, { title: 'Proportional or Not?', standard: '7.PAR.4.3', pageImages: [JPEG, JPEG], questions, key: KEY });
+    const badFig = questions.map((q, i) => (i === 4 ? { ...q, figureImage: SVG } : q));
+    await expect(svc.create(owner, { title: 'x', pageImages: [JPEG, JPEG], questions: badFig as any, key: KEY })).rejects.toBeInstanceOf(BadRequestException);
+    // Q5 and Q6 share the graphs; Q10 has a table; everything else is text only.
+    const parts = questions.map((q, i) => ({
+      ...q,
+      context: i === 9 ? 'Gas. Let g = gallons and c = cost in dollars.' : `Story ${i + 1}`,
+      ...(i === 9 ? { table: { headers: ['Gallons (g)', 'Cost (c)'], rows: [['2', '$7'], ['4', '$14'], ['6', '$21']] } } : {}),
+      ...(i === 4 || i === 5 ? { figureImage: PNG } : {}),
+    }));
+    const ws = await svc.create(owner, { title: 'Proportional or Not?', standard: '7.PAR.4.3', pageImages: [JPEG, JPEG], questions: parts as any, key: KEY });
     expect(ws.questionCount).toBe(15);
     worksheetId = ws.id;
     const stored = await prisma.worksheet.findUniqueOrThrow({ where: { id: ws.id } });
     expect((stored.questions as any)[0].feedback.C).toBeUndefined();
+    expect((stored.questions as any)[0].crop).toBeUndefined(); // page boxes are never stored
+    expect((stored.questions as any)[4].figure).toEqual({ pageNo: 1005 });
+    expect(await prisma.worksheetPage.count({ where: { worksheetId: ws.id } })).toBe(4); // 2 pages + 2 graphs
   });
 
   it('assigns to two classes in one action; only classes you can teach', async () => {
@@ -127,19 +138,22 @@ run('Build W worksheets (real DB)', () => {
     const sheet: any = await svc.sheet(s6, a6);
     expect(sheet.role).toBe('student');
     expect(sheet.questionCount).toBe(15);
-    expect(sheet.pages).toHaveLength(2);
-    expect(sheet.questions[10].crop).toEqual({ page: 2, x: 0.05, y: 0.18, w: 0.45, h: 0.15 });
+    expect(sheet.pages).toBeUndefined(); // students get clean questions, not page photos
+    expect(sheet.questions[9]).toMatchObject({ context: 'Gas. Let g = gallons and c = cost in dollars.', table: { headers: ['Gallons (g)', 'Cost (c)'] }, figureId: null });
+    expect(sheet.questions[4].figureId).toBeTruthy();
+    expect(sheet.questions[0].figureId).toBeNull();
     const text = JSON.stringify(sheet);
     expect(text).not.toContain('"key"');
     expect(text).not.toContain('fa0');
     expect(text).not.toContain('correctAnswer');
     await expect(svc.sheet(sOther, a6)).rejects.toBeInstanceOf(ForbiddenException);
     await expect(svc.sheet(s7, a6)).rejects.toBeInstanceOf(ForbiddenException);
-    // Pages: assigned students and staff only.
-    await expect(svc.page(s6, sheet.pages[0])).resolves.toBeTruthy();
-    await expect(svc.page(sOther, sheet.pages[0])).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.page(outsider, sheet.pages[0])).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.page(viewer, sheet.pages[0])).resolves.toBeTruthy();
+    // Graph pictures: assigned students and staff only.
+    const fig = sheet.questions[4].figureId;
+    await expect(svc.page(s6, fig)).resolves.toMatchObject({ mime: 'image/png' });
+    await expect(svc.page(sOther, fig)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.page(outsider, fig)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.page(viewer, fig)).resolves.toBeTruthy();
   });
 
   it('autosave keeps answers; the old generic submission routes refuse worksheets', async () => {
@@ -213,6 +227,22 @@ run('Build W worksheets (real DB)', () => {
     expect(listS6b.map((a) => a.id)).toContain(only.id);
     expect((await svc.results(owner, only.id)).summary.students).toBe(1);
     void reports;
+  });
+
+  it('delete: refused while assigned, only by the owner, gone afterwards', async () => {
+    await expect(svc.remove(owner, worksheetId)).rejects.toBeInstanceOf(ConflictException);
+    const spare = await svc.create(owner, { title: 'spare', pageImages: [JPEG], questions: questions.map((q) => ({ ...q, crop: undefined })) as any, key: KEY });
+    await expect(svc.remove(outsider, spare.id)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(await svc.remove(owner, spare.id)).toEqual({ deleted: true });
+    expect(await prisma.worksheetPage.count({ where: { worksheetId: spare.id } })).toBe(0);
+    await expect(svc.remove(owner, spare.id)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('mini lesson context includes the story and the table', async () => {
+    const d = await worksheetMiniLessonDirective(prisma, a6, s6b.userId, 10);
+    expect(d).toContain('Gas. Let g = gallons and c = cost in dollars.');
+    expect(d).toContain('Gallons (g) | Cost (c)');
+    expect(d).toContain('6 | $21');
   });
 
   it('a deleted assignment is gone for everyone', async () => {

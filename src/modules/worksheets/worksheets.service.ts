@@ -19,6 +19,7 @@ import {
 import {
   Letter,
   MAX_TOTAL_PAGE_BYTES,
+  FIGURE_PAGE_BASE,
   decodePageImage,
   isClosed,
   isLetter,
@@ -126,10 +127,21 @@ export class WorksheetsService {
     });
     const pages = dto.pageImages.map(decodePageImage);
     if (pages.some((p) => !p)) throw new BadRequestException('One of the pages could not be read as a picture.');
-    // Every question must say where it is on the worksheet (its picture on the student's screen).
     const problems = validateWorksheet(questions, key, pages.length);
     if (problems.length) throw new BadRequestException({ message: problems[0], problems });
-    const total = pages.reduce((s, p) => s + p!.bytes.length, 0);
+    // Graphs/diagrams: each question may carry one high-resolution picture of its drawing (no page photos).
+    const figures: { pageNo: number; mime: string; bytes: Buffer }[] = [];
+    dto.questions.forEach((raw, i) => {
+      delete questions[i].crop;
+      delete questions[i].figure;
+      if (!raw.figureImage) return;
+      const img = decodePageImage(raw.figureImage);
+      if (!img) throw new BadRequestException(`Question ${i + 1}: its graph could not be read as a picture.`);
+      const pageNo = FIGURE_PAGE_BASE + i + 1;
+      figures.push({ pageNo, mime: img.mime, bytes: img.bytes });
+      questions[i].figure = { pageNo };
+    });
+    const total = [...pages.map((p) => p!.bytes.length), ...figures.map((f) => f.bytes.length)].reduce((s, n) => s + n, 0);
     if (total > MAX_TOTAL_PAGE_BYTES) throw new BadRequestException('The worksheet pictures are too large. Use a PDF with fewer pages.');
 
     const ws = await this.prisma.worksheet.create({
@@ -141,7 +153,10 @@ export class WorksheetsService {
         key,
         questions: questions as unknown as Prisma.InputJsonValue,
         pages: {
-          create: pages.map((p, i) => ({ pageNo: i + 1, mime: p!.mime, data: new Uint8Array(p!.bytes), size: p!.bytes.length })),
+          create: [
+            ...pages.map((p, i) => ({ pageNo: i + 1, mime: p!.mime, data: new Uint8Array(p!.bytes), size: p!.bytes.length })),
+            ...figures.map((f) => ({ pageNo: f.pageNo, mime: f.mime, data: new Uint8Array(f.bytes), size: f.bytes.length })),
+          ],
         },
       },
       select: { id: true, title: true, questionCount: true },
@@ -261,8 +276,14 @@ export class WorksheetsService {
       dueAt: a.dueAt ? a.dueAt.toISOString() : null,
       closed: isClosed(a.dueAt),
       questionCount: ws.questionCount,
-      pages: ws.pages.map((p) => p.id),
-      questions: ws.questions.map((q) => ({ n: q.n, stem: q.stem, options: q.options, crop: q.crop ?? null })),
+      questions: ws.questions.map((q) => ({
+        n: q.n,
+        context: q.context ?? null,
+        stem: q.stem,
+        table: q.table ?? null,
+        figureId: q.figure ? ws.pages.find((p) => p.pageNo === q.figure!.pageNo)?.id ?? null : null,
+        options: q.options,
+      })),
     };
 
     if (this.isStudent(caller)) {
@@ -291,7 +312,8 @@ export class WorksheetsService {
       ...base,
       role: 'teacher' as const,
       key: ws.key,
-      questions: ws.questions,
+      pages: ws.pages.filter((p) => p.pageNo < FIGURE_PAGE_BASE).map((p) => p.id),
+      feedback: ws.questions.map((q) => q.feedback),
     };
   }
 
@@ -441,6 +463,20 @@ export class WorksheetsService {
       items: itemAnalysis(ws.key, attempts),
       rows,
     };
+  }
+
+  /**
+   * Delete a saved worksheet (the teacher's own). Refused while a live
+   * assignment uses it, so students never lose work they were given.
+   */
+  async remove(caller: Caller, worksheetId: string) {
+    const ws = await this.prisma.worksheet.findUnique({ where: { id: worksheetId }, select: { id: true, ownerId: true } });
+    if (!ws) throw new NotFoundException('Worksheet not found');
+    if (ws.ownerId !== caller.userId && caller.role !== Role.SUPER_ADMIN) throw new ForbiddenException('You can only delete your own worksheets');
+    const live = await this.prisma.assignment.count({ where: { worksheetId, deletedAt: null } });
+    if (live) throw new ConflictException(`It is assigned to ${live} class${live === 1 ? '' : 'es'}. Delete those assignments first.`);
+    await this.prisma.worksheet.delete({ where: { id: worksheetId } });
+    return { deleted: true };
   }
 
   /** Worksheets this teacher saved (to assign again later). */

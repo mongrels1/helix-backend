@@ -26,13 +26,42 @@ export interface QuestionCrop {
   h: number;
 }
 
+/** A small table the question needs (e.g. gallons → cost), shown as a real table. */
+export interface QuestionTable {
+  headers: string[];
+  rows: string[][];
+}
+
 export interface WorksheetQuestion {
   n: number;
+  /** The facts from the problem box the student needs (story, prices), shown above the question. */
+  context?: string;
   stem: string;
+  table?: QuestionTable;
   options: Record<Letter, string>;
   /** One line per WRONG letter: the mistake that letter usually means. */
   feedback: Partial<Record<Letter, string>>;
+  /** Draft only: where a graph or diagram is on the page (the teacher adjusts it; never shown as a page photo). */
   crop?: QuestionCrop;
+  /** Saved: the graph/diagram picture, stored high-resolution as WorksheetPage pageNo. */
+  figure?: { pageNo: number };
+}
+
+export const FIGURE_PAGE_BASE = 1000;
+const MAX_COLS = 8;
+const MAX_ROWS = 20;
+
+export function normalizeTable(raw: any): QuestionTable | null {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.rows)) return null;
+  const cell = (v: unknown) => (typeof v === 'number' ? String(v) : clean(v, 60));
+  const headers = (Array.isArray(raw.headers) ? raw.headers : []).slice(0, MAX_COLS).map(cell);
+  const rows = (raw.rows as unknown[])
+    .filter(Array.isArray)
+    .slice(0, MAX_ROWS)
+    .map((r: any) => (r as unknown[]).slice(0, MAX_COLS).map(cell))
+    .filter((r: string[]) => r.some(Boolean));
+  if (!rows.length) return null;
+  return { headers, rows };
 }
 
 const MIN_CROP = 0.03;
@@ -82,7 +111,19 @@ export function normalizeQuestions(raw: unknown): WorksheetQuestion[] {
       if (f) feedback[L] = f;
     }
     const crop = normalizeCrop(q?.crop);
-    return { n: i + 1, stem: clean(q?.stem, 600), options, feedback, ...(crop ? { crop } : {}) };
+    const table = normalizeTable(q?.table);
+    const context = clean(q?.context, 800);
+    const figPage = Math.round(Number(q?.figure?.pageNo));
+    return {
+      n: i + 1,
+      ...(context ? { context } : {}),
+      stem: clean(q?.stem, 600),
+      ...(table ? { table } : {}),
+      options,
+      feedback,
+      ...(crop ? { crop } : {}),
+      ...(Number.isFinite(figPage) && figPage > FIGURE_PAGE_BASE ? { figure: { pageNo: figPage } } : {}),
+    };
   });
 }
 
@@ -106,9 +147,12 @@ export function validateWorksheet(questions: WorksheetQuestion[], key: string[],
     if (missing.length) problems.push(`Question ${i + 1}: option ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} empty.`);
     const texts = LETTERS.map((L) => q.options[L].toLowerCase()).filter(Boolean);
     if (new Set(texts).size !== texts.length) problems.push(`Question ${i + 1}: two options have the same text.`);
-    if (pageCount !== undefined) {
-      if (!q.crop) problems.push(`Question ${i + 1}: mark where the question is on the worksheet.`);
-      else if (q.crop.page > pageCount) problems.push(`Question ${i + 1}: its picture is on a page that does not exist.`);
+    if (pageCount !== undefined && q.crop && q.crop.page > pageCount) problems.push(`Question ${i + 1}: its graph is on a page that does not exist.`);
+    if (q.table) {
+      const width = Math.max(q.table.headers.length, ...q.table.rows.map((r) => r.length));
+      if (q.table.rows.some((r) => r.length !== width) || (q.table.headers.length && q.table.headers.length !== width)) {
+        problems.push(`Question ${i + 1}: every table row needs the same number of cells.`);
+      }
     }
   });
   return problems;
