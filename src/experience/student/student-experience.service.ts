@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Role, SubmissionStatus, TutorSessionStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { visibleToStudent } from '../../modules/assignments/assignment-visibility';
 
 @Injectable()
 export class StudentExperienceService {
@@ -72,6 +73,8 @@ export class StudentExperienceService {
         classroomId: { in: classroomIds },
         dueAt: { gte: now, lte: nextTwoWeeks },
         deletedAt: null,
+        // Chosen students only; hidden before the start date.
+        AND: visibleToStudent(studentId, now),
       },
       include: {
         submissions: {
@@ -139,7 +142,7 @@ export class StudentExperienceService {
       select: { classroomId: true },
     });
     const classroomIds = enrollments.map((enrollment) => enrollment.classroomId);
-    const where = { classroomId: { in: classroomIds }, deletedAt: null };
+    const where = { classroomId: { in: classroomIds }, deletedAt: null, AND: visibleToStudent(studentId) };
     const [assignments, total] = await Promise.all([
       this.prisma.assignment.findMany({
         where,

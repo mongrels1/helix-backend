@@ -1,9 +1,9 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Put, Res } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import { Roles } from '@common/decorators/roles.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
-import { AnswersDto, AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto } from './dto/worksheet.dto';
+import { AnswersDto, AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto, ScheduleWorksheetDto } from './dto/worksheet.dto';
 import { Caller, WorksheetsService } from './worksheets.service';
 
 /**
@@ -44,6 +44,13 @@ export class WorksheetsController {
   @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
   async remove(@CurrentUser() user: Caller, @Param('id', ParseUUIDPipe) id: string) {
     return { success: true, data: await this.service.remove(user, id) };
+  }
+
+  /** When this worksheet opens for students, in every class it is assigned to. */
+  @Patch(':id/schedule')
+  @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
+  async schedule(@CurrentUser() user: Caller, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ScheduleWorksheetDto) {
+    return { success: true, data: await this.service.schedule(user, id, dto.startsAt) };
   }
 
   @Post(':id/assign')

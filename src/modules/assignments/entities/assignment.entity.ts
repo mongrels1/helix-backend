@@ -6,6 +6,7 @@ export class AssignmentEntity {
   standard!: string | null;
   tasks!: string[];
   dueAt!: Date | null;
+  startsAt!: Date | null;
   maxScore!: number;
   skillTags!: string[];
   classroomId!: string;

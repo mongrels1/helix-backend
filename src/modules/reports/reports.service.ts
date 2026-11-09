@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '@modules/email/email.service';
 import { effectiveGrade } from '@common/grade/grade';
 import { DEFAULT_GOAL_MINUTES, PracticeBand, practiceBand, schoolWeek, SchoolWeek } from './report-week';
+import { visibleToStudent } from '../assignments/assignment-visibility';
 
 export type ReportCaller = { userId: string; role: Role | string };
 
@@ -238,8 +239,8 @@ export class ReportsService {
         ? this.prisma.assignment.findMany({
             where: {
               classroomId: { in: classroomIds }, deletedAt: null, dueAt: inWindow,
-              // Build W: work assigned to chosen students is due only for them.
-              OR: [{ targets: { none: {} } }, { targets: { some: { studentId } } }],
+              // Build W: chosen students only; families don't see work before its start date.
+              AND: visibleToStudent(studentId),
             },
             select: { id: true, title: true, dueAt: true, maxScore: true },
           })

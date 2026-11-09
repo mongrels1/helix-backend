@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -70,6 +71,7 @@ export class AssignmentsService {
       const course = await this.coursesRepository.findById(dto.courseId);
       if (!course) throw new NotFoundException('Course not found');
     }
+    checkStartBeforeDue(dto.startsAt, dto.dueAt);
     return this.assignmentsRepository.create(dto);
   }
 
@@ -83,6 +85,10 @@ export class AssignmentsService {
       const course = await this.coursesRepository.findById(dto.courseId);
       if (!course) throw new NotFoundException('Course not found');
     }
+    checkStartBeforeDue(
+      dto.startsAt === undefined ? existing.startsAt?.toISOString() : dto.startsAt,
+      dto.dueAt === undefined ? existing.dueAt?.toISOString() : dto.dueAt,
+    );
     return this.assignmentsRepository.update(id, dto);
   }
 
@@ -112,4 +118,12 @@ export class AssignmentsService {
   async deleteRubric(rubricId: string): Promise<void> {
     await this.assignmentsRepository.deleteRubric(rubricId);
   }
+}
+
+/** A start date (when given) must be a real time before the due date. */
+function checkStartBeforeDue(startsAt: string | null | undefined, dueAt: string | null | undefined): void {
+  if (!startsAt) return;
+  const s = new Date(startsAt).getTime();
+  if (Number.isNaN(s)) throw new BadRequestException('Choose a real start date.');
+  if (dueAt && s >= new Date(dueAt).getTime()) throw new BadRequestException('The start date must be before the due date.');
 }

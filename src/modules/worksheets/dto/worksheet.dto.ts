@@ -129,6 +129,11 @@ export class AssignWorksheetDto {
   @IsDateString()
   dueAt!: string;
 
+  /** Students do not see it before this time. Empty/null = right away. */
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string | null;
+
   @IsOptional()
   @IsString()
   @MaxLength(200)
@@ -145,4 +150,11 @@ export class AnswersDto {
   @IsArray()
   @ArrayMaxSize(MAX_QUESTIONS)
   answers!: (string | null)[];
+}
+
+/** Change when a worksheet opens for students, in all its classes. null = right away. */
+export class ScheduleWorksheetDto {
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string | null;
 }

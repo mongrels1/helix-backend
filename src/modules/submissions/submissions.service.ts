@@ -12,6 +12,7 @@ import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { UpdateSubmissionDto } from './dto/update-submission.dto';
 import { SubmissionEntity } from './entities/submission.entity';
 import { SubmissionsRepository } from './submissions.repository';
+import { hasOpened } from '../assignments/assignment-visibility';
 
 @Injectable()
 export class SubmissionsService {
@@ -74,6 +75,7 @@ export class SubmissionsService {
     if (!assignment) throw new NotFoundException('Assignment not found');
     // Build W: worksheets are answered and scored on their own page only.
     if (assignment.worksheetId) throw new BadRequestException('Answer this worksheet on its page.');
+    if (!hasOpened(assignment.startsAt)) throw new NotFoundException('Assignment not found');
 
     const existing = await this.submissionsRepository.findByAssignmentAndStudent(
       dto.assignmentId,

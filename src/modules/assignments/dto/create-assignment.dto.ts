@@ -35,6 +35,11 @@ export class CreateAssignmentDto {
   @IsOptional()
   dueAt?: string;
 
+  /** Students do not see the assignment before this time. Empty/null = right away. */
+  @IsDateString()
+  @IsOptional()
+  startsAt?: string | null;
+
   @IsNumber()
   @Min(0)
   @IsOptional()

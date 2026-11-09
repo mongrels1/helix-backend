@@ -37,6 +37,7 @@ import {
 } from './worksheet-logic';
 import { WORKSHEET_DRAFT_SYSTEM, buildDraftPrompt, extractJsonObject, salvageQuestions } from './worksheet-prompt';
 import { AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto } from './dto/worksheet.dto';
+import { hasOpened, openToStudents, targetsStudent } from '../assignments/assignment-visibility';
 
 export type Caller = { userId: string; role: Role | string };
 
@@ -194,6 +195,7 @@ export class WorksheetsService {
     const dueAt = new Date(dto.dueAt);
     if (Number.isNaN(dueAt.getTime())) throw new BadRequestException('Choose a due date.');
     if (dueAt.getTime() <= Date.now()) throw new BadRequestException('The due date must be in the future.');
+    const startsAt = parseStartsAt(dto.startsAt, dueAt);
 
     const classroomIds = [...new Set(dto.classroomIds)];
     for (const id of classroomIds) {
@@ -224,12 +226,13 @@ export class WorksheetsService {
               description: dto.instructions?.trim() || null,
               standard: ws.standard,
               dueAt,
+              startsAt,
               maxScore: ws.questionCount,
               classroomId: cid,
               worksheetId: ws.id,
               targets: chosen.length ? { create: (byClass.get(cid) ?? []).map((studentId) => ({ studentId })) } : undefined,
             },
-            select: { id: true, classroomId: true, title: true, dueAt: true },
+            select: { id: true, classroomId: true, title: true, dueAt: true, startsAt: true },
           }),
         ),
     );
@@ -246,6 +249,7 @@ export class WorksheetsService {
         title: true,
         description: true,
         dueAt: true,
+        startsAt: true,
         classroomId: true,
         worksheetId: true,
         classroom: { select: { id: true, name: true, teacherId: true, organizationId: true, deletedAt: true } },
@@ -264,6 +268,8 @@ export class WorksheetsService {
     });
     const targeted = a.targets.length === 0 || a.targets.some((t) => t.studentId === studentId);
     if (!enrolled || !targeted) throw new ForbiddenException('That assignment is not one of yours');
+    // Before its start date the assignment does not exist for students.
+    if (!hasOpened(a.startsAt)) throw new NotFoundException('Assignment not found');
   }
 
   private isStudent(caller: Caller) {
@@ -354,7 +360,7 @@ export class WorksheetsService {
           worksheetId: wsId,
           deletedAt: null,
           classroom: { deletedAt: null, enrollments: { some: { studentId: caller.userId } } },
-          OR: [{ targets: { none: {} } }, { targets: { some: { studentId: caller.userId } } }],
+          AND: [targetsStudent(caller.userId), openToStudents()],
         },
         select: { id: true },
       });
@@ -502,12 +508,47 @@ export class WorksheetsService {
 
   /** Worksheets this teacher saved (to assign again later). */
   async mine(caller: Caller) {
-    return this.prisma.worksheet.findMany({
+    const rows = await this.prisma.worksheet.findMany({
       where: { ownerId: caller.userId },
-      select: { id: true, title: true, standard: true, questionCount: true, createdAt: true, _count: { select: { assignments: true } } },
+      select: {
+        id: true, title: true, standard: true, questionCount: true, createdAt: true,
+        assignments: { where: { deletedAt: null }, select: { startsAt: true, dueAt: true } },
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
+    return rows.map(({ assignments, ...w }) => {
+      const starts = assignments.map((a) => a.startsAt?.getTime() ?? 0);
+      const dues = assignments.map((a) => a.dueAt?.getTime()).filter((x): x is number => !!x);
+      return {
+        ...w,
+        _count: { assignments: assignments.length },
+        /** Latest start across its classes (null = open now / never set). */
+        startsAt: starts.length && Math.max(...starts) > 0 ? new Date(Math.max(...starts)).toISOString() : null,
+        /** Earliest due date across its classes. */
+        dueAt: dues.length ? new Date(Math.min(...dues)).toISOString() : null,
+      };
+    });
+  }
+
+  /**
+   * Change when one worksheet opens for students, in every class it is
+   * assigned to (null = open now). Owner or super admin, with teach access to
+   * each class. The start must be before each class's due date.
+   */
+  async schedule(caller: Caller, worksheetId: string, startsAtRaw: string | null | undefined) {
+    const ws = await this.prisma.worksheet.findUnique({ where: { id: worksheetId }, select: { id: true, ownerId: true } });
+    if (!ws) throw new NotFoundException('Worksheet not found');
+    if (ws.ownerId !== caller.userId && caller.role !== Role.SUPER_ADMIN) throw new ForbiddenException('You can only change your own worksheets');
+    const live = await this.prisma.assignment.findMany({ where: { worksheetId, deletedAt: null }, select: { id: true, classroomId: true, dueAt: true } });
+    if (!live.length) throw new BadRequestException('This worksheet is not assigned yet.');
+    let startsAt: Date | null = null;
+    for (const a of live) {
+      await loadClassroomWithAccess(this.prisma as any, a.classroomId, caller, 'teach', { id: true });
+      startsAt = parseStartsAt(startsAtRaw, a.dueAt);
+    }
+    await this.prisma.assignment.updateMany({ where: { id: { in: live.map((a) => a.id) } }, data: { startsAt } });
+    return { updated: live.length, startsAt: startsAt ? startsAt.toISOString() : null };
   }
 
   /** Classes this teacher can assign to, with students (for the picker). */
@@ -534,3 +575,11 @@ export class WorksheetsService {
   }
 }
 
+/** A start date: empty/null = open right away; otherwise a real time before the due date. */
+export function parseStartsAt(raw: string | null | undefined, dueAt: Date | null): Date | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) throw new BadRequestException('Choose a real start date.');
+  if (dueAt && d.getTime() >= dueAt.getTime()) throw new BadRequestException('The start date must be before the due date.');
+  return d;
+}

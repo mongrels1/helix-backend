@@ -229,6 +229,39 @@ run('Build W worksheets (real DB)', () => {
     void reports;
   });
 
+  it('start date: hidden from students (list, sheet, pictures, answers) until it opens; one change for all classes', async () => {
+    const due = new Date(Date.now() + 3 * 86400_000);
+    const later = new Date(Date.now() + 86400_000);
+    await expect(svc.assign(owner, worksheetId, { classroomIds: [p6], dueAt: due.toISOString(), startsAt: due.toISOString() })).rejects.toBeInstanceOf(BadRequestException);
+    const ws2 = await svc.create(owner, { title: 'Opens later', pageImages: [JPEG], questions: questions.map((q) => ({ ...q, crop: undefined })) as any, key: KEY });
+    const made = await svc.assign(owner, ws2.id, { classroomIds: [p6, p7], dueAt: due.toISOString(), startsAt: later.toISOString() });
+    expect(made).toHaveLength(2);
+    const a = made.find((m) => m.classroomId === p6)!;
+    const [list] = await assignmentsRepo.findAll(undefined, 1, 100, { userId: s6.userId, role: 'STUDENT' as any });
+    expect(list.map((x) => x.id)).not.toContain(a.id);
+    await expect(svc.sheet(s6, a.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.saveDraft(s6, a.id, { answers: Array(15).fill('A') } as any)).rejects.toBeInstanceOf(NotFoundException);
+    const page = await prisma.worksheetPage.findFirst({ where: { worksheetId: ws2.id }, select: { id: true } });
+    await expect(svc.page(s6, page!.id)).rejects.toBeInstanceOf(ForbiddenException);
+    // The teacher still sees and previews it.
+    expect(((await svc.sheet(owner, a.id)) as any).role).not.toBe('student');
+    const mine = (await svc.mine(owner)).find((w) => w.id === ws2.id)!;
+    expect(mine.startsAt).toBe(later.toISOString());
+    expect(mine._count.assignments).toBe(2);
+    // Start date after the due date is refused; clearing it opens it now in both classes.
+    await expect(svc.schedule(owner, ws2.id, new Date(due.getTime() + 1000).toISOString())).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.schedule(outsider, ws2.id, null)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(await svc.schedule(owner, ws2.id, null)).toEqual({ updated: 2, startsAt: null });
+    const [list2] = await assignmentsRepo.findAll(undefined, 1, 100, { userId: s6.userId, role: 'STUDENT' as any });
+    expect(list2.map((x) => x.id)).toContain(a.id);
+    expect(((await svc.sheet(s6, a.id)) as any).role).toBe('student');
+    // A regular (non-worksheet) assignment that has not opened cannot be submitted.
+    const plain = await prisma.assignment.create({ data: { title: 'Later essay', classroomId: p6, dueAt: due, startsAt: later } });
+    await expect(subs.create({ assignmentId: plain.id } as any, s6.userId)).rejects.toBeInstanceOf(NotFoundException);
+    await prisma.assignment.update({ where: { id: plain.id }, data: { deletedAt: new Date() } });
+    for (const m of made) await prisma.assignment.update({ where: { id: m.id }, data: { deletedAt: new Date() } });
+  });
+
   it('delete: refused while assigned, only by the owner, gone afterwards', async () => {
     await expect(svc.remove(owner, worksheetId)).rejects.toBeInstanceOf(ConflictException);
     const spare = await svc.create(owner, { title: 'spare', pageImages: [JPEG], questions: questions.map((q) => ({ ...q, crop: undefined })) as any, key: KEY });

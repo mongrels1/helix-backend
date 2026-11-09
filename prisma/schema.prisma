@@ -455,6 +455,8 @@ model Assignment {
   standard    String?
   tasks       String[]  @default([])
   dueAt       DateTime?
+  /// Students do not see the assignment before this time (null = right away).
+  startsAt    DateTime?
   maxScore    Float     @default(100)
   skillTags   String[]  @default([])
   classroomId String

@@ -1,3 +1,4 @@
+import { visibleToStudent } from './assignment-visibility';
 import { Injectable } from '@nestjs/common';
 import { accessibleClassroomWhere } from '@common/classroom-access/classroom-access';
 import { Assignment, Prisma, Role, Rubric } from '@prisma/client';
@@ -31,8 +32,8 @@ export class AssignmentsRepository {
     // (ORG_ADMIN / SUPER_ADMIN) are intentionally unscoped.
     if (requestingUser?.role === Role.STUDENT) {
       where.classroom = { enrollments: { some: { studentId: requestingUser.userId } } };
-      // Build W: work assigned to chosen students is shown only to them.
-      where.OR = [{ targets: { none: {} } }, { targets: { some: { studentId: requestingUser.userId } } }];
+      // Build W: chosen students only; not before the start date.
+      where.AND = visibleToStudent(requestingUser.userId);
     } else if (requestingUser?.role === Role.TEACHER) {
       where.classroom = accessibleClassroomWhere(requestingUser.userId);
     }
@@ -72,6 +73,7 @@ export class AssignmentsRepository {
         standard: dto.standard,
         tasks: dto.tasks,
         dueAt: dto.dueAt ? new Date(dto.dueAt) : undefined,
+        startsAt: dto.startsAt === undefined ? undefined : dto.startsAt ? new Date(dto.startsAt) : null,
         maxScore: dto.maxScore,
         skillTags: dto.skillTags,
         classroomId: dto.classroomId,
@@ -91,6 +93,7 @@ export class AssignmentsRepository {
         standard: dto.standard,
         tasks: dto.tasks,
         dueAt: dto.dueAt ? new Date(dto.dueAt) : undefined,
+        startsAt: dto.startsAt === undefined ? undefined : dto.startsAt ? new Date(dto.startsAt) : null,
         maxScore: dto.maxScore,
         skillTags: dto.skillTags,
         classroomId: dto.classroomId,
