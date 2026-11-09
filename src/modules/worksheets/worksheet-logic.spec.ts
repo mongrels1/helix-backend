@@ -1,5 +1,7 @@
 import {
   LETTERS,
+  looksNotAD,
+  normalizeCrop,
   answersRevealed,
   decodePageImage,
   isClosed,
@@ -154,5 +156,37 @@ describe('decodePageImage', () => {
     expect(decodePageImage(`data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`)).toBeNull();
     expect(decodePageImage(`data:image/jpeg;base64,${Buffer.from('<script>alert(1)</script>').toString('base64')}`)).toBeNull();
     expect(decodePageImage(42)).toBeNull();
+  });
+});
+
+describe('crops (each question shows its own picture)', () => {
+  it('clamps a crop inside its page and rounds it', () => {
+    expect(normalizeCrop({ page: 1, x: -0.1, y: 0.2, w: 0.5, h: 2 })).toEqual({ page: 1, x: 0, y: 0.2, w: 0.5, h: 0.8 });
+    expect(normalizeCrop({ page: 2.4, x: 0.123456, y: 0.1, w: 0.3, h: 0.3 })).toEqual({ page: 2, x: 0.1235, y: 0.1, w: 0.3, h: 0.3 });
+  });
+  it('rejects missing, tiny or nonsense crops', () => {
+    expect(normalizeCrop(undefined)).toBeNull();
+    expect(normalizeCrop({ page: 0, x: 0, y: 0, w: 0.5, h: 0.5 })).toBeNull();
+    expect(normalizeCrop({ page: 1, x: 0, y: 0, w: 0.01, h: 0.5 })).toBeNull();
+    expect(normalizeCrop({ page: 1, x: 'a', y: 0, w: 0.5, h: 0.5 })).toBeNull();
+  });
+  it('saving requires every question to have a crop on a real page', () => {
+    const withCrops = normalizeQuestions(Array.from({ length: 15 }, (_, i) => ({ ...q(i), crop: { page: 1 + (i % 2), x: 0.05, y: 0.1, w: 0.4, h: 0.2 } })));
+    expect(validateWorksheet(withCrops, KEY, 2)).toEqual([]);
+    expect(validateWorksheet(withCrops, KEY, 1).filter((p) => p.includes('page that does not exist'))).toHaveLength(7);
+    expect(validateWorksheet(QUESTIONS, KEY, 2)).toContain('Question 1: mark where the question is on the worksheet.');
+    expect(validateWorksheet(QUESTIONS, KEY)).toEqual([]); // the draft check without pages is unchanged
+  });
+});
+
+describe('looksNotAD', () => {
+  it('flags a circle-the-answer sheet forced into A–D', () => {
+    const forced = normalizeQuestions(Array.from({ length: 10 }, () => ({ stem: 'Is it proportional?', options: { A: 'Proportional', B: 'Not proportional', C: 'Proportional', D: 'Not proportional' } })));
+    expect(looksNotAD(forced)).toEqual({ notAD: true, bad: 10 });
+    const blank = normalizeQuestions(Array.from({ length: 4 }, () => ({ stem: 'Fill in', options: {} })));
+    expect(looksNotAD(blank).notAD).toBe(true);
+  });
+  it('does not flag a real A–D worksheet', () => {
+    expect(looksNotAD(QUESTIONS)).toEqual({ notAD: false, bad: 0 });
   });
 });

@@ -57,6 +57,11 @@ export class WorksheetQuestionDto {
   @IsOptional()
   @IsObject()
   feedback?: Record<string, string>;
+
+  /** Where the question is on the worksheet ({page, x, y, w, h} as fractions); checked in the service. */
+  @IsOptional()
+  @IsObject()
+  crop?: Record<string, number>;
 }
 
 /** Save the teacher-confirmed worksheet. The server re-checks everything. */

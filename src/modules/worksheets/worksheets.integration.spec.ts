@@ -23,6 +23,7 @@ const questions = Array.from({ length: 15 }, (_, i) => ({
   stem: `Q${i + 1} stem`,
   options: { A: `a${i}`, B: `b${i}`, C: `c${i}`, D: `d${i}` },
   feedback: { A: `fa${i}`, B: `fb${i}`, C: `fc${i}`, D: `fd${i}` },
+  crop: { page: i < 9 ? 1 : 2, x: 0.05, y: 0.1 + (i % 9) * 0.08, w: 0.45, h: 0.15 },
 }));
 
 run('Build W worksheets (real DB)', () => {
@@ -75,7 +76,7 @@ run('Build W worksheets (real DB)', () => {
 
   it('draft: typed key wins, feedback for the correct letter is dropped, problems listed', async () => {
     ai.claudeVision.mockResolvedValueOnce(
-      '```json\n' + JSON.stringify({ questions: questions.map((q) => ({ ...q, key: 'A' })), notes: ['page 2 faint'] }) + '\n```',
+      '```json\n' + JSON.stringify({ questions: questions.map((q) => ({ ...q, key: 'A', crop: { ...q.crop, page: 1 } })), notes: ['page 2 faint'] }) + '\n```',
     );
     const d = await svc.draft({ pageImages: [JPEG], typedKey: KEY.join(' ') });
     expect(d.key).toEqual(KEY);
@@ -83,6 +84,13 @@ run('Build W worksheets (real DB)', () => {
     expect(d.questions[0].feedback).toEqual({ A: 'fa0', B: 'fb0', D: 'fd0' }); // no C (the key)
     expect(d.problems).toEqual([]);
     expect(d.notes).toEqual(['page 2 faint']);
+    expect(d.notAD).toBe(false);
+    expect(d.problems).toEqual([]); // the AI gave a crop for every question on the 1 page
+    // A circle-the-answer sheet forced into A–D is flagged, not passed off as ready.
+    ai.claudeVision.mockResolvedValueOnce(JSON.stringify({ questions: Array.from({ length: 10 }, () => ({ stem: 'Is it proportional?', options: { A: 'Proportional', B: 'Not proportional', C: 'Proportional', D: 'Not proportional' } })) }));
+    const bad = await svc.draft({ pageImages: [JPEG], typedKey: KEY.join(' ') });
+    expect(bad.notAD).toBe(true);
+    expect(bad.problems.length).toBeGreaterThan(0);
     await expect(svc.draft({ pageImages: [SVG] })).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -92,6 +100,10 @@ run('Build W worksheets (real DB)', () => {
     bad[0] = 'E';
     await expect(svc.create(owner, { title: 'Proportional or Not?', pageImages: [JPEG], questions, key: bad })).rejects.toBeInstanceOf(BadRequestException);
     await expect(svc.create(owner, { title: 'x', pageImages: [SVG], questions, key: KEY })).rejects.toBeInstanceOf(BadRequestException);
+    // A question without a crop (no picture for the student) blocks saving; so does a crop on a missing page.
+    const noCrop = questions.map((q, i) => (i === 3 ? { ...q, crop: undefined } : q));
+    await expect(svc.create(owner, { title: 'x', pageImages: [JPEG, JPEG], questions: noCrop as any, key: KEY })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create(owner, { title: 'x', pageImages: [JPEG], questions, key: KEY })).rejects.toBeInstanceOf(BadRequestException);
     const ws = await svc.create(owner, { title: 'Proportional or Not?', standard: '7.PAR.4.3', pageImages: [JPEG, JPEG], questions, key: KEY });
     expect(ws.questionCount).toBe(15);
     worksheetId = ws.id;
@@ -116,6 +128,7 @@ run('Build W worksheets (real DB)', () => {
     expect(sheet.role).toBe('student');
     expect(sheet.questionCount).toBe(15);
     expect(sheet.pages).toHaveLength(2);
+    expect(sheet.questions[10].crop).toEqual({ page: 2, x: 0.05, y: 0.18, w: 0.45, h: 0.15 });
     const text = JSON.stringify(sheet);
     expect(text).not.toContain('"key"');
     expect(text).not.toContain('fa0');

@@ -24,6 +24,7 @@ import {
   isLetter,
   itemAnalysis,
   normalizeAnswers,
+  looksNotAD,
   normalizeQuestions,
   parseKeyText,
   studentResult,
@@ -103,12 +104,16 @@ export class WorksheetsService {
       if (isLetter(key[i])) delete q.feedback[key[i] as Letter];
     });
     const notes = (Array.isArray(parsed?.notes) ? parsed!.notes : []).filter((x): x is string => typeof x === 'string').slice(0, 10);
+    const ad = looksNotAD(questions);
     return {
       questions,
       key,
       keySource: typedKey.length ? 'typed' : keyPages.length || dto.keyText ? 'key file' : 'none',
       notes,
-      problems: validateWorksheet(questions, key),
+      /** True when this upload does not look like an A–D worksheet (shown as a banner). */
+      notAD: ad.notAD,
+      notADCount: ad.bad,
+      problems: validateWorksheet(questions, key, pages.length),
     };
   }
 
@@ -119,11 +124,11 @@ export class WorksheetsService {
     questions.forEach((q, i) => {
       if (isLetter(key[i])) delete q.feedback[key[i] as Letter];
     });
-    const problems = validateWorksheet(questions, key);
-    if (problems.length) throw new BadRequestException({ message: problems[0], problems });
-
     const pages = dto.pageImages.map(decodePageImage);
     if (pages.some((p) => !p)) throw new BadRequestException('One of the pages could not be read as a picture.');
+    // Every question must say where it is on the worksheet (its picture on the student's screen).
+    const problems = validateWorksheet(questions, key, pages.length);
+    if (problems.length) throw new BadRequestException({ message: problems[0], problems });
     const total = pages.reduce((s, p) => s + p!.bytes.length, 0);
     if (total > MAX_TOTAL_PAGE_BYTES) throw new BadRequestException('The worksheet pictures are too large. Use a PDF with fewer pages.');
 
@@ -257,7 +262,7 @@ export class WorksheetsService {
       closed: isClosed(a.dueAt),
       questionCount: ws.questionCount,
       pages: ws.pages.map((p) => p.id),
-      questions: ws.questions.map((q) => ({ n: q.n, stem: q.stem, options: q.options })),
+      questions: ws.questions.map((q) => ({ n: q.n, stem: q.stem, options: q.options, crop: q.crop ?? null })),
     };
 
     if (this.isStudent(caller)) {

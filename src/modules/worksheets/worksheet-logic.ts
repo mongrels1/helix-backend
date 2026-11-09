@@ -13,12 +13,44 @@ export const MAX_PAGES = 12;
 export const MAX_PAGE_BYTES = 3 * 1024 * 1024;
 export const MAX_TOTAL_PAGE_BYTES = 20 * 1024 * 1024;
 
+/**
+ * Where the question sits on the worksheet: a box on one page, as fractions of
+ * the page picture (0–1). Students see this crop above the A–D buttons, so the
+ * problem's table, graph or diagram is always on the same screen as the choices.
+ */
+export interface QuestionCrop {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface WorksheetQuestion {
   n: number;
   stem: string;
   options: Record<Letter, string>;
   /** One line per WRONG letter: the mistake that letter usually means. */
   feedback: Partial<Record<Letter, string>>;
+  crop?: QuestionCrop;
+}
+
+const MIN_CROP = 0.03;
+
+/** A crop clamped inside its page, or null when it is missing or unusable. */
+export function normalizeCrop(raw: any): QuestionCrop | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+  const page = Math.round(num(raw.page));
+  let x = num(raw.x), y = num(raw.y), w = num(raw.w), h = num(raw.h);
+  if (![page, x, y, w, h].every(Number.isFinite) || page < 1) return null;
+  x = Math.min(Math.max(x, 0), 1);
+  y = Math.min(Math.max(y, 0), 1);
+  w = Math.min(Math.max(w, 0), 1 - x);
+  h = Math.min(Math.max(h, 0), 1 - y);
+  if (w < MIN_CROP || h < MIN_CROP) return null;
+  const r = (v: number) => Math.round(v * 10000) / 10000;
+  return { page, x: r(x), y: r(y), w: r(w), h: r(h) };
 }
 
 export function isLetter(x: unknown): x is Letter {
@@ -49,7 +81,8 @@ export function normalizeQuestions(raw: unknown): WorksheetQuestion[] {
       const f = clean(q?.feedback?.[L], 300);
       if (f) feedback[L] = f;
     }
-    return { n: i + 1, stem: clean(q?.stem, 600), options, feedback };
+    const crop = normalizeCrop(q?.crop);
+    return { n: i + 1, stem: clean(q?.stem, 600), options, feedback, ...(crop ? { crop } : {}) };
   });
 }
 
@@ -57,7 +90,7 @@ export function normalizeQuestions(raw: unknown): WorksheetQuestion[] {
  * Everything that must be true before a worksheet can reach students.
  * Returns plain-language problems for the teacher; empty = ready.
  */
-export function validateWorksheet(questions: WorksheetQuestion[], key: string[]): string[] {
+export function validateWorksheet(questions: WorksheetQuestion[], key: string[], pageCount?: number): string[] {
   const problems: string[] = [];
   if (questions.length === 0) problems.push('No questions were found. Add them before assigning.');
   if (questions.length > MAX_QUESTIONS) problems.push(`A worksheet can have at most ${MAX_QUESTIONS} questions.`);
@@ -73,6 +106,10 @@ export function validateWorksheet(questions: WorksheetQuestion[], key: string[])
     if (missing.length) problems.push(`Question ${i + 1}: option ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} empty.`);
     const texts = LETTERS.map((L) => q.options[L].toLowerCase()).filter(Boolean);
     if (new Set(texts).size !== texts.length) problems.push(`Question ${i + 1}: two options have the same text.`);
+    if (pageCount !== undefined) {
+      if (!q.crop) problems.push(`Question ${i + 1}: mark where the question is on the worksheet.`);
+      else if (q.crop.page > pageCount) problems.push(`Question ${i + 1}: its picture is on a page that does not exist.`);
+    }
   });
   return problems;
 }
@@ -173,4 +210,17 @@ export function decodePageImage(dataUrl: unknown): { mime: string; bytes: Buffer
   const isWebp = bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
   const mime = isJpeg ? 'image/jpeg' : isPng ? 'image/png' : isWebp ? 'image/webp' : null;
   return mime ? { mime, bytes } : null;
+}
+
+/**
+ * True when the upload does not look like an A–D worksheet: at least half the
+ * questions are missing options or repeat the same option text (what happens
+ * when a "circle Proportional / Not proportional" sheet is forced into A–D).
+ */
+export function looksNotAD(questions: WorksheetQuestion[]): { notAD: boolean; bad: number } {
+  const bad = questions.filter((q) => {
+    const texts = LETTERS.map((L) => q.options[L].trim().toLowerCase());
+    return texts.some((t) => !t) || new Set(texts).size < 4;
+  }).length;
+  return { notAD: questions.length > 0 && bad * 2 >= questions.length, bad };
 }
