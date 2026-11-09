@@ -72,6 +72,8 @@ export class SubmissionsService {
     }
     const assignment = await this.assignmentsRepository.findById(dto.assignmentId);
     if (!assignment) throw new NotFoundException('Assignment not found');
+    // Build W: worksheets are answered and scored on their own page only.
+    if (assignment.worksheetId) throw new BadRequestException('Answer this worksheet on its page.');
 
     const existing = await this.submissionsRepository.findByAssignmentAndStudent(
       dto.assignmentId,
@@ -97,6 +99,8 @@ export class SubmissionsService {
     if (submission.status !== 'DRAFT') {
       throw new BadRequestException('Submitted work cannot be edited');
     }
+    const assignment = await this.assignmentsRepository.findById(submission.assignmentId);
+    if (assignment?.worksheetId) throw new BadRequestException('Answer this worksheet on its page.');
     return this.submissionsRepository.update(id, dto);
   }
 
@@ -105,6 +109,8 @@ export class SubmissionsService {
     if (requestingUserId !== submission.studentId) {
       throw new ForbiddenException('You can only submit your own submissions');
     }
+    const assignment = await this.assignmentsRepository.findById(submission.assignmentId);
+    if (assignment?.worksheetId) throw new BadRequestException('Answer this worksheet on its page.');
     const submitted = await this.submissionsRepository.submit(id);
     await this.eventsService.emit('submission.created', {
       submissionId: submitted.id,

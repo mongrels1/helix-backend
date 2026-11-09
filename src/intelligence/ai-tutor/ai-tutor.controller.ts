@@ -88,6 +88,7 @@ export class AITutorController {
       dto.content,
       user.userId,
       dto.questionContext,
+      dto.worksheetQuestion,
     );
     await this.usageMeter.consume(user.userId, 'TUTOR');
     return { success: true, data };

@@ -236,7 +236,11 @@ export class ReportsService {
       }),
       classroomIds.length
         ? this.prisma.assignment.findMany({
-            where: { classroomId: { in: classroomIds }, deletedAt: null, dueAt: inWindow },
+            where: {
+              classroomId: { in: classroomIds }, deletedAt: null, dueAt: inWindow,
+              // Build W: work assigned to chosen students is due only for them.
+              OR: [{ targets: { none: {} } }, { targets: { some: { studentId } } }],
+            },
             select: { id: true, title: true, dueAt: true, maxScore: true },
           })
         : Promise.resolve([] as { id: string; title: string; dueAt: Date | null; maxScore: number }[]),

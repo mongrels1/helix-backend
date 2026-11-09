@@ -31,6 +31,8 @@ export class AssignmentsRepository {
     // (ORG_ADMIN / SUPER_ADMIN) are intentionally unscoped.
     if (requestingUser?.role === Role.STUDENT) {
       where.classroom = { enrollments: { some: { studentId: requestingUser.userId } } };
+      // Build W: work assigned to chosen students is shown only to them.
+      where.OR = [{ targets: { none: {} } }, { targets: { some: { studentId: requestingUser.userId } } }];
     } else if (requestingUser?.role === Role.TEACHER) {
       where.classroom = accessibleClassroomWhere(requestingUser.userId);
     }

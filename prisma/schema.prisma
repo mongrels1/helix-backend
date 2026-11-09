@@ -464,9 +464,16 @@ model Assignment {
   course      Course?   @relation(fields: [courseId], references: [id])
   rubric      Rubric?   @relation(fields: [rubricId], references: [id])
   submissions Submission[]
+  /// Build W: an A–D worksheet the server scores against a stored key.
+  worksheetId String?
+  worksheet   Worksheet? @relation(fields: [worksheetId], references: [id])
+  /// Build W: when present, only these students see the assignment.
+  targets     AssignmentTarget[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
+
+  @@index([worksheetId])
 }
 
 model Submission {
@@ -1204,4 +1211,49 @@ model ClassroomInvite {
   createdAt      DateTime  @default(now())
 
   @@index([organizationId, email])
+}
+
+/// Build W: a teacher's uploaded worksheet with its A–D answer key. Pages are
+/// stored here (like WhiteboardAsset) so nothing depends on file storage.
+/// `key` is never sent to a student before the assignment's due date.
+model Worksheet {
+  id            String          @id @default(uuid())
+  ownerId       String
+  title         String
+  standard      String?
+  questionCount Int
+  key           String[]
+  /// [{ n, stem, options: {A,B,C,D}, feedback: {<wrong letter>: text} }]
+  questions     Json
+  pages         WorksheetPage[]
+  assignments   Assignment[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([ownerId])
+}
+
+model WorksheetPage {
+  id          String    @id @default(uuid())
+  worksheetId String
+  worksheet   Worksheet @relation(fields: [worksheetId], references: [id], onDelete: Cascade)
+  pageNo      Int
+  mime        String
+  data        Bytes
+  size        Int
+  createdAt   DateTime  @default(now())
+
+  @@unique([worksheetId, pageNo])
+}
+
+/// Build W: assign to chosen students in a class (no rows = the whole class).
+model AssignmentTarget {
+  id           String     @id @default(uuid())
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId    String
+  createdAt    DateTime   @default(now())
+
+  @@unique([assignmentId, studentId])
+  @@index([studentId])
 }

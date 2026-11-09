@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class SendMessageDto {
   @IsString()
@@ -15,4 +16,16 @@ export class SendMessageDto {
   @IsString()
   @MaxLength(4000)
   questionContext?: string;
+
+  /**
+   * Build W: "Help me with this" on a worksheet question the student got
+   * wrong. The server builds the lesson from its own stored copy of the
+   * question and the student's answer; page text is not used for it.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  worksheetQuestion?: number;
 }

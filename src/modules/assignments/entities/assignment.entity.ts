@@ -10,6 +10,8 @@ export class AssignmentEntity {
   skillTags!: string[];
   classroomId!: string;
   courseId!: string | null;
+  /** Build W: set when this is an A–D worksheet answered on its own page. */
+  worksheetId?: string | null;
   rubric!: {
     id: string;
     title: string;

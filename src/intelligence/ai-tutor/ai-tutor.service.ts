@@ -1,3 +1,4 @@
+import { worksheetMiniLessonDirective } from '../../modules/worksheets/worksheet-tutor';
 import {
   BadRequestException,
   ForbiddenException,
@@ -108,6 +109,7 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
     studentMessage: string,
     requestingUserId: string,
     questionContext?: string,
+    worksheetQuestion?: number,
   ): Promise<TutorMessage> {
     const session = await this.repository.findSessionById(sessionId);
     if (!session) throw new NotFoundException('Tutor session not found');
@@ -146,9 +148,17 @@ Style: warm, simple, one idea at a time, short (2-4 sentences), concrete numbers
       .map((message) =>
       this.toConversationMessage(message),
     );
+    // Build W: a mini lesson on a worksheet question they got wrong replaces the
+    // homework directive, and is built from the server's own copy of the work.
+    const miniLesson = await worksheetMiniLessonDirective(
+      this.prisma,
+      session.assignmentId,
+      session.studentId,
+      worksheetQuestion,
+    );
     const contextNote = [
       await this.getAssignmentContext(session.assignmentId),
-      this.homeworkDirective(session.assignmentId, questionContext),
+      miniLesson ?? this.homeworkDirective(session.assignmentId, questionContext),
     ]
       .filter(Boolean)
       .join('\n\n');
