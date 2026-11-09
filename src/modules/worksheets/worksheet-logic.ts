@@ -99,14 +99,89 @@ export function parseKeyText(text: string): string[] {
 const clean = (s: unknown, max: number): string =>
   typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, max) : '';
 
+/**
+ * The AI may write options as {"A": ...}, {"a": ...}, ["...", ...], or
+ * [{"letter":"A","text":...}], sometimes with the letter repeated ("A) $5").
+ * Accept all of them so no printed choice is lost.
+ */
+function readOptions(raw: any): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const strip = (v: unknown, L: string) => (typeof v === 'string' ? v.replace(new RegExp(`^\\s*\\(?${L}\\s*[).:]\\s+`, 'i'), '') : typeof v === 'number' ? String(v) : v);
+  if (Array.isArray(raw)) {
+    raw.slice(0, 4).forEach((o: any, i) => {
+      if (o && typeof o === 'object') {
+        const L = String(o.letter ?? o.label ?? LETTERS[i]).trim().toUpperCase();
+        if ((LETTERS as readonly string[]).includes(L)) out[L] = strip(o.text ?? o.value ?? o.option, L);
+      } else out[LETTERS[i]] = strip(o, LETTERS[i]);
+    });
+    return out;
+  }
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw)) {
+      const L = k.trim().replace(/[).:]$/, '').toUpperCase();
+      if ((LETTERS as readonly string[]).includes(L)) out[L] = strip(v, L);
+    }
+  }
+  return out;
+}
+
+/** Tidy one choice copied from the PDF text layer: stacked fractions, "2 g" → "2g", spacing. */
+function tidyPdfChoice(s: string): string {
+  return s
+    .replace(/(\d)\s{2,}(\d) (\d)(?=\s{2,}|\s*$)/g, '$1 $2/$3') // 10   1 2  → 10 1/2
+    .replace(/(^|\s)(\d) (\d)(?=\s{2,}|\s*$)/g, '$1$2/$3') //   1 2   x → 1/2 x
+    .replace(/\s+/g, ' ')
+    .replace(/(\d) ([a-z])(?![a-z])/g, '$1$2') // 2 g → 2g
+    .trim();
+}
+
+/**
+ * When the AI leaves a question's A–D choices blank but the PDF has a text
+ * layer, copy the four choices from the text right after that question's
+ * number and stem. Only fills when all four letters are found, in order.
+ * Returns the question numbers that were filled (the teacher still checks).
+ */
+export function fillOptionsFromPdfText(questions: WorksheetQuestion[], pdfText: string | undefined): number[] {
+  const filled: number[] = [];
+  const text = (pdfText ?? '').replace(/\n/g, '   ');
+  if (!text.trim()) return filled;
+  const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  questions.forEach((q, i) => {
+    if (LETTERS.every((L) => q.options[L]?.trim())) return;
+    const n = i + 1;
+    const want = words(q.stem).slice(0, 2).join(' ');
+    const re = new RegExp(`(?:^|\\s{2,})${n}\\s{2,}(?=[A-Z])`, 'g');
+    let start = -1;
+    let first = -1;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const at = m.index + m[0].length;
+      if (first < 0) first = at;
+      if (!want || words(text.slice(at, at + 80)).join(' ').startsWith(want)) { start = at; break; }
+    }
+    if (start < 0) start = want ? -1 : first;
+    if (start < 0) return;
+    const seg = text.slice(start, start + 900);
+    const a = seg.search(/\s{2,}A\s{2,}/);
+    if (a < 0 || a > 400) return;
+    const m = seg.slice(a).match(/^\s{2,}A\s{2,}(.+?)\s{2,}B\s{2,}(.+?)\s{2,}C\s{2,}(.+?)\s{2,}D\s{2,}(.+?)(?=\s{2,}\d{1,2}\s{2,}\S|\s{2,}(?:[A-Z][a-z]+\s{2,})?(?:[A-Z]\s{1,3}){2,}[A-Z]|\s{2,}Adapted\b|\s{2,}[A-Z][a-z]+(?: [a-z]+){0,3}:|\s*$)/);
+    if (!m) return;
+    const choices = m.slice(1, 5).map(tidyPdfChoice);
+    if (choices.some((c) => !c || c.length > 300)) return;
+    LETTERS.forEach((L, k) => { q.options[L] = choices[k]; });
+    filled.push(n);
+  });
+  return filled;
+}
+
 /** Coerce untrusted input (AI draft or a teacher's edited copy) into the stored shape. */
 export function normalizeQuestions(raw: unknown): WorksheetQuestion[] {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, MAX_QUESTIONS).map((q: any, i: number) => {
     const options = {} as Record<Letter, string>;
     const feedback: Partial<Record<Letter, string>> = {};
+    const opts = readOptions(q?.options);
     for (const L of LETTERS) {
-      options[L] = clean(q?.options?.[L], 300);
+      options[L] = clean(opts[L], 300);
       const f = clean(q?.feedback?.[L], 300);
       if (f) feedback[L] = f;
     }

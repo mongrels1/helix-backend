@@ -9,6 +9,7 @@ export const WORKSHEET_DRAFT_SYSTEM = `You transcribe a teacher's multiple-choic
 Rules:
 - Transcribe; do not solve unless told to, and never invent questions or options that are not on the page.
 - Copy each printed A, B, C, D option's text exactly (numbers, units, signs, fractions as a/b, mixed numbers like 10 1/2).
+- Most worksheets print four lettered choices under EVERY question, often as equations or in a 2-by-2 grid, and also under questions that have a table or graph. Copy all four for every question; check the extracted text below, where each question's choices follow it as "A ... B ... C ... D ...".
 - NEVER invent options. If a question does not have four choices printed with the letters A, B, C, D (for example "Circle: Proportional / Not proportional", a blank to fill in, or a table to complete), still list it, but leave every option as "" and add a note naming the question. Do not repeat one choice to fill four slots.
 - The student will see each question on its own phone screen as clean text, NOT as a picture of the page. So for each question give:
   - "context": the facts from its problem box the student needs, in one or two short plain sentences (e.g. "The taxi charges $4 plus $1.50 per mile. Cherie rides 7 miles."). Leave out worksheet directions, the printed answer bubbles and anything another question asks. "" if none.

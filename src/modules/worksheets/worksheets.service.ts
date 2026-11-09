@@ -30,6 +30,8 @@ import {
   parseKeyText,
   studentResult,
   validateWorksheet,
+  fillOptionsFromPdfText,
+  LETTERS,
 } from './worksheet-logic';
 import { WORKSHEET_DRAFT_SYSTEM, buildDraftPrompt, extractJsonObject } from './worksheet-prompt';
 import { AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto } from './dto/worksheet.dto';
@@ -86,7 +88,7 @@ export class WorksheetsService {
         }),
         images,
         systemPrompt: WORKSHEET_DRAFT_SYSTEM,
-        maxTokens: 8000,
+        maxTokens: 16000,
         timeoutMs: 110_000,
         model: this.config.get<string>('WORKSHEET_VISION_MODEL') || this.config.get<string>('pushMap.visionModel') || undefined,
       });
@@ -98,6 +100,10 @@ export class WorksheetsService {
     const parsed = extractJsonObject<{ questions?: any[]; notes?: unknown[] }>(reply);
     const rawQuestions = Array.isArray(parsed?.questions) ? parsed!.questions : [];
     const questions = normalizeQuestions(rawQuestions);
+    const blankBefore = questions.filter((q) => LETTERS.some((L) => !q.options[L])).length;
+    // Safety net: copy any choices the AI left blank straight from the PDF's text.
+    const fromText = fillOptionsFromPdfText(questions, dto.worksheetText);
+    if (blankBefore) this.logger.warn(`worksheet draft: ${blankBefore}/${questions.length} questions had blank choices; ${fromText.length} filled from the PDF text`);
     const aiKey = rawQuestions.map((q) => (typeof q?.key === 'string' ? q.key.trim().toUpperCase() : ''));
     const key = typedKey.length ? typedKey : aiKey;
     // Feedback is only ever for wrong letters; drop any the draft wrote for the key letter.
@@ -105,6 +111,7 @@ export class WorksheetsService {
       if (isLetter(key[i])) delete q.feedback[key[i] as Letter];
     });
     const notes = (Array.isArray(parsed?.notes) ? parsed!.notes : []).filter((x): x is string => typeof x === 'string').slice(0, 10);
+    if (fromText.length) notes.unshift(`Answer choices for question${fromText.length === 1 ? '' : 's'} ${fromText.join(', ')} were copied from the PDF text. Check them.`);
     const ad = looksNotAD(questions);
     return {
       questions,
