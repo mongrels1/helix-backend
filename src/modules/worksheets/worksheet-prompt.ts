@@ -69,3 +69,38 @@ export function extractJsonObject<T>(text: string): T | null {
     return null;
   }
 }
+
+/**
+ * When the reply is cut off or has extra text, keep every COMPLETE question
+ * object inside "questions": [ … ] (string-aware brace matching).
+ */
+export function salvageQuestions(text: string): any[] {
+  const out: any[] = [];
+  if (!text) return out;
+  const k = text.indexOf('"questions"');
+  if (k < 0) return out;
+  let i = text.indexOf('[', k);
+  if (i < 0) return out;
+  i++;
+  while (i < text.length) {
+    while (i < text.length && /[\s,]/.test(text[i])) i++;
+    if (text[i] !== '{') break;
+    let depth = 0;
+    let inStr = false;
+    let j = i;
+    for (; j < text.length; j++) {
+      const c = text[j];
+      if (inStr) {
+        if (c === '\\') j++;
+        else if (c === '"') inStr = false;
+      } else if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) break;
+    }
+    if (j >= text.length) break; // cut off mid-question
+    try { out.push(JSON.parse(text.slice(i, j + 1))); } catch { break; }
+    i = j + 1;
+  }
+  return out;
+}
+

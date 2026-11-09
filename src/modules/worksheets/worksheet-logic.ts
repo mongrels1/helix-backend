@@ -135,55 +135,95 @@ function tidyPdfChoice(s: string): string {
     .trim();
 }
 
+const pdfFlat = (t: string | undefined) => (t ?? '').replace(/\r?\n/g, '   ').replace(/ /g, ' ');
+const CHOICE_END = /(?=\s{2,}\d{1,2}\s{2,}\S|\s{2,}(?:[A-Z][a-z]+\s{2,})?(?:[A-Z]\s{1,3}){2,}[A-Z]|\s{2,}Adapted\b|\s{2,}[A-Z][a-z]+(?: [a-z]+){0,3}:|\s*$)/.source;
+const CHOICES_RE = new RegExp(`^\\s{2,}A\\s{2,}(.+?)\\s{2,}B\\s{2,}(.+?)\\s{2,}C\\s{2,}(.+?)\\s{2,}D\\s{2,}(.+?)${CHOICE_END}`);
+
+/** In flattened PDF text, the question that starts at `at`: its stem and four lettered choices, or null. */
+function readQuestionAt(text: string, at: number): { stem: string; choices: string[]; end: number } | null {
+  const seg = text.slice(at, at + 900);
+  const a = seg.search(/\s{2,}A\s{2,}/);
+  if (a < 0 || a > 400) return null;
+  const m = seg.slice(a).match(CHOICES_RE);
+  if (!m) return null;
+  const choices = m.slice(1, 5).map(tidyPdfChoice);
+  if (choices.some((c) => !c || c.length > 300)) return null;
+  return { stem: tidyPdfChoice(seg.slice(0, a)), choices, end: at + a + m[0].length };
+}
+
+const stemWords = (s: string) => s.toLowerCase().replace(/^\s*\(?\d{1,2}\s*[.):]\s*/, '').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+
+/**
+ * Walk question numbers 1, 2, 3 … through the PDF text, in order. For each
+ * number, prefer the spot whose words start like `stems[i]`; otherwise the
+ * first spot after the previous question that has four lettered choices.
+ */
+function walkPdfQuestions(pdfText: string | undefined, count: number, stems: string[] = []): ({ stem: string; choices: string[] } | null)[] {
+  const text = pdfFlat(pdfText);
+  const found: ({ stem: string; choices: string[] } | null)[] = [];
+  let cursor = 0;
+  for (let i = 0; i < count; i++) {
+    if (!text.trim()) { found.push(null); continue; }
+    const want = stemWords(stems[i] ?? '').slice(0, 2).join(' ');
+    const re = new RegExp(`(?:^|\\s{2,})${i + 1}\\s{2,}(?=\\S)`, 'g');
+    re.lastIndex = cursor;
+    let best: { stem: string; choices: string[]; end: number } | null = null;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const at = m.index + m[0].length;
+      const q = readQuestionAt(text, at);
+      if (!q) continue;
+      if (want && stemWords(q.stem).join(' ').startsWith(want)) { best = q; break; }
+      if (!best) best = q;
+    }
+    if (best) cursor = best.end;
+    found.push(best);
+  }
+  return found;
+}
+
 /**
  * When the AI leaves a question's A–D choices blank but the PDF has a text
- * layer, copy the four choices from the text right after that question's
- * number and stem. Only fills when all four letters are found, in order.
- * Returns the question numbers that were filled (the teacher still checks).
+ * layer, copy the four choices printed after that question's number. Only
+ * fills when all four letters are found, in order; never touches choices the
+ * AI gave. Returns the question numbers that were filled (the teacher checks).
  */
 export function fillOptionsFromPdfText(questions: WorksheetQuestion[], pdfText: string | undefined): number[] {
   const filled: number[] = [];
-  const text = (pdfText ?? '').replace(/\r?\n/g, '   ').replace(/ /g, ' ');
-  if (!text.trim()) return filled;
-  const words = (s: string) => s.toLowerCase().replace(/^\s*\(?\d{1,2}\s*[.):]\s*/, '').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
-  const END = /(?=\s{2,}\d{1,2}\s{2,}\S|\s{2,}(?:[A-Z][a-z]+\s{2,})?(?:[A-Z]\s{1,3}){2,}[A-Z]|\s{2,}Adapted\b|\s{2,}[A-Z][a-z]+(?: [a-z]+){0,3}:|\s*$)/.source;
-  const CHOICES = new RegExp(`^\\s{2,}A\\s{2,}(.+?)\\s{2,}B\\s{2,}(.+?)\\s{2,}C\\s{2,}(.+?)\\s{2,}D\\s{2,}(.+?)${END}`);
-  /** The four choices printed after position `at`, or null. */
-  const parseAt = (at: number): { choices: string[]; end: number } | null => {
-    const seg = text.slice(at, at + 900);
-    const a = seg.search(/\s{2,}A\s{2,}/);
-    if (a < 0 || a > 400) return null;
-    const m = seg.slice(a).match(CHOICES);
-    if (!m) return null;
-    const choices = m.slice(1, 5).map(tidyPdfChoice);
-    if (choices.some((c) => !c || c.length > 300)) return null;
-    return { choices, end: at + a + m[0].length };
-  };
-  // Walk the questions in order. For each number, prefer the spot whose words
-  // match the AI's question text; otherwise the first spot after the previous
-  // question that has four lettered choices.
-  let cursor = 0;
+  if (!pdfFlat(pdfText).trim()) return filled;
+  const found = walkPdfQuestions(pdfText, questions.length, questions.map((q) => q.stem));
   questions.forEach((q, i) => {
-    const n = i + 1;
-    const want = words(q.stem).slice(0, 2).join(' ');
-    const re = new RegExp(`(?:^|\\s{2,})${n}\\s{2,}(?=\\S)`, 'g');
-    re.lastIndex = cursor;
-    let best: { choices: string[]; end: number } | null = null;
-    for (let m = re.exec(text); m; m = re.exec(text)) {
-      const at = m.index + m[0].length;
-      const found = parseAt(at);
-      if (!found) continue;
-      const matches = !!want && words(text.slice(at, at + 120)).join(' ').startsWith(want);
-      if (matches) { best = found; break; }
-      if (!best) best = found;
-    }
-    if (!best) return;
-    cursor = best.end;
-    if (LETTERS.every((L) => q.options[L]?.trim())) return;
-    LETTERS.forEach((L, k) => { q.options[L] = best!.choices[k]; });
-    filled.push(n);
+    const f = found[i];
+    if (!f || LETTERS.every((L) => q.options[L]?.trim())) return;
+    LETTERS.forEach((L, k) => { q.options[L] = f.choices[k]; });
+    if (!q.stem.trim()) q.stem = f.stem.slice(0, 600);
+    filled.push(i + 1);
   });
   return filled;
+}
+
+/**
+ * Every numbered question with four lettered choices, read straight from the
+ * PDF text layer. Used when the AI reply is missing or unreadable. No story,
+ * table or feedback (the teacher adds those on the check screen).
+ */
+export function questionsFromPdfText(pdfText: string | undefined, max = MAX_QUESTIONS): { stem: string; options: Record<Letter, string> }[] {
+  const out: { stem: string; options: Record<Letter, string> }[] = [];
+  for (const f of walkPdfQuestions(pdfText, max)) {
+    if (!f || !f.stem) break;
+    out.push({ stem: f.stem.slice(0, 600), options: { A: f.choices[0], B: f.choices[1], C: f.choices[2], D: f.choices[3] } });
+  }
+  return out;
+}
+
+/**
+ * A key typed into a key PDF, e.g. "C D C D A D B C A B C A B B D". Picks the
+ * run of single A–D letters whose length matches the question count (else the
+ * longest run of at least 5). Returns [] if none.
+ */
+export function keyFromText(text: string | undefined, questionCount: number): string[] {
+  const runs = Array.from((text ?? '').matchAll(/(?:^|[^A-Za-z0-9–-])((?:[A-D][ \t,]+){4,}[A-D])(?![A-Za-z0-9–-])/g)).map((m) => m[1].split(/[\s,]+/).filter(Boolean));
+  if (!runs.length) return [];
+  return runs.find((r) => r.length === questionCount) ?? runs.sort((x, y) => y.length - x.length)[0];
 }
 
 /** Coerce untrusted input (AI draft or a teacher's edited copy) into the stored shape. */

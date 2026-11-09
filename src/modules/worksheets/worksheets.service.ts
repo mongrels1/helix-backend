@@ -31,9 +31,11 @@ import {
   studentResult,
   validateWorksheet,
   fillOptionsFromPdfText,
+  keyFromText,
   LETTERS,
+  questionsFromPdfText,
 } from './worksheet-logic';
-import { WORKSHEET_DRAFT_SYSTEM, buildDraftPrompt, extractJsonObject } from './worksheet-prompt';
+import { WORKSHEET_DRAFT_SYSTEM, buildDraftPrompt, extractJsonObject, salvageQuestions } from './worksheet-prompt';
 import { AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto } from './dto/worksheet.dto';
 
 export type Caller = { userId: string; role: Role | string };
@@ -98,19 +100,31 @@ export class WorksheetsService {
     }
 
     const parsed = extractJsonObject<{ questions?: any[]; notes?: unknown[] }>(reply);
-    const rawQuestions = Array.isArray(parsed?.questions) ? parsed!.questions : [];
+    let rawQuestions: any[] = Array.isArray(parsed?.questions) ? parsed!.questions : salvageQuestions(reply);
+    // Safety net: if the reply was unreadable or stopped early, read the rest of the questions from the PDF text.
+    const pdfQuestions = questionsFromPdfText(dto.worksheetText);
+    let addedFromText = 0;
+    if (pdfQuestions.length > rawQuestions.length) {
+      addedFromText = pdfQuestions.length - rawQuestions.length;
+      rawQuestions = [...rawQuestions, ...pdfQuestions.slice(rawQuestions.length)];
+    }
+    if (!parsed) this.logger.warn(`worksheet draft: reply not valid JSON (${reply.length} chars); salvaged ${rawQuestions.length - addedFromText}, added ${addedFromText} from the PDF text`);
     const questions = normalizeQuestions(rawQuestions);
     const blankBefore = questions.filter((q) => LETTERS.some((L) => !q.options[L])).length;
     // Safety net: copy any choices the AI left blank straight from the PDF's text.
     const fromText = fillOptionsFromPdfText(questions, dto.worksheetText);
     if (blankBefore) this.logger.warn(`worksheet draft: ${blankBefore}/${questions.length} questions had blank choices; ${fromText.length} filled from the PDF text (${fromText.join(',') || 'none'}); text ${dto.worksheetText?.length ?? 0} chars`);
     const aiKey = rawQuestions.map((q) => (typeof q?.key === 'string' ? q.key.trim().toUpperCase() : ''));
-    const key = typedKey.length ? typedKey : aiKey;
+    const keyFromFile = keyFromText(dto.keyText, questions.length);
+    const aiKeyOk = aiKey.length === questions.length && aiKey.every(isLetter);
+    const key = typedKey.length ? typedKey : aiKeyOk ? aiKey : keyFromFile.length ? keyFromFile : aiKey;
     // Feedback is only ever for wrong letters; drop any the draft wrote for the key letter.
     questions.forEach((q, i) => {
       if (isLetter(key[i])) delete q.feedback[key[i] as Letter];
     });
     const notes = (Array.isArray(parsed?.notes) ? parsed!.notes : []).filter((x): x is string => typeof x === 'string').slice(0, 10);
+    if (addedFromText) notes.unshift(`Question${addedFromText === 1 ? '' : 's'} ${rawQuestions.length - addedFromText + 1}–${rawQuestions.length} ${addedFromText === 1 ? 'was' : 'were'} read straight from the PDF text: add any story, table or graph, and the feedback for wrong letters.`);
+    if (!typedKey.length && !aiKeyOk && keyFromFile.length) notes.unshift('The key was read from your key PDF. Check each letter.');
     if (fromText.length) notes.unshift(`Answer choices for question${fromText.length === 1 ? '' : 's'} ${fromText.join(', ')} were copied from the PDF text. Check them.`);
     const ad = looksNotAD(questions);
     return {
