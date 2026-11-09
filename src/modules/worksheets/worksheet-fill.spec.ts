@@ -20,6 +20,19 @@ describe('fillOptionsFromPdfText (real homework PDF text)', () => {
     expect(qs[13].options).toEqual({ A: '9 pints', B: '10 1/2 pints', C: '15 1/2 pints', D: '29 1/6 pints' });
     expect(qs[14].options.D).toBe('Proportional: 0 miles costs $0, and every mile costs $1.50');
   });
+  it('still finds the choices when the AI words the question differently', () => {
+    const qs = normalizeQuestions(STEMS.map((stem, i) => ({ stem: i === 9 ? 'Let g = gallons. Which equation matches?' : i === 13 ? '14. Orhan: how much blue?' : stem, options: { A: 'x', B: 'y', C: 'z', D: 'w' } })));
+    qs[9].options = { A: '', B: '', C: '', D: '' };
+    qs[13].options = { A: '', B: '', C: '', D: '' };
+    expect(fillOptionsFromPdfText(qs, PDF_TEXT)).toEqual([10, 14]);
+    expect(qs[9].options.B).toBe('c = 3.50g');
+    expect(qs[13].options.D).toBe('29 1/6 pints');
+  });
+  it('works when the text has single line breaks and no-break spaces', () => {
+    const qs = blank();
+    expect(fillOptionsFromPdfText(qs, PDF_TEXT.replace(/  10   /, '\n10\u00a0\u00a0 '))).toContain(10);
+    expect(qs[9].options.A).toBe('c = 2g');
+  });
   it('never touches choices the AI already gave', () => {
     const qs = blank();
     qs[0].options = { A: 'w', B: 'x', C: 'y', D: 'z' };

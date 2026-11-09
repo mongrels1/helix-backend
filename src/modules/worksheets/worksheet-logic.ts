@@ -143,31 +143,44 @@ function tidyPdfChoice(s: string): string {
  */
 export function fillOptionsFromPdfText(questions: WorksheetQuestion[], pdfText: string | undefined): number[] {
   const filled: number[] = [];
-  const text = (pdfText ?? '').replace(/\n/g, '   ');
+  const text = (pdfText ?? '').replace(/\r?\n/g, '   ').replace(/ /g, ' ');
   if (!text.trim()) return filled;
-  const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const words = (s: string) => s.toLowerCase().replace(/^\s*\(?\d{1,2}\s*[.):]\s*/, '').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const END = /(?=\s{2,}\d{1,2}\s{2,}\S|\s{2,}(?:[A-Z][a-z]+\s{2,})?(?:[A-Z]\s{1,3}){2,}[A-Z]|\s{2,}Adapted\b|\s{2,}[A-Z][a-z]+(?: [a-z]+){0,3}:|\s*$)/.source;
+  const CHOICES = new RegExp(`^\\s{2,}A\\s{2,}(.+?)\\s{2,}B\\s{2,}(.+?)\\s{2,}C\\s{2,}(.+?)\\s{2,}D\\s{2,}(.+?)${END}`);
+  /** The four choices printed after position `at`, or null. */
+  const parseAt = (at: number): { choices: string[]; end: number } | null => {
+    const seg = text.slice(at, at + 900);
+    const a = seg.search(/\s{2,}A\s{2,}/);
+    if (a < 0 || a > 400) return null;
+    const m = seg.slice(a).match(CHOICES);
+    if (!m) return null;
+    const choices = m.slice(1, 5).map(tidyPdfChoice);
+    if (choices.some((c) => !c || c.length > 300)) return null;
+    return { choices, end: at + a + m[0].length };
+  };
+  // Walk the questions in order. For each number, prefer the spot whose words
+  // match the AI's question text; otherwise the first spot after the previous
+  // question that has four lettered choices.
+  let cursor = 0;
   questions.forEach((q, i) => {
-    if (LETTERS.every((L) => q.options[L]?.trim())) return;
     const n = i + 1;
     const want = words(q.stem).slice(0, 2).join(' ');
-    const re = new RegExp(`(?:^|\\s{2,})${n}\\s{2,}(?=[A-Z])`, 'g');
-    let start = -1;
-    let first = -1;
+    const re = new RegExp(`(?:^|\\s{2,})${n}\\s{2,}(?=\\S)`, 'g');
+    re.lastIndex = cursor;
+    let best: { choices: string[]; end: number } | null = null;
     for (let m = re.exec(text); m; m = re.exec(text)) {
       const at = m.index + m[0].length;
-      if (first < 0) first = at;
-      if (!want || words(text.slice(at, at + 80)).join(' ').startsWith(want)) { start = at; break; }
+      const found = parseAt(at);
+      if (!found) continue;
+      const matches = !!want && words(text.slice(at, at + 120)).join(' ').startsWith(want);
+      if (matches) { best = found; break; }
+      if (!best) best = found;
     }
-    if (start < 0) start = want ? -1 : first;
-    if (start < 0) return;
-    const seg = text.slice(start, start + 900);
-    const a = seg.search(/\s{2,}A\s{2,}/);
-    if (a < 0 || a > 400) return;
-    const m = seg.slice(a).match(/^\s{2,}A\s{2,}(.+?)\s{2,}B\s{2,}(.+?)\s{2,}C\s{2,}(.+?)\s{2,}D\s{2,}(.+?)(?=\s{2,}\d{1,2}\s{2,}\S|\s{2,}(?:[A-Z][a-z]+\s{2,})?(?:[A-Z]\s{1,3}){2,}[A-Z]|\s{2,}Adapted\b|\s{2,}[A-Z][a-z]+(?: [a-z]+){0,3}:|\s*$)/);
-    if (!m) return;
-    const choices = m.slice(1, 5).map(tidyPdfChoice);
-    if (choices.some((c) => !c || c.length > 300)) return;
-    LETTERS.forEach((L, k) => { q.options[L] = choices[k]; });
+    if (!best) return;
+    cursor = best.end;
+    if (LETTERS.every((L) => q.options[L]?.trim())) return;
+    LETTERS.forEach((L, k) => { q.options[L] = best!.choices[k]; });
     filled.push(n);
   });
   return filled;

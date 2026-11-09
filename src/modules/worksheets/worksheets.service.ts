@@ -103,7 +103,7 @@ export class WorksheetsService {
     const blankBefore = questions.filter((q) => LETTERS.some((L) => !q.options[L])).length;
     // Safety net: copy any choices the AI left blank straight from the PDF's text.
     const fromText = fillOptionsFromPdfText(questions, dto.worksheetText);
-    if (blankBefore) this.logger.warn(`worksheet draft: ${blankBefore}/${questions.length} questions had blank choices; ${fromText.length} filled from the PDF text`);
+    if (blankBefore) this.logger.warn(`worksheet draft: ${blankBefore}/${questions.length} questions had blank choices; ${fromText.length} filled from the PDF text (${fromText.join(',') || 'none'}); text ${dto.worksheetText?.length ?? 0} chars`);
     const aiKey = rawQuestions.map((q) => (typeof q?.key === 'string' ? q.key.trim().toUpperCase() : ''));
     const key = typedKey.length ? typedKey : aiKey;
     // Feedback is only ever for wrong letters; drop any the draft wrote for the key letter.
