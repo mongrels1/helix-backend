@@ -20,4 +20,8 @@ export class AssignmentEntity {
   } | null;
   createdAt!: Date;
   updatedAt!: Date;
+  /** Student lists only: the caller's own turn-in status (null = not started). */
+  submissionStatus?: 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'GRADED' | 'RETURNED' | null;
+  /** Student lists only: when the caller turned it in. */
+  submittedAt?: Date | null;
 }

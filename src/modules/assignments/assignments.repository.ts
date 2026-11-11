@@ -1,7 +1,7 @@
 import { visibleToStudent } from './assignment-visibility';
 import { Injectable } from '@nestjs/common';
 import { accessibleClassroomWhere } from '@common/classroom-access/classroom-access';
-import { Assignment, Prisma, Role, Rubric } from '@prisma/client';
+import { Assignment, Prisma, Role, Rubric, SubmissionStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { CreateRubricDto } from './dto/create-rubric.dto';
@@ -11,6 +11,19 @@ import { AssignmentEntity } from './entities/assignment.entity';
 const assignmentInclude = {
   rubric: { include: { criteria: { orderBy: { order: 'asc' as const } } } },
 };
+
+type WithOwnSubmissions = { submissions?: { status: SubmissionStatus; submittedAt: Date | null }[] };
+
+/** Flatten a student's own submission onto the row: `submissionStatus` + `submittedAt`. */
+export function withOwnSubmission<T extends WithOwnSubmissions>(row: T): AssignmentEntity {
+  const { submissions, ...rest } = row;
+  const own = submissions?.[0];
+  return {
+    ...(rest as unknown as AssignmentEntity),
+    submissionStatus: own?.status ?? null,
+    submittedAt: own?.submittedAt ?? null,
+  };
+}
 
 @Injectable()
 export class AssignmentsRepository {
@@ -38,17 +51,32 @@ export class AssignmentsRepository {
       where.classroom = accessibleClassroomWhere(requestingUser.userId);
     }
     const skip = (page - 1) * limit;
+    const isStudent = requestingUser?.role === Role.STUDENT;
+    // A student's list carries their OWN turn-in (status and time only, never
+    // the answers). Without it every row read as "not turned in": work stayed
+    // under "To do" and never reached "Submitted" after a confirmed turn-in.
+    const include = isStudent
+      ? {
+          ...assignmentInclude,
+          submissions: {
+            where: { studentId: requestingUser!.userId },
+            select: { status: true, submittedAt: true },
+            take: 1,
+          },
+        }
+      : assignmentInclude;
     const [assignments, total] = await this.prisma.$transaction([
       this.prisma.assignment.findMany({
         where,
-        include: assignmentInclude,
+        include,
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.assignment.count({ where }),
     ]);
-    return [assignments as AssignmentEntity[], total];
+    if (!isStudent) return [assignments as AssignmentEntity[], total];
+    return [(assignments as unknown as WithOwnSubmissions[]).map((a) => withOwnSubmission(a)), total];
   }
 
   async findById(id: string): Promise<AssignmentEntity | null> {

@@ -181,6 +181,12 @@ run('Build W worksheets (real DB)', () => {
 
     const grade = await prisma.grade.findFirstOrThrow({ where: { submission: { assignmentId: a6, studentId: s6b.userId } } });
     expect([grade.score, grade.maxScore, grade.gradedById]).toEqual([3, 15, owner.userId]);
+
+    // The student's own list shows it as turned in (it used to stay "To do").
+    const [mine] = await assignmentsRepo.findAll(undefined, 1, 100, { userId: s6.userId, role: 'STUDENT' as any });
+    const row = mine.find((x) => x.id === a6)!;
+    expect(row.submissionStatus).toBe('GRADED');
+    expect(row.submittedAt).toBeInstanceOf(Date);
   });
 
   it('teacher results: per-student scores and per-question counts; view-only may look, outsider may not', async () => {
