@@ -293,6 +293,8 @@ export class DiagnosticService {
       const score = sum / n;
       if (score < 0.6) gaps.push(kc);
       try {
+        // A diagnostic is a fresh measurement: a missed skill drops to what the
+        // diagnostic measured, however high its old practice score was.
         await this.masteryEngine.updateMastery(
           userId,
           kc,
@@ -300,6 +302,7 @@ export class DiagnosticService {
           1,
           undefined,
           classroomId,
+          { capOnMiss: score },
         );
       } catch {
         // Best-effort: skip this KC if the mastery update fails.

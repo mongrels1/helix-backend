@@ -54,6 +54,33 @@ describe('MasteryEngineService', () => {
   });
 
   describe('updateMastery (BKT)', () => {
+    it('a diagnostic miss brings a 100% skill down to what the diagnostic measured', async () => {
+      const saturated = {
+        id: 'm1', studentId: 'student-1', skillTag: 'ratios', score: 1, pMastered: 1,
+        status: MasteryStatus.MASTERED, masteredAt: new Date(), nextRecheckAt: null,
+      };
+      // Plain BKT: at P = 1.0 a miss is read as a slip and nothing moves.
+      repository.getScoreForSkill.mockResolvedValue(saturated);
+      await service.updateMastery('student-1', 'ratios', 0.15, 1);
+      expect(repository.applyUpdate.mock.calls[0][0].pMastered).toBe(1);
+
+      // With the diagnostic's measurement it drops to that measurement.
+      repository.applyUpdate.mockClear();
+      repository.updateStatusFields.mockClear();
+      await service.updateMastery('student-1', 'ratios', 0.15, 1, undefined, undefined, { capOnMiss: 0.15 });
+      expect(repository.applyUpdate.mock.calls[0][0].pMastered).toBeCloseTo(0.15);
+      expect(repository.updateStatusFields.mock.calls[0][1]).toBe(MasteryStatus.EMERGING);
+    });
+
+    it('capOnMiss never lowers a skill the diagnostic got right', async () => {
+      repository.getScoreForSkill.mockResolvedValue({
+        id: 'm1', studentId: 'student-1', skillTag: 'ratios', score: 0.9, pMastered: 0.9,
+        status: MasteryStatus.EMERGING, masteredAt: null, nextRecheckAt: null,
+      });
+      await service.updateMastery('student-1', 'ratios', 1, 1, undefined, undefined, { capOnMiss: 1 });
+      expect(repository.applyUpdate.mock.calls[0][0].pMastered).toBeGreaterThan(0.9);
+    });
+
     it('raises the posterior on a correct response and records the attempt', async () => {
       await service.updateMastery('student-1', 'fractions', 1, 1, 'sub-1');
 

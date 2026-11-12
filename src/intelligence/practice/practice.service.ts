@@ -1,6 +1,33 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveToGa } from '../standards/ga-standards';
+import { isPlanActive } from '../../common/billing/billing';
+import { coveringParent, loadFamilyLinksFor } from '../../common/family/family';
+import { productFor } from '../../common/product/product';
+import { REACH_BY_PRODUCT } from '../push-map/push-map.tracks';
+
+/** "4", "Grade 4", "4th" → 4. K → 0. Anything else → null. */
+function parseGradeText(raw?: string | null): number | null {
+  if (!raw) return null;
+  const s = String(raw).trim().toUpperCase();
+  if (s === 'K' || s.startsWith('KINDER')) return 0;
+  const m = s.match(/\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) && n >= 0 && n <= 12 ? n : null;
+}
+
+/**
+ * Practice climbs through levels, easiest goal first, and moves on only when
+ * every standard in a level is mastered (since the latest diagnostic):
+ *   gaps  - the diagnostic's weak strands, up to the student's grade;
+ *   grade - every strand AT the student's grade, hardest items first;
+ *   above - one grade up at a time, as far as the plan reaches
+ *           (REACH_BY_PRODUCT: Standard 0, Above-Grade 1, Fellows 2).
+ * Before this, a student who mastered the pool hit a dead end: practice kept
+ * replaying finished standards and never got harder.
+ */
+type PracticeLevel = 'gaps' | 'grade' | 'above';
 
 /** Pull the grade number out of a standard or GA cluster code, e.g. "MGSE6.RP.2" -> 6, "6.NR.4" -> 6. */
 function gradeOf(s?: string | null): number | null {
@@ -72,6 +99,7 @@ interface WeakProfile {
   kcs: Set<string>;
   tags: Set<string>;
   sessionId: string;
+  completedAt: Date;
 }
 
 /**
@@ -111,7 +139,24 @@ export class PracticeService {
         if (r.tag) tags.add(r.tag);
       }
     }
-    return { strands, kcs, tags, sessionId: session.id };
+    return { strands, kcs, tags, sessionId: session.id, completedAt: session.completedAt };
+  }
+
+  /**
+   * When the student last finished a diagnostic. Practice "mastered" counts only
+   * answers since then: a new diagnostic re-opens the standards it found weak.
+   * (Before, a standard mastered once stayed mastered forever, so a student who
+   * had worked through the pool kept seeing "everything mastered" even after a
+   * new diagnostic at ~50%.)
+   */
+  private async latestDiagnosticAt(userId?: string): Promise<Date | null> {
+    if (!userId) return null;
+    const s = await this.prisma.diagnosticSession.findFirst({
+      where: { userId },
+      orderBy: { completedAt: 'desc' },
+      select: { completedAt: true },
+    });
+    return s?.completedAt ?? null;
   }
 
   /**
@@ -159,7 +204,8 @@ export class PracticeService {
     // Read back the updated consecutive-correct streak so the client can advance
     // to the next standard the moment this one is mastered.
     const standard = item.standard ?? null;
-    const masteryStreak = standard ? await this.currentStreak(userId, standard) : 0;
+    const since = standard ? await this.latestDiagnosticAt(userId) : null;
+    const masteryStreak = standard ? await this.currentStreak(userId, standard, since) : 0;
     return {
       recorded: true as const,
       correct,
@@ -197,10 +243,12 @@ export class PracticeService {
     };
     if (q.standard) where.standard = { contains: String(q.standard) };
 
+    // The whole bank (it was the 500 newest only, so older items never reached
+    // a student). Capped as a safety net.
     const rows = await this.prisma.draftItem.findMany({
       where: where as never,
       orderBy: { createdAt: 'desc' },
-      take: 500,
+      take: 5000,
     });
 
     const wantGrade = q.grade ? Number(q.grade) : null;
@@ -231,58 +279,79 @@ export class PracticeService {
       })
       .filter((r) => (wantGrade ? r.grade === wantGrade : true));
 
-    // Targeting: prefer items in the strands the student was weak on. If the
-    // student has no diagnostic, or no targeted items exist, fall back to general
-    // practice so the tab is never empty.
     const weak = await this.weakProfile(userId);
-    let basedOn: 'diagnostic' | 'all' = 'all';
-    let weakStrands: string[] = [];
+    const since = weak?.completedAt ?? null;
+    const weakStrands: string[] = weak ? [...weak.strands] : [];
+
+    // The student's grade and how far above it their plan reaches. An explicit
+    // ?grade= is a manual pick and turns the ladder off.
+    const learner = q.grade ? { grade: null, reach: 0 } : await this.learnerLevel(userId);
+    const enrolled = learner.grade;
+    const gradeCeiling = enrolled !== null ? enrolled + learner.reach : null;
+    if (gradeCeiling !== null) {
+      const capped = shaped.filter((it) => it.grade === null || it.grade <= gradeCeiling);
+      if (capped.length) shaped = capped;
+    }
+
+    type Item = (typeof shaped)[number];
+    const levels: { key: PracticeLevel; grade: number | null; items: Item[] }[] = [];
+    const atOrBelow = (it: Item) => enrolled === null || it.grade === null || it.grade <= enrolled;
     if (weak && weak.strands.size) {
-      weakStrands = [...weak.strands];
-      const targeted = shaped.filter((it) => it.strand && weak.strands.has(it.strand));
-      if (targeted.length) {
-        shaped = targeted;
-        basedOn = 'diagnostic';
+      levels.push({ key: 'gaps', grade: enrolled, items: shaped.filter((it) => atOrBelow(it) && !!it.strand && weak.strands.has(it.strand)) });
+    }
+    levels.push({ key: 'grade', grade: enrolled, items: enrolled === null ? shaped : shaped.filter((it) => it.grade === null || it.grade === enrolled) });
+    if (enrolled !== null) {
+      for (let k = 1; k <= learner.reach; k++) {
+        levels.push({ key: 'above', grade: enrolled + k, items: shaped.filter((it) => it.grade === enrolled + k) });
       }
     }
 
-    // Mastery sequencing: work ONE standard at a time. Pick the student's current
-    // target standard (a not-yet-mastered standard, preferring one they've already
-    // started), serve ONLY that standard's items, and advance to the next standard
-    // only once they reach MASTERY_STREAK correct-in-a-row. An explicit ?standard=
-    // overrides the gate for a manual drill.
+    // Mastery sequencing: work ONE standard at a time, in the first level that
+    // still has an unmastered standard. Advance only after MASTERY_STREAK
+    // correct-in-a-row. An explicit ?standard= overrides the gate for a drill.
     let currentStandard: string | null = null;
     let masteryStreak = 0;
     let masteredStandards = 0;
     let remainingStandards = 0;
+    let level: (typeof levels)[number] | null = null;
+    const standardsOf = (items: Item[]) => [...new Set(items.map((it) => it.standard).filter((v): v is string => !!v))];
     if (q.standard) {
       currentStandard = shaped.find((it) => it.standard)?.standard ?? String(q.standard);
-      masteryStreak = await this.currentStreak(userId, currentStandard);
+      masteryStreak = await this.currentStreak(userId, currentStandard, since);
     } else {
-      const poolStandards = [...new Set(shaped.map((it) => it.standard).filter((v): v is string => !!v))];
-      if (poolStandards.length) {
-        const progress = await this.standardProgress(userId, poolStandards);
-        const unmastered = poolStandards.filter((st) => !progress.get(st)!.mastered);
-        masteredStandards = poolStandards.length - unmastered.length;
+      const all = standardsOf(levels.flatMap((l) => l.items));
+      const progress = await this.standardProgress(userId, all, since);
+      masteredStandards = all.filter((st) => progress.get(st)!.mastered).length;
+      for (const l of levels) {
+        const unmastered = standardsOf(l.items).filter((st) => !progress.get(st)!.mastered);
+        if (!unmastered.length) continue;
+        // Keep the student on a standard they've already started (most recent
+        // first); otherwise begin the next fresh standard in code order.
+        unmastered.sort((a, b) => {
+          const pa = progress.get(a)!;
+          const pb = progress.get(b)!;
+          if (pa.started !== pb.started) return pa.started ? -1 : 1;
+          if (pa.started && pb.started) return pb.lastAt - pa.lastAt;
+          return a.localeCompare(b);
+        });
+        level = l;
+        currentStandard = unmastered[0];
+        masteryStreak = progress.get(currentStandard)!.streak;
         remainingStandards = unmastered.length;
-        if (unmastered.length) {
-          // Keep the student on a standard they've already started (most recent
-          // first); otherwise begin the next fresh standard in code order.
-          unmastered.sort((a, b) => {
-            const pa = progress.get(a)!;
-            const pb = progress.get(b)!;
-            if (pa.started !== pb.started) return pa.started ? -1 : 1;
-            if (pa.started && pb.started) return pb.lastAt - pa.lastAt;
-            return a.localeCompare(b);
-          });
-          currentStandard = unmastered[0];
-          masteryStreak = progress.get(currentStandard)!.streak;
-        }
+        break;
       }
+      // Everything mastered: keep practising the hardest level there is.
+      if (!level) level = [...levels].reverse().find((l) => l.items.length) ?? null;
+      if (level?.items.length) shaped = level.items;
     }
     if (currentStandard) {
       shaped = shaped.filter((it) => it.standard === currentStandard);
     }
+    // Beyond the gaps, harder items first.
+    if (level && level.key !== 'gaps') {
+      shaped = [...shaped].sort((a, b) => (b.dok ?? 0) - (a.dok ?? 0));
+    }
+    const basedOn: 'diagnostic' | 'all' = level?.key === 'gaps' ? 'diagnostic' : 'all';
 
     // Misconception-driven ordering: within the current standard, float items that
     // probe the student's recent active misconceptions to the front, so practice
@@ -307,7 +376,39 @@ export class PracticeService {
       masteryTarget: MASTERY_STREAK,
       masteredStandards,
       remainingStandards,
+      level: level?.key ?? null,
+      levelGrade: level?.grade ?? null,
+      gradeCeiling,
     };
+  }
+
+  /** The student's grade (profile, else latest diagnostic) and their plan's reach above it. */
+  private async learnerLevel(userId?: string): Promise<{ grade: number | null; reach: number }> {
+    if (!userId) return { grade: null, reach: 0 };
+    const u = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: {
+        role: true, plan: true, planStatus: true, planRenewsAt: true, planSource: true,
+        profile: { select: { grade: true } },
+      },
+    });
+    if (!u) return { grade: null, reach: 0 };
+    // A scholar's product lives on the parent paying for them (same rule as the
+    // Push Map, the ribbon and the admin list).
+    const payer = coveringParent(await loadFamilyLinksFor(this.prisma, userId));
+    const product = payer
+      ? productFor(payer.plan, null, true)
+      : productFor(u.plan, u.planSource, isPlanActive(u.planStatus, u.planRenewsAt), u.role);
+    let grade = parseGradeText(u.profile?.grade);
+    if (grade === null) {
+      const d = await this.prisma.diagnosticSession.findFirst({
+        where: { userId },
+        orderBy: { completedAt: 'desc' },
+        select: { grade: true },
+      });
+      grade = parseGradeText(d?.grade);
+    }
+    return { grade, reach: REACH_BY_PRODUCT[product.id] ?? 0 };
   }
 
   /**
@@ -319,12 +420,13 @@ export class PracticeService {
   private async standardProgress(
     userId: string | undefined,
     standards: string[],
+    since: Date | null = null,
   ): Promise<Map<string, { streak: number; mastered: boolean; started: boolean; lastAt: number }>> {
     const map = new Map<string, { streak: number; mastered: boolean; started: boolean; lastAt: number }>();
     for (const st of standards) map.set(st, { streak: 0, mastered: false, started: false, lastAt: 0 });
     if (!userId || !standards.length) return map;
     const rows = await this.prisma.practiceResponse.findMany({
-      where: { userId, standard: { in: standards } },
+      where: { userId, standard: { in: standards }, ...(since ? { createdAt: { gte: since } } : {}) },
       orderBy: { createdAt: 'desc' },
       take: 500,
     });
@@ -349,8 +451,8 @@ export class PracticeService {
   }
 
   /** Current consecutive-correct streak on a single standard. */
-  private async currentStreak(userId: string | undefined, standard: string): Promise<number> {
-    const m = await this.standardProgress(userId, [standard]);
+  private async currentStreak(userId: string | undefined, standard: string, since: Date | null = null): Promise<number> {
+    const m = await this.standardProgress(userId, [standard], since);
     return m.get(standard)?.streak ?? 0;
   }
 }

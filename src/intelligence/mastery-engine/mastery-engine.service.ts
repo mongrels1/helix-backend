@@ -20,6 +20,13 @@ export interface MasteryUpdateOptions {
   rigor?: number;
   /** Stable key identifying the application variant (e.g. item id). */
   variantKey?: string;
+  /**
+   * A fresh measurement (a diagnostic). On a miss, P(mastered) is set no higher
+   * than this value. Without it a saturated skill (P = 1.0 after ~24 corrects)
+   * can never come down: BKT treats a miss at P = 1.0 as a slip, so a student
+   * showing 100% stayed at 100% after doing badly on a new diagnostic.
+   */
+  capOnMiss?: number;
 }
 
 export interface MasteryGate extends GateResult {
@@ -57,7 +64,10 @@ export class MasteryEngineService {
 
     const existing = await this.repository.getScoreForSkill(studentId, skillTag);
     const prior = existing ? existing.pMastered : BKT_DEFAULTS.pL0;
-    const pMastered = bktUpdate(prior, correct, BKT_DEFAULTS);
+    let pMastered = bktUpdate(prior, correct, BKT_DEFAULTS);
+    if (!correct && typeof opts?.capOnMiss === 'number') {
+      pMastered = Math.min(pMastered, this.clampScore(opts.capOnMiss));
+    }
 
     // Persist the new posterior + this attempt's evidence first (provisional
     // status), so the gate is evaluated over history that INCLUDES this response.
