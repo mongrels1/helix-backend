@@ -1,3 +1,4 @@
+import { masteryValueForTag } from './diagnostic-mastery';
 import {
   ConflictException,
   ForbiddenException,
@@ -385,11 +386,7 @@ export class DiagnosticService {
    * Returns null for above-level items (a harder-than-grade miss is not a gap).
    */
   private masteryValueForTag(tag: string): number | null {
-    const t = tag.toLowerCase().replace(/[^a-z]/g, '');
-    if (t.includes('master')) return 1;
-    if (t.includes('emerg')) return 0.6;
-    if (t.includes('above') || t.includes('stretch') || t.includes('reach')) return null;
-    return 0.15; // not yet
+    return masteryValueForTag(tag);
   }
 
   /** Summary list of a user's saved diagnostics (most recent first). */

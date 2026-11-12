@@ -31,14 +31,8 @@ function arg(flag: string): string | null {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null;
 }
 
-/** Same mapping as DiagnosticService.masteryValueForTag. */
-export function masteryValueForTag(tag: string): number | null {
-  const t = tag.toLowerCase().replace(/[^a-z]/g, '');
-  if (t.includes('master')) return 1;
-  if (t.includes('emerg')) return 0.6;
-  if (t.includes('above') || t.includes('stretch') || t.includes('reach')) return null;
-  return 0.15;
-}
+import { masteryValueForTag } from '../intelligence/diagnostic/diagnostic-mastery';
+export { masteryValueForTag };
 
 /** Per-skill measured score from a diagnostic's responses (mean per KC). */
 export function measuredByKc(responses: { kc: string; tag: string }[]): Map<string, number> {
@@ -54,16 +48,22 @@ export function measuredByKc(responses: { kc: string; tag: string }[]): Map<stri
   return new Map([...byKc].map(([kc, { sum, n }]) => [kc, sum / n]));
 }
 
-/** The changes to make: weak skills whose stored score is above the measurement. */
+/**
+ * The changes to make for each WEAK skill: lower a stored score that is above
+ * the measurement (id set), or create the skill when it has no score yet
+ * (id null, from null) so it appears on My skills.
+ */
 export function plan(
   measured: Map<string, number>,
   current: { id: string; skillTag: string; pMastered: number }[],
-): { id: string; skillTag: string; from: number; to: number }[] {
-  const out: { id: string; skillTag: string; from: number; to: number }[] = [];
-  for (const row of current) {
-    const m = measured.get(row.skillTag);
-    if (m === undefined || m >= 0.6) continue;
-    if (row.pMastered > m) out.push({ id: row.id, skillTag: row.skillTag, from: row.pMastered, to: m });
+): { id: string | null; skillTag: string; from: number | null; to: number }[] {
+  const out: { id: string | null; skillTag: string; from: number | null; to: number }[] = [];
+  const byTag = new Map(current.map((r) => [r.skillTag, r]));
+  for (const [skillTag, m] of measured) {
+    if (m >= 0.6) continue;
+    const row = byTag.get(skillTag);
+    if (!row) out.push({ id: null, skillTag, from: null, to: m });
+    else if (row.pMastered > m) out.push({ id: row.id, skillTag, from: row.pMastered, to: m });
   }
   return out.sort((a, b) => a.skillTag.localeCompare(b.skillTag));
 }
@@ -125,7 +125,8 @@ async function main() {
       return;
     }
     for (const c of changes) {
-      console.log(`  ${c.skillTag.padEnd(40)} ${Math.round(c.from * 100)}% -> ${Math.round(c.to * 100)}%`);
+      const from = c.from === null ? 'new' : `${Math.round(c.from * 100)}%`;
+      console.log(`  ${c.skillTag.padEnd(40)} ${from} -> ${Math.round(c.to * 100)}%`);
     }
     if (!APPLY) {
       console.log(`\nDRY RUN: ${changes.length} skill(s) would change. Re-run with --apply to write.`);
@@ -133,12 +134,12 @@ async function main() {
     }
     await prisma.$transaction(async (tx) => {
       for (const c of changes) {
-        await tx.masteryScore.update({
-          where: { id: c.id },
-          data: { score: c.to, pMastered: c.to, status: MasteryStatus.EMERGING, masteredAt: null, nextRecheckAt: null },
-        });
+        const data = { score: c.to, pMastered: c.to, status: MasteryStatus.EMERGING, masteredAt: null, nextRecheckAt: null };
+        const row = c.id
+          ? await tx.masteryScore.update({ where: { id: c.id }, data })
+          : await tx.masteryScore.create({ data: { ...data, studentId: student.id, skillTag: c.skillTag } });
         await tx.masteryHistory.create({
-          data: { masteryScoreId: c.id, score: c.to, correct: false, pAfter: c.to, variantKey: `reapply-diagnostic:${session.id}` },
+          data: { masteryScoreId: row.id, score: c.to, correct: false, pAfter: c.to, variantKey: `reapply-diagnostic:${session.id}` },
         });
       }
     });
