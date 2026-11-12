@@ -48,6 +48,9 @@ export function measuredByKc(responses: { kc: string; tag: string }[]): Map<stri
   return new Map([...byKc].map(([kc, { sum, n }]) => [kc, sum / n]));
 }
 
+/** Placeholder skill names from items imported without a skill: never shown to a student. */
+export const PLACEHOLDER_SKILLS = new Set(['imported item']);
+
 /**
  * The changes to make for each WEAK skill: lower a stored score that is above
  * the measurement (id set), or create the skill when it has no score yet
@@ -61,6 +64,7 @@ export function plan(
   const byTag = new Map(current.map((r) => [r.skillTag, r]));
   for (const [skillTag, m] of measured) {
     if (m >= 0.6) continue;
+    if (PLACEHOLDER_SKILLS.has(skillTag.trim().toLowerCase())) continue;
     const row = byTag.get(skillTag);
     if (!row) out.push({ id: null, skillTag, from: null, to: m });
     else if (row.pMastered > m) out.push({ id: row.id, skillTag, from: row.pMastered, to: m });

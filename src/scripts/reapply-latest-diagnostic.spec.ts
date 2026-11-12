@@ -7,6 +7,7 @@ describe('reapply-latest-diagnostic', () => {
     { kc: 'Add signed numbers', tag: 'notyet' },      // 0.15 -> weak
     { kc: 'Volume', tag: 'emerging' },                // weak, no score yet -> created
     { kc: 'Ratios', tag: 'stretch' },                 // not scored
+    { kc: 'Imported item', tag: 'notyet' },           // placeholder name: skipped
   ]);
 
   it('lowers weak skills to the measured value, creates missing ones, never raises', () => {
@@ -15,6 +16,7 @@ describe('reapply-latest-diagnostic', () => {
       { id: '2', skillTag: 'Compare decimals', pMastered: 1 },
       { id: '3', skillTag: 'Add signed numbers', pMastered: 0.1 }, // already lower: untouched
       { id: '4', skillTag: 'Not on the diagnostic', pMastered: 1 },
+      { id: '5', skillTag: 'Imported item', pMastered: 1 },
     ]);
     expect(changes).toEqual([
       { id: '1', skillTag: 'Area of a circle', from: 1, to: 0.4 },
