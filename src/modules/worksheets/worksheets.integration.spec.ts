@@ -268,6 +268,38 @@ run('Build W worksheets (real DB)', () => {
     for (const m of made) await prisma.assignment.update({ where: { id: m.id }, data: { deletedAt: new Date() } });
   });
 
+  it('fix graphs (17 Nov): owner replaces a graph on an assigned worksheet; new picture id, answers and key untouched', async () => {
+    const due = new Date(Date.now() + 3 * 86400_000);
+    const ws3 = await svc.create(owner, { title: 'Graphs', pageImages: [JPEG], questions: questions.map((q, i) => ({ ...q, crop: undefined, figureImage: i === 2 ? JPEG : undefined })) as any, key: KEY });
+    const [a] = await svc.assign(owner, ws3.id, { classroomIds: [p6], dueAt: due.toISOString() });
+    await svc.saveDraft(s6, a.id, Array(15).fill('B'));
+    const before: any = await svc.sheet(s6, a.id);
+    const oldId = before.questions[2].figureId;
+    expect(oldId).toBeTruthy();
+
+    const own = await svc.getOwn(owner, ws3.id);
+    expect(own.questions[2].figureId).toBe(oldId);
+    await expect(svc.getOwn(outsider, ws3.id)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.updateFigures(outsider, ws3.id, { figures: [{ n: 3, image: PNG }] })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.updateFigures(owner, ws3.id, { figures: [{ n: 16, image: PNG }] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateFigures(owner, ws3.id, { figures: [{ n: 3, image: SVG }] })).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(await svc.updateFigures(owner, ws3.id, { figures: [{ n: 3, image: PNG }, { n: 5, image: PNG }] })).toEqual({ replaced: [3, 5], removed: [] });
+    const after: any = await svc.sheet(s6, a.id);
+    expect(after.questions[2].figureId).toBeTruthy();
+    expect(after.questions[2].figureId).not.toBe(oldId); // new id: no stale cached picture
+    expect(after.questions[4].figureId).toBeTruthy();
+    expect((await svc.page(s6, after.questions[2].figureId)).mime).toBe('image/png');
+    await expect(svc.page(s6, oldId)).rejects.toBeInstanceOf(NotFoundException);
+    expect(after.answers).toEqual(Array(15).fill('B'));
+    expect(after.questions.map((q: any) => q.stem)).toEqual(before.questions.map((q: any) => q.stem));
+    expect((await prisma.worksheet.findUnique({ where: { id: ws3.id }, select: { key: true } }))!.key).toEqual(KEY);
+
+    expect(await svc.updateFigures(owner, ws3.id, { figures: [{ n: 5, image: null }] })).toEqual({ replaced: [], removed: [5] });
+    expect(((await svc.sheet(s6, a.id)) as any).questions[4].figureId).toBeNull();
+    await prisma.assignment.update({ where: { id: a.id }, data: { deletedAt: new Date() } });
+  });
+
   it('delete: refused while assigned, only by the owner, gone afterwards', async () => {
     await expect(svc.remove(owner, worksheetId)).rejects.toBeInstanceOf(ConflictException);
     const spare = await svc.create(owner, { title: 'spare', pageImages: [JPEG], questions: questions.map((q) => ({ ...q, crop: undefined })) as any, key: KEY });

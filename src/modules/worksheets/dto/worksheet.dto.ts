@@ -3,6 +3,9 @@ import {
   ArrayMaxSize,
   IsArray,
   IsDateString,
+  IsInt,
+  Max,
+  Min,
   IsObject,
   IsOptional,
   IsString,
@@ -79,6 +82,29 @@ export class WorksheetQuestionDto {
   @IsString()
   @MaxLength(6_000_000)
   figureImage?: string;
+}
+
+/** One graph to replace (image = data:image URL) or remove (image null/empty). */
+export class FigureChangeDto {
+  @IsInt()
+  @Min(1)
+  @Max(MAX_QUESTIONS)
+  n!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(6_000_000)
+  image?: string | null;
+}
+
+/** 17 Nov: fix the graphs of a saved worksheet; text, key and answers are untouched. */
+export class UpdateFiguresDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(MAX_QUESTIONS)
+  @ValidateNested({ each: true })
+  @Type(() => FigureChangeDto)
+  figures!: FigureChangeDto[];
 }
 
 /** Save the teacher-confirmed worksheet. The server re-checks everything. */

@@ -3,7 +3,7 @@ import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import { Roles } from '@common/decorators/roles.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
-import { AnswersDto, AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto, ScheduleWorksheetDto } from './dto/worksheet.dto';
+import { AnswersDto, AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto, ScheduleWorksheetDto, UpdateFiguresDto } from './dto/worksheet.dto';
 import { Caller, WorksheetsService } from './worksheets.service';
 
 /**
@@ -89,5 +89,19 @@ export class WorksheetsController {
     res.setHeader('Cache-Control', 'private, max-age=3600');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.send(Buffer.from(data));
+  }
+
+  /** 17 Nov: the owner's view of one saved worksheet (for "Fix graphs"). Kept last so it never shadows a named route. */
+  @Get(':id')
+  @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
+  async getOwn(@CurrentUser() user: Caller, @Param('id', ParseUUIDPipe) id: string) {
+    return { success: true, data: await this.service.getOwn(user, id) };
+  }
+
+  /** 17 Nov: replace or remove graph pictures on a saved worksheet (text, key and answers untouched). */
+  @Put(':id/figures')
+  @Roles(Role.TEACHER, Role.ORG_ADMIN, Role.SUPER_ADMIN)
+  async updateFigures(@CurrentUser() user: Caller, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFiguresDto) {
+    return { success: true, data: await this.service.updateFigures(user, id, dto) };
   }
 }

@@ -34,9 +34,10 @@ import {
   keyFromText,
   LETTERS,
   questionsFromPdfText,
+  planFigureChanges,
 } from './worksheet-logic';
 import { WORKSHEET_DRAFT_SYSTEM, buildDraftPrompt, extractJsonObject, salvageQuestions } from './worksheet-prompt';
-import { AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto } from './dto/worksheet.dto';
+import { AssignWorksheetDto, CreateWorksheetDto, DraftWorksheetDto, UpdateFiguresDto } from './dto/worksheet.dto';
 import { hasOpened, openToStudents, targetsStudent } from '../assignments/assignment-visibility';
 
 export type Caller = { userId: string; role: Role | string };
@@ -504,6 +505,64 @@ export class WorksheetsService {
     if (live) throw new ConflictException(`It is assigned to ${live} class${live === 1 ? '' : 'es'}. Delete those assignments first.`);
     await this.prisma.worksheet.delete({ where: { id: worksheetId } });
     return { deleted: true };
+  }
+
+  /** One saved worksheet for its owner: questions and current graph pictures (for "Fix graphs"). */
+  async getOwn(caller: Caller, worksheetId: string) {
+    const ws = await this.prisma.worksheet.findUnique({
+      where: { id: worksheetId },
+      select: { id: true, title: true, ownerId: true, questionCount: true, questions: true, pages: { select: { id: true, pageNo: true } } },
+    });
+    if (!ws) throw new NotFoundException('Worksheet not found');
+    if (ws.ownerId !== caller.userId && caller.role !== Role.SUPER_ADMIN) throw new ForbiddenException('You can only open your own worksheets');
+    const questions = normalizeQuestions(ws.questions as unknown);
+    return {
+      id: ws.id,
+      title: ws.title,
+      questionCount: ws.questionCount,
+      questions: questions.map((q) => ({
+        n: q.n,
+        context: q.context ?? null,
+        stem: q.stem,
+        table: q.table ?? null,
+        figureId: q.figure ? ws.pages.find((p) => p.pageNo === q.figure!.pageNo)?.id ?? null : null,
+      })),
+    };
+  }
+
+  /**
+   * 17 Nov: replace or remove graph pictures on a saved worksheet, even while
+   * it is assigned. Only the pictures change, so scores and students' answers
+   * stay valid. A replaced picture gets a new id, so no browser keeps showing
+   * the old one from its cache.
+   */
+  async updateFigures(caller: Caller, worksheetId: string, dto: UpdateFiguresDto) {
+    const ws = await this.prisma.worksheet.findUnique({
+      where: { id: worksheetId },
+      select: { id: true, ownerId: true, questions: true, pages: { select: { pageNo: true, size: true } } },
+    });
+    if (!ws) throw new NotFoundException('Worksheet not found');
+    if (ws.ownerId !== caller.userId && caller.role !== Role.SUPER_ADMIN) throw new ForbiddenException('You can only change your own worksheets');
+    let plan: ReturnType<typeof planFigureChanges>;
+    try {
+      plan = planFigureChanges(normalizeQuestions(ws.questions as unknown), dto.figures);
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
+    }
+    const touched = new Set([...plan.drop, ...plan.put.map((p) => p.pageNo)]);
+    const total = ws.pages.filter((p) => !touched.has(p.pageNo)).reduce((s, p) => s + p.size, 0) + plan.put.reduce((s, p) => s + p.bytes.length, 0);
+    if (total > MAX_TOTAL_PAGE_BYTES) throw new BadRequestException('The worksheet pictures are too large.');
+    // Same stored shape as create(): numbered questions, no draft crop.
+    const stored = plan.questions.map(({ crop: _c, ...q }) => q);
+    await this.prisma.$transaction([
+      this.prisma.worksheetPage.deleteMany({ where: { worksheetId, pageNo: { in: [...touched] } } }),
+      ...(plan.put.length
+        ? [this.prisma.worksheetPage.createMany({ data: plan.put.map((f) => ({ worksheetId, pageNo: f.pageNo, mime: f.mime, data: new Uint8Array(f.bytes), size: f.bytes.length })) })]
+        : []),
+      this.prisma.worksheet.update({ where: { id: worksheetId }, data: { questions: stored as unknown as Prisma.InputJsonValue } }),
+    ]);
+    this.logger.log(`worksheet ${worksheetId}: graphs replaced ${plan.put.map((p) => p.pageNo - FIGURE_PAGE_BASE).join(',') || '-'}; removed ${plan.drop.map((p) => p - FIGURE_PAGE_BASE).join(',') || '-'}`);
+    return { replaced: plan.put.map((p) => p.pageNo - FIGURE_PAGE_BASE), removed: plan.drop.map((p) => p - FIGURE_PAGE_BASE) };
   }
 
   /** Worksheets this teacher saved (to assign again later). */

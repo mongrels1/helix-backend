@@ -396,3 +396,37 @@ export function looksNotAD(questions: WorksheetQuestion[]): { notAD: boolean; ba
   }).length;
   return { notAD: questions.length > 0 && bad * 2 >= questions.length, bad };
 }
+
+/**
+ * 17 Nov: replace or remove the graph pictures of a saved worksheet (the AI's
+ * crop boxes had cut the wrong part of the page). Only pictures change: the
+ * questions' text, the key and students' answers stay as they are.
+ * Throws a plain-language message for the teacher when a change is not allowed.
+ */
+export function planFigureChanges(
+  questions: WorksheetQuestion[],
+  changes: { n: number; image?: unknown }[],
+): { questions: WorksheetQuestion[]; put: { pageNo: number; mime: string; bytes: Buffer }[]; drop: number[] } {
+  if (!Array.isArray(changes) || changes.length === 0) throw new Error('Choose at least one graph to change.');
+  const seen = new Set<number>();
+  const next = questions.map((q) => ({ ...q }));
+  const put: { pageNo: number; mime: string; bytes: Buffer }[] = [];
+  const drop: number[] = [];
+  for (const c of changes) {
+    const n = Number(c?.n);
+    if (!Number.isInteger(n) || n < 1 || n > questions.length) throw new Error(`There is no question ${c?.n}.`);
+    if (seen.has(n)) throw new Error(`Question ${n} is listed twice.`);
+    seen.add(n);
+    const pageNo = FIGURE_PAGE_BASE + n;
+    if (c.image === null || c.image === undefined || c.image === '') {
+      delete next[n - 1].figure;
+      drop.push(pageNo);
+      continue;
+    }
+    const img = decodePageImage(c.image);
+    if (!img) throw new Error(`Question ${n}: its graph could not be read as a picture.`);
+    put.push({ pageNo, ...img });
+    next[n - 1].figure = { pageNo };
+  }
+  return { questions: next, put, drop };
+}

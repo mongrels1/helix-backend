@@ -13,6 +13,8 @@ import {
   scoreAnswers,
   studentResult,
   validateWorksheet,
+  planFigureChanges,
+  FIGURE_PAGE_BASE,
 } from './worksheet-logic';
 
 // The real test case: Proportional or Not? Homework (A–D), 15 questions.
@@ -206,5 +208,37 @@ describe('looksNotAD', () => {
   });
   it('does not flag a real A–D worksheet', () => {
     expect(looksNotAD(QUESTIONS)).toEqual({ notAD: false, bad: 0 });
+  });
+});
+
+
+describe('planFigureChanges (17 Nov: fix graphs on a saved worksheet)', () => {
+  const png = 'data:image/png;base64,' + Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40)]).toString('base64');
+  const qs = normalizeQuestions([
+    { stem: 'One', options: { A: '1', B: '2', C: '3', D: '4' } },
+    { stem: 'Two', options: { A: '1', B: '2', C: '3', D: '4' }, figure: { pageNo: FIGURE_PAGE_BASE + 2 } },
+    { stem: 'Three', options: { A: '1', B: '2', C: '3', D: '4' } },
+  ]);
+
+  it('replaces one graph, adds another, and leaves text and options alone', () => {
+    const r = planFigureChanges(qs, [{ n: 2, image: png }, { n: 3, image: png }]);
+    expect(r.put.map((p) => p.pageNo)).toEqual([FIGURE_PAGE_BASE + 2, FIGURE_PAGE_BASE + 3]);
+    expect(r.put[0].mime).toBe('image/png');
+    expect(r.questions[2].figure).toEqual({ pageNo: FIGURE_PAGE_BASE + 3 });
+    expect(r.questions.map((q) => [q.stem, q.options])).toEqual(qs.map((q) => [q.stem, q.options]));
+    expect(qs[2].figure).toBeUndefined(); // the input is not changed
+  });
+
+  it('removes a graph with image null', () => {
+    const r = planFigureChanges(qs, [{ n: 2, image: null }]);
+    expect(r.drop).toEqual([FIGURE_PAGE_BASE + 2]);
+    expect(r.questions[1].figure).toBeUndefined();
+  });
+
+  it('refuses a missing question, a repeat, a non-picture and an empty list', () => {
+    expect(() => planFigureChanges(qs, [{ n: 4, image: png }])).toThrow('There is no question 4.');
+    expect(() => planFigureChanges(qs, [{ n: 1, image: png }, { n: 1, image: null }])).toThrow('listed twice');
+    expect(() => planFigureChanges(qs, [{ n: 1, image: 'data:text/html;base64,PGI+' }])).toThrow('could not be read as a picture');
+    expect(() => planFigureChanges(qs, [])).toThrow('at least one');
   });
 });
