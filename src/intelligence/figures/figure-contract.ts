@@ -33,6 +33,11 @@ export function isRenderableFigureType(t: unknown): t is FigureType {
 }
 
 export type Pt = { x: number; y: number };
+/** One line on a coordinate grid: y = mx + b, a segment, or a path through points. Mirrors the frontend GridLine. */
+export type GridLine =
+  | { m: number; b: number; label?: string }
+  | { from: Pt; to: Pt; label?: string }
+  | { points: Pt[]; label?: string };
 
 /**
  * Permissive producer-facing union — the complete set of 27 renderable figures.
@@ -49,7 +54,7 @@ export type Figure =
   | { type: 'bar_graph'; bars: { label: string; value: number }[]; unit?: string; altText?: string }
   | { type: 'triangle'; base: number; height: number; unit?: string; mode?: 'area' | 'plain'; altText?: string }
   | { type: 'angle'; degrees: number; label?: string; altText?: string }
-  | { type: 'coordinate_grid'; min: number; max: number; points: { x: number; y: number; label?: string }[]; line?: { m: number; b: number } | { from: Pt; to: Pt }; altText?: string }
+  | { type: 'coordinate_grid'; min: number; max: number; xMin?: number; xMax?: number; yMin?: number; yMax?: number; xStep?: number; yStep?: number; points: { x: number; y: number; label?: string }[]; line?: GridLine; lines?: GridLine[]; xLabel?: string; yLabel?: string; altText?: string }
   | { type: 'dot_plot'; min: number; max: number; values: number[]; label?: string; altText?: string }
   | { type: 'histogram'; bins: { label: string; count: number }[]; unit?: string; altText?: string }
   | { type: 'place_value_chart'; value: number; highlight?: string[]; altText?: string }
@@ -108,10 +113,10 @@ export function parseFigure(input: unknown): Figure | null {
         min: f.min, max: f.max,
         ticks: isNum(f.ticks) && f.ticks > 0 ? f.ticks : undefined,
         marks: Array.isArray(f.marks)
-          ? f.marks.filter((m: any) => isNum(m?.at)).map((m: any) => ({ at: m.at, label: str(m.label) }))
+          ? f.marks.filter((m: any) => isNum(m?.at)).map((m: any) => ({ at: m.at, label: (typeof m.label === 'string' ? m.label : isNum(m.label) ? String(m.label) : undefined) }))
           : undefined,
         jumps: Array.isArray(f.jumps)
-          ? f.jumps.filter((j: any) => isNum(j?.from) && isNum(j?.to)).map((j: any) => ({ from: j.from, to: j.to, label: str(j.label) }))
+          ? f.jumps.filter((j: any) => isNum(j?.from) && isNum(j?.to)).map((j: any) => ({ from: j.from, to: j.to, label: (typeof j.label === 'string' ? j.label : isNum(j.label) ? String(j.label) : undefined) }))
           : undefined,
         altText: str(f.altText),
       };
@@ -166,17 +171,35 @@ export function parseFigure(input: unknown): Figure | null {
       return { type: 'angle', degrees: f.degrees, label: str(f.label), altText: str(f.altText) };
 
     case 'coordinate_grid': {
-      const pts = Array.isArray(f.points)
-        ? f.points.filter((p: any) => isNum(p?.x) && isNum(p?.y)).map((p: any) => ({ x: p.x, y: p.y, label: str(p.label) }))
-        : [];
-      let line: any;
-      const L = f.line as any;
-      if (L && isNum(L.m) && isNum(L.b)) line = { m: L.m, b: L.b };
-      else if (L && isNum(L.from?.x) && isNum(L.from?.y) && isNum(L.to?.x) && isNum(L.to?.y)) line = { from: { x: L.from.x, y: L.from.y }, to: { x: L.to.x, y: L.to.y } };
+      // 17 Nov 2026: separate x and y windows, several labelled lines, polylines.
+      // KEEP THIS BLOCK IDENTICAL in helix-frontend figure.ts and helix-backend figure-contract.ts
+      // (the parity tests in both repos check it).
+      const okPt = (p: any) => isNum(p?.x) && isNum(p?.y);
+      const lab = (v: unknown) => (typeof v === 'string' ? v : undefined);
+      const pts = Array.isArray(f.points) ? f.points.filter(okPt).map((p: any) => ({ x: p.x, y: p.y, label: lab(p.label) })) : [];
+      const oneLine = (L: any): GridLine | undefined => {
+        if (!L || typeof L !== 'object') return undefined;
+        const label = lab(L.label);
+        if (isNum(L.m) && isNum(L.b)) return { m: L.m, b: L.b, label };
+        if (okPt(L.from) && okPt(L.to)) return { from: { x: L.from.x, y: L.from.y }, to: { x: L.to.x, y: L.to.y }, label };
+        if (Array.isArray(L.points)) {
+          const ps = L.points.filter(okPt).map((p: any) => ({ x: p.x, y: p.y }));
+          if (ps.length >= 2) return { points: ps.slice(0, 50), label };
+        }
+        return undefined;
+      };
+      const line = oneLine(f.line);
+      const lines = Array.isArray(f.lines) ? f.lines.map(oneLine).filter((l: GridLine | undefined): l is GridLine => !!l).slice(0, 6) : [];
+      const step = (s: unknown, span: number) => (isNum(s) && s > 0 && span / s <= 50 ? s : undefined);
+      const win = isNum(f.xMin) && isNum(f.xMax) && isNum(f.yMin) && isNum(f.yMax) && f.xMax > f.xMin && f.yMax > f.yMin
+        ? { xMin: f.xMin, xMax: f.xMax, yMin: f.yMin, yMax: f.yMax, xStep: step(f.xStep, f.xMax - f.xMin), yStep: step(f.yStep, f.yMax - f.yMin) }
+        : {};
       return {
         type: 'coordinate_grid',
         min: isNum(f.min) ? f.min : -5, max: isNum(f.max) ? f.max : 5,
-        points: pts, line, altText: str(f.altText),
+        ...win,
+        points: pts, line, lines: lines.length ? lines : undefined,
+        xLabel: lab(f.xLabel), yLabel: lab(f.yLabel), altText: lab(f.altText),
       };
     }
 
