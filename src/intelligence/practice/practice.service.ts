@@ -244,11 +244,16 @@ export class PracticeService {
     if (q.standard) where.standard = { contains: String(q.standard) };
 
     // The whole bank (it was the 500 newest only, so older items never reached
-    // a student). Capped as a safety net.
+    // a student). Capped as a safety net. Only the few small columns needed to
+    // CHOOSE items are read here; the full item (stem, figure, solution) is read
+    // below for the handful actually served. Reading every column of the whole
+    // bank (validation and calibration records included) made practice take
+    // about 15 seconds to open (John, 18 Nov 2026).
     const rows = await this.prisma.draftItem.findMany({
       where: where as never,
       orderBy: { createdAt: 'desc' },
       take: 5000,
+      select: { id: true, standard: true, gaCluster: true, dok: true, options: true },
     });
 
     const wantGrade = q.grade ? Number(q.grade) : null;
@@ -263,18 +268,12 @@ export class PracticeService {
         }));
         return {
           id: r.id,
-          stem: r.stem,
-          figure: r.figure ?? null,
           options,
           standard: r.standard,
           gaCluster: r.gaCluster ?? null,
           strand: strandOfStandard(r.standard),
           grade: gradeOf(r.standard) ?? gradeOf(r.gaCluster),
-          skillTags: r.skillTags ?? [],
           dok: r.dok,
-          difficulty: r.difficulty,
-          solution: r.solution,
-          status: r.status,
         };
       })
       .filter((r) => (wantGrade ? r.grade === wantGrade : true));
@@ -365,9 +364,38 @@ export class PracticeService {
       shaped = [...shaped.filter(probes), ...shaped.filter((it) => !probes(it))];
     }
 
+    // Now read the full items, only for the ones being served, in the chosen order.
+    const chosen = shaped.slice(0, take);
+    const full = chosen.length
+      ? await this.prisma.draftItem.findMany({
+          where: { id: { in: chosen.map((c) => c.id) } },
+          select: { id: true, stem: true, figure: true, skillTags: true, difficulty: true, solution: true, status: true },
+        })
+      : [];
+    const byId = new Map(full.map((f) => [f.id, f]));
+    const items = chosen.flatMap((c) => {
+      const f = byId.get(c.id);
+      if (!f) return []; // deleted between the two reads
+      return [{
+        id: c.id,
+        stem: f.stem,
+        figure: f.figure ?? null,
+        options: c.options,
+        standard: c.standard,
+        gaCluster: c.gaCluster,
+        strand: c.strand,
+        grade: c.grade,
+        skillTags: f.skillTags ?? [],
+        dok: c.dok,
+        difficulty: f.difficulty,
+        solution: f.solution,
+        status: f.status,
+      }];
+    });
+
     return {
-      items: shaped.slice(0, take),
-      count: Math.min(shaped.length, take),
+      items,
+      count: items.length,
       basedOn,
       weakStrands,
       focusMisconceptions,

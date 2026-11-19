@@ -105,4 +105,20 @@ describe('PracticeService levels', () => {
     expect(r.level).toBe('grade');
     expect(r.currentStandard).toBe('4.NR.2.1');
   });
+
+  it('reads only small columns to choose items, then full items only for the ones served (was ~15 s to open)', async () => {
+    const many = Array.from({ length: 120 }, (_, k) => item(`m${k}`, '4.NR.2.1', (k % 3) + 1));
+    const { svc } = make({ items: [...ladder, ...many], weakStrand: 'G', grade: '4', parentPlan: 'EdKairos Standard', answers: fourRight('4.NR.1.1', after) });
+    const r = await svc.items('u1', { limit: '50' });
+    const calls = ((svc as any).prisma.draftItem.findMany as jest.Mock).mock.calls.map((c) => c[0]);
+    expect(calls).toHaveLength(2);
+    expect(Object.keys(calls[0].select).sort()).toEqual(['dok', 'gaCluster', 'id', 'options', 'standard']);
+    expect(calls[0].select.validation).toBeUndefined();
+    expect(calls[1].where.id.in).toHaveLength(50);
+    expect(r.items).toHaveLength(50);
+    expect(r.count).toBe(50);
+    // same shape as before: full item fields come back, hardest first
+    expect(r.items[0]).toMatchObject({ stem: expect.any(String), solution: expect.any(String), difficulty: 'medium', status: 'draft' });
+    expect(r.items[0].dok).toBe(3);
+  });
 });
