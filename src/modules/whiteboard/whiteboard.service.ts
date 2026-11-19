@@ -90,6 +90,8 @@ export interface SessionView {
   focusStudentId: string | null;
   presentedBoardId: string | null;
   lockedStudentIds: string[];
+  /** Students may write on the shared board while it is shown. */
+  groupWrite: boolean;
   hands: string[];
   startedAt: Date;
   participants: Participant[];
@@ -403,6 +405,10 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     const link = `${APP_URL}/live/${row.joinCode}`;
     const content = `${tutorName} invited you to a live whiteboard: ${link}\nOr open Live session and type the code ${row.joinCode}.`;
     const subject = 'Live whiteboard';
+    // Remember who was invited, so their screens show a "Join now" banner while it runs.
+    const before = await this.prisma.whiteboardSession.findUnique({ where: { id: sessionId }, select: { invitedStudentIds: true } });
+    const invited = [...new Set([...(before?.invitedStudentIds ?? []), ...permitted])].slice(0, 200);
+    await this.prisma.whiteboardSession.update({ where: { id: sessionId }, data: { invitedStudentIds: invited } });
     for (const studentId of permitted) {
       let thread = await this.prisma.thread.findFirst({
         where: {
@@ -446,18 +452,43 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Active sessions in classrooms this student is enrolled in. */
+  /**
+   * Live sessions this student can join now: ones they already have a board in
+   * (their class's session, or a quick session they joined), plus quick sessions
+   * their tutor invited them to. For an invite not yet used, the code comes along
+   * so the "Join now" banner can join in one tap (the invite message carries it too).
+   */
   async activeForStudent(studentId: string) {
     const rows = await this.prisma.whiteboardSession.findMany({
       where: {
         status: 'ACTIVE',
-        boards: { some: { ownerId: studentId } },
+        OR: [{ boards: { some: { ownerId: studentId } } }, { invitedStudentIds: { has: studentId } }],
       },
-      select: { id: true, classroomId: true, title: true, startedAt: true, tutorId: true },
+      select: {
+        id: true,
+        classroomId: true,
+        title: true,
+        startedAt: true,
+        tutorId: true,
+        joinCode: true,
+        boards: { where: { ownerId: studentId }, select: { id: true }, take: 1 },
+      },
       orderBy: { startedAt: 'desc' },
     });
     const names = await this.names(rows.map((r) => r.tutorId));
-    return rows.map((r) => ({ ...r, tutorName: names.get(r.tutorId) ?? 'Your tutor' }));
+    return rows.map((r) => {
+      const joined = r.boards.length > 0;
+      return {
+        id: r.id,
+        classroomId: r.classroomId,
+        title: r.title,
+        startedAt: r.startedAt,
+        tutorId: r.tutorId,
+        tutorName: names.get(r.tutorId) ?? 'Your tutor',
+        joined,
+        joinCode: joined ? null : r.joinCode,
+      };
+    });
   }
 
   /** Session history for a classroom (tutor) — newest first. */
@@ -725,7 +756,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     s: LiveSession,
     userId: string,
     action: string,
-    payload: { studentId?: string; boardId?: string; mode?: string; question?: unknown },
+    payload: { studentId?: string; boardId?: string; mode?: string; question?: unknown; on?: boolean },
   ): Promise<{ changed: boolean; boardIds?: string[] }> {
     if (!isTutor(userId, s.state)) throw new OpError('tutor only');
     this.touch(s);
@@ -759,6 +790,11 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
         break;
       case 'unlockAll':
         st.lockedStudentIds = [];
+        break;
+      case 'groupWrite':
+        // "Let students write" on the shared board the tutor is showing.
+        if (typeof payload.on !== 'boolean') throw new OpError('bad request');
+        st.groupWrite = payload.on;
         break;
       case 'present': {
         const b = payload.boardId ? s.boards.get(payload.boardId) : undefined;
@@ -799,6 +835,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
         focusStudentId: st.focusStudentId,
         presentedBoardId: st.presentedBoardId,
         lockedStudentIds: st.lockedStudentIds,
+        groupWrite: st.groupWrite !== false,
       },
     });
     return { changed: true };
@@ -963,6 +1000,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
       focusStudentId: s.state.focusStudentId,
       presentedBoardId: s.state.presentedBoardId,
       lockedStudentIds: [...s.state.lockedStudentIds],
+      groupWrite: s.state.groupWrite !== false,
       hands: [...s.hands],
       startedAt: s.startedAt,
       participants: s.participants,
@@ -1020,6 +1058,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
     focusStudentId: string | null;
     presentedBoardId: string | null;
     lockedStudentIds: string[];
+    groupWrite?: boolean | null;
   }): SessionState {
     return {
       tutorId: row.tutorId,
@@ -1028,6 +1067,7 @@ export class WhiteboardService implements OnModuleInit, OnModuleDestroy {
       focusStudentId: row.focusStudentId,
       presentedBoardId: row.presentedBoardId,
       lockedStudentIds: [...(row.lockedStudentIds ?? [])],
+      groupWrite: row.groupWrite !== false,
     };
   }
 

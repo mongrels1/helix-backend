@@ -1128,6 +1128,10 @@ model WhiteboardSession {
   focusStudentId   String?
   presentedBoardId String?
   lockedStudentIds String[]          @default([])
+  /// Students may write on the shared board while the tutor shows it ("Let students write").
+  groupWrite       Boolean           @default(true)
+  /// Students sent an invite (Send to my students): their screens show a "Join now" banner.
+  invitedStudentIds String[]         @default([])
   startedAt        DateTime          @default(now())
   endedAt          DateTime?
   updatedAt        DateTime          @default(now()) @updatedAt

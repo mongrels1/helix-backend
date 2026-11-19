@@ -10,7 +10,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Namespace, Socket } from 'socket.io';
-import { OpError, RateLimiter } from './whiteboard.logic';
+import { BOARD_KIND, OpError, RateLimiter, canWrite, inkFor, sanitizeInk } from './whiteboard.logic';
 import { WhiteboardService } from './whiteboard.service';
 
 /** Same allowlist idea as main.ts, kept local so a socket can't be opened from any site. */
@@ -31,6 +31,7 @@ interface SocketData {
   sessionId?: string;
   ops?: RateLimiter;
   cursors?: RateLimiter;
+  ink?: RateLimiter;
   expiry?: NodeJS.Timeout;
   /** Resolves once the connection's user has been checked against the database. */
   ready?: Promise<void>;
@@ -179,6 +180,7 @@ export class WhiteboardGateway
       data.role = role;
       data.ops = new RateLimiter(60, 300);
       data.cursors = new RateLimiter(25, 50);
+      data.ink = new RateLimiter(30, 60);
       if (payload.exp) {
         // Access tokens are short-lived: when it lapses, drop the socket. The client
         // reconnects with a fresh token and rejoins without losing anything.
@@ -275,6 +277,35 @@ export class WhiteboardGateway
     });
   }
 
+  /**
+   * A stroke still being drawn. Relayed (never stored) so the others see the line
+   * grow under the pen; the finished stroke follows as a normal 'wb:op' add.
+   * Only someone allowed to write on that board can send one, in their real ink.
+   */
+  @SubscribeMessage('wb:ink')
+  ink(@ConnectedSocket() client: Socket, @MessageBody() body: { boardId?: string; stroke?: unknown }) {
+    const data = client.data as SocketData;
+    if (!data.userId || !data.sessionId || typeof body?.boardId !== 'string') return;
+    if (!data.ink?.take()) return;
+    const s = this.service.getLive(data.sessionId);
+    if (!s || s.state.status !== 'ACTIVE') return;
+    const board = s.boards.get(body.boardId);
+    if (!board || !client.rooms.has(bRoom(body.boardId))) return;
+    if (!canWrite(data.userId, s.state, board.ref)) return;
+    let ink;
+    try {
+      ink = sanitizeInk(body.stroke);
+    } catch {
+      return;
+    }
+    const me = s.participants.find((p) => p.userId === data.userId);
+    const requested = (body.stroke as { color?: unknown })?.color;
+    const color = me
+      ? inkFor(typeof requested === 'string' ? requested : me.color, me.color, board.ref.kind ?? BOARD_KIND.PRIVATE)
+      : '#16271b';
+    client.volatile.to(bRoom(body.boardId)).emit('wb:ink', { boardId: body.boardId, by: data.userId, stroke: { ...ink, color } });
+  }
+
   @SubscribeMessage('wb:hand')
   async hand(@ConnectedSocket() client: Socket, @MessageBody() body: { up?: boolean }) {
     const data = client.data as SocketData;
@@ -294,7 +325,7 @@ export class WhiteboardGateway
   async control(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    body: { action?: string; studentId?: string; boardId?: string; mode?: string; question?: unknown }
+    body: { action?: string; studentId?: string; boardId?: string; mode?: string; question?: unknown; on?: boolean }
   ) {
     const data = client.data as SocketData;
     await data.ready;

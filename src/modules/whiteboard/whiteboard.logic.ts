@@ -73,6 +73,8 @@ export interface SessionState {
   focusStudentId: string | null;
   presentedBoardId: string | null;
   lockedStudentIds: string[];
+  /** Students may write on the shared board in group mode. Missing = true (the original behaviour). */
+  groupWrite?: boolean;
 }
 
 export interface BoardRef {
@@ -132,7 +134,8 @@ export function canWrite(userId: string, s: SessionState, b: BoardRef): boolean 
   if (s.lockedStudentIds.includes(userId)) return false;
   if (b.kind === BOARD_KIND.PRIVATE) return b.ownerId === userId;
   // The shared board is open to students only while the tutor runs group mode.
-  if (b.kind === BOARD_KIND.GROUP) return s.mode === SESSION_MODE.GROUP;
+  // and has not turned off "Let students write" (then they watch the tutor's board).
+  if (b.kind === BOARD_KIND.GROUP) return s.mode === SESSION_MODE.GROUP && s.groupWrite !== false;
   return false;
 }
 
@@ -209,6 +212,34 @@ export function sanitizeOp(input: unknown, authorId: string, now = Date.now()): 
     default:
       throw new OpError('unknown op');
   }
+}
+
+/**
+ * A stroke still being drawn, relayed so others see lines appear under the pen
+ * instead of only when the pen lifts. Never stored: the finished stroke arrives as
+ * a normal 'add' op. Same shape checks as a stroke, minus text.
+ */
+export interface InkPreview {
+  id: string;
+  layer: Layer;
+  tool: StrokeTool;
+  width: number;
+  points: number[];
+}
+
+export function sanitizeInk(input: unknown): InkPreview {
+  const s = (input ?? {}) as Partial<InkPreview>;
+  if (typeof s.id !== 'string' || !ID_RE.test(s.id)) throw new OpError('bad stroke id');
+  if (typeof s.layer !== 'string' || !LAYER_RE.test(s.layer)) throw new OpError('bad layer');
+  if (!STROKE_TOOLS.includes(s.tool as StrokeTool) || s.tool === 'text') throw new OpError('bad tool');
+  if (!finite(s.width) || s.width <= 0 || s.width > 80) throw new OpError('bad width');
+  if (!Array.isArray(s.points) || s.points.length < 2 || s.points.length % 2 !== 0) throw new OpError('bad points');
+  if (s.points.length > LIMITS.maxPointsPerStroke) throw new OpError('stroke too long');
+  const points = s.points.map((p) => {
+    if (!finite(p) || Math.abs(p) > LIMITS.logicalMax) throw new OpError('bad point');
+    return Math.round(p * 10) / 10;
+  });
+  return { id: s.id, layer: s.layer, tool: s.tool as StrokeTool, width: Math.round(s.width * 10) / 10, points };
 }
 
 // ---- applying ops ------------------------------------------------------------

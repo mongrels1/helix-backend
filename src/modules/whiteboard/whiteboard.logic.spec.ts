@@ -11,6 +11,7 @@ import {
   sanitizeOp,
   sanitizeQuestion,
   sanitizeStroke,
+  sanitizeInk,
   uploadQuestion,
   SessionState,
 } from './whiteboard.logic';
@@ -198,5 +199,45 @@ describe('ink colors', () => {
   it('picture questions are built by the server and never accepted from a client', () => {
     expect(uploadQuestion('abc', 800, 600).imageUrl).toBe('asset:abc');
     expect(sanitizeQuestion({ stem: 'x', imageUrl: 'asset:abc' })?.imageUrl).toBeUndefined();
+  });
+});
+
+
+describe('Show my board: "Let students write" (19 Nov 2026)', () => {
+  const groupB: BoardRef = { id: 'g2', kind: 'GROUP', ownerId: null };
+  it('students write on the shared board in group mode by default (sessions saved before the switch existed)', () => {
+    expect(canWrite(MAYA, session({ mode: 'GROUP' }), groupB)).toBe(true);
+  });
+  it('with "Let students write" off, students only watch the shared board', () => {
+    const st = session({ mode: 'GROUP', groupWrite: false });
+    expect(canView(MAYA, st, groupB)).toBe(true);
+    expect(canWrite(MAYA, st, groupB)).toBe(false);
+    expect(canWrite(TUTOR, st, groupB)).toBe(true);
+  });
+  it('turning it off never touches a student\'s own private board', () => {
+    const mine: BoardRef = { id: 'p', kind: 'PRIVATE', ownerId: MAYA };
+    expect(canWrite(MAYA, session({ mode: 'GROUP', groupWrite: false }), mine)).toBe(true);
+  });
+  it('a locked student cannot write even when students may', () => {
+    expect(canWrite(MAYA, session({ mode: 'GROUP', groupWrite: true, lockedStudentIds: [MAYA] }), groupB)).toBe(false);
+  });
+});
+
+describe('live ink preview (lines appear while the pen is down)', () => {
+  const ok = { id: 'ink_1', layer: 'p:page1', tool: 'pen', width: 3, points: [1, 2, 3.333, 4] };
+  it('accepts a stroke in progress and rounds its points', () => {
+    expect(sanitizeInk(ok)).toEqual({ id: 'ink_1', layer: 'p:page1', tool: 'pen', width: 3, points: [1, 2, 3.3, 4] });
+  });
+  it('drops anything the client adds, such as a claimed author or color', () => {
+    const out = sanitizeInk({ ...ok, authorId: 'someone-else', color: '#007a00' }) as unknown as Record<string, unknown>;
+    expect(out.authorId).toBeUndefined();
+    expect(out.color).toBeUndefined();
+  });
+  it('refuses text, bad layers, odd point lists and oversized strokes', () => {
+    expect(() => sanitizeInk({ ...ok, tool: 'text' })).toThrow(OpError);
+    expect(() => sanitizeInk({ ...ok, layer: '../x' })).toThrow(OpError);
+    expect(() => sanitizeInk({ ...ok, points: [1, 2, 3] })).toThrow(OpError);
+    expect(() => sanitizeInk({ ...ok, points: new Array(2002).fill(1) })).toThrow(OpError);
+    expect(() => sanitizeInk({ ...ok, points: [1, NaN] })).toThrow(OpError);
   });
 });
